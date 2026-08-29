@@ -66,7 +66,7 @@ enum L10n {
 
         // Display boundaries
         "display.card": "屏幕边界",
-        "display.intro": "逐台显示器勾选允许收纳的左右两侧；窗口贴到哪一段决定收纳方式——朝外侧的空段直接滑出屏幕，与相邻显示器共用的段则交给 macOS 最小化。",
+        "display.intro": "逐台显示器勾选允许收纳的左右两侧。开启「显示器具有单独的空间」时，共用段利用系统按屏裁剪滑出；关闭时回退到 macOS 最小化。",
         "display.none": "没有探测到显示器",
         "display.sharedNote": "共用段交给系统最小化",
         "display.sharedHowTo": "若最小化后的窗口在程序坞里成了独立缩略图，请到「系统设置 → 桌面与程序坞」开启「将窗口最小化成应用程序图标」（旧系统名称或有出入）。",
@@ -78,6 +78,8 @@ enum L10n {
         "display.outerEdge": "外侧边",
         "display.partialShared": "部分共用 · 按窗口所在段自动处理",
         "display.fullyShared": "完全共用 · 仅系统最小化",
+        "display.partialSharedClipped": "部分共用 · 共用段按屏裁剪滑出",
+        "display.fullySharedClipped": "完全共用 · 按屏裁剪滑出",
 
         // Arrangement map
         "map.card": "显示器排布（逻辑）",
@@ -240,7 +242,7 @@ enum L10n {
 
         // Display boundaries
         "display.card": "Display edges",
-        "display.intro": "Pick the stashable left and right sides of every display. Where the window lands decides the treatment: outer segments slide off-screen, segments shared with a neighbour hand over to macOS minimization.",
+        "display.intro": "Pick the stashable left and right sides of every display. With Displays have separate Spaces enabled, shared segments slide behind the per-display clip; otherwise they fall back to macOS minimization.",
         "display.none": "No displays detected",
         "display.sharedNote": "Shared segments minimize",
         "display.sharedHowTo": "If a minimized window keeps its own Dock thumbnail, enable \"Minimize windows into application icon\" under System Settings → Desktop & Dock (names differ slightly on older macOS).",
@@ -252,6 +254,8 @@ enum L10n {
         "display.outerEdge": "Outer edge",
         "display.partialShared": "Partially shared · decided per segment",
         "display.fullyShared": "Fully shared · minimization only",
+        "display.partialSharedClipped": "Partially shared · shared segment clips and slides",
+        "display.fullySharedClipped": "Fully shared · per-display clipped slide",
 
         // Arrangement map
         "map.card": "Display layout (logical)",
@@ -442,6 +446,8 @@ extension L10n {
     static var displayOuterEdge: String { text("display.outerEdge") }
     static var displayPartialShared: String { text("display.partialShared") }
     static var displayFullyShared: String { text("display.fullyShared") }
+    static var displayPartialSharedClipped: String { text("display.partialSharedClipped") }
+    static var displayFullySharedClipped: String { text("display.fullySharedClipped") }
 
     static var mapCard: String { text("map.card") }
     static var mapIntro: String { text("map.intro") }

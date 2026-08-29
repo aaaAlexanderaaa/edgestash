@@ -156,8 +156,9 @@ public enum StashGeometryPolicy {
         }
     }
 
-    /// Leaves one pixel on the owning display so the outer strip can sit on the
-    /// edge. Shared-edge minimize must not use this path.
+    /// Leaves a narrow lip on the owning display so the marker can sit on the
+    /// edge. Shared edges use this path only when separate display Spaces are
+    /// expected to clip the offscreen portion; the minimize fallback does not.
     public static func visualHiddenOrigin(
         edge: DisplayEdge,
         frame: CGRect,

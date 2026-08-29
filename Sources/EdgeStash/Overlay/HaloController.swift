@@ -67,7 +67,8 @@ final class HaloController: ObservableObject {
             at: target.edge,
             of: geometry,
             in: geometries,
-            selection: selection
+            selection: selection,
+            screensHaveSeparateSpaces: NSScreen.screensHaveSeparateSpaces
         )
         let frame = StashGeometryPolicy.haloBand(edge: target.edge, displayAppKit: screen.frame)
         let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion

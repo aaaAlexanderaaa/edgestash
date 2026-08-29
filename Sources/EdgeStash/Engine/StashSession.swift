@@ -213,7 +213,8 @@ final class StashSession {
                 at: edge,
                 of: display,
                 windowFrame: restoreFrame,
-                in: displays
+                in: displays,
+                screensHaveSeparateSpaces: NSScreen.screensHaveSeparateSpaces
             )
         } else {
             next = nil
@@ -355,7 +356,8 @@ final class StashSession {
             at: edge,
             of: display,
             windowFrame: frame,
-            in: cgDisplays
+            in: cgDisplays,
+            screensHaveSeparateSpaces: NSScreen.screensHaveSeparateSpaces
         )
         self.presentation = presentation
         lockedWidth = abs(frame.width - lockedWidth) > 15 ? frame.width : (lockedWidth > 0 ? lockedWidth : frame.width)
@@ -394,7 +396,7 @@ final class StashSession {
                 return false
             }
             finishCollapse(next: next, frame: expanded, merged: merged)
-        case .slideOffscreen:
+        case .slideOffscreen, .displayClippedSlideOffscreen:
             usingSharedMinimize = false
             let hidden = StashGeometryPolicy.visualHiddenOrigin(
                 edge: edge,
@@ -412,8 +414,8 @@ final class StashSession {
                 guard let self else { return }
                 if let windowID = self.windowID {
                     // 2% alpha keeps the window composited and AX-addressable while being
-        // invisible; exactly zero can let macOS drop it from the layer tree.
-        _ = StashSurface.setAlpha(windowID: windowID, alpha: 0.02)
+                    // invisible; exactly zero can let macOS drop it from the layer tree.
+                    _ = StashSurface.setAlpha(windowID: windowID, alpha: 0.02)
                 }
                 self.finishCollapse(next: next, frame: expanded, merged: merged)
             }

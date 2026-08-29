@@ -22,10 +22,16 @@ public enum DisplayArrangementPolicy {
         at edge: DisplayEdge,
         of display: DisplayGeometry,
         in displays: [DisplayGeometry],
-        selection: DisplayEdgeSelection
+        selection: DisplayEdgeSelection,
+        screensHaveSeparateSpaces: Bool = false
     ) -> DisplayEdgePreviewKind {
         guard selection.isEnabled(edge) else { return .disabled }
-        return DisplayEdgePolicy.collapseStrategy(at: edge, of: display, in: displays) == .systemMinimize
+        return DisplayEdgePolicy.collapseStrategy(
+            at: edge,
+            of: display,
+            in: displays,
+            screensHaveSeparateSpaces: screensHaveSeparateSpaces
+        ) == .systemMinimize
             ? .systemMinimize
             : .slideOffscreen
     }

@@ -421,10 +421,30 @@ struct EdgeStashLogicTests {
             DisplayEdgePolicy.collapseStrategy(
                 at: .right,
                 of: portraitDisplay,
+                windowFrame: CGRect(x: 380, y: 80, width: 700, height: 300),
+                in: mixedOrientationDisplays,
+                screensHaveSeparateSpaces: true
+            ) == .slideOffscreen,
+            "separate Spaces must not reclassify an exposed segment as a shared clipped slide"
+        )
+        expect(
+            DisplayEdgePolicy.collapseStrategy(
+                at: .right,
+                of: portraitDisplay,
                 windowFrame: CGRect(x: 380, y: 300, width: 700, height: 300),
                 in: mixedOrientationDisplays
             ) == .systemMinimize,
             "a window crossing into the physically shared segment must use system minimization"
+        )
+        expect(
+            DisplayEdgePolicy.collapseStrategy(
+                at: .right,
+                of: portraitDisplay,
+                windowFrame: CGRect(x: 380, y: 300, width: 700, height: 300),
+                in: mixedOrientationDisplays,
+                screensHaveSeparateSpaces: true
+            ) == .displayClippedSlideOffscreen,
+            "separate display Spaces let a shared segment use WindowServer clipping"
         )
         expect(
             DisplayEdgePolicy.collapseStrategy(
@@ -484,6 +504,15 @@ struct EdgeStashLogicTests {
                 in: threeDisplays
             ) == .systemMinimize,
             "the middle display's left shared boundary must use system minimization"
+        )
+        expect(
+            DisplayEdgePolicy.collapseStrategy(
+                at: .left,
+                of: middleDisplay,
+                in: threeDisplays,
+                screensHaveSeparateSpaces: true
+            ) == .displayClippedSlideOffscreen,
+            "a fully shared boundary uses a clipped slide when displays have separate Spaces"
         )
         expect(
             DisplayEdgePolicy.collapseStrategy(
@@ -577,6 +606,16 @@ struct EdgeStashLogicTests {
                 selection: DisplayEdgeSelection(leftEnabled: true, rightEnabled: true)
             ) == .systemMinimize,
             "an enabled shared edge previews as minimize"
+        )
+        expect(
+            DisplayArrangementPolicy.previewKind(
+                at: .right,
+                of: leftDisplay,
+                in: sideBySideDisplays,
+                selection: DisplayEdgeSelection(leftEnabled: true, rightEnabled: true),
+                screensHaveSeparateSpaces: true
+            ) == .slideOffscreen,
+            "an enabled shared edge previews a slide when per-display clipping is available"
         )
         expect(
             DisplayArrangementPolicy.previewKind(
@@ -726,6 +765,16 @@ struct EdgeStashLogicTests {
         )
         expect(
             StashSessionPolicy.collapsePresentation(
+                at: .left,
+                of: middleDisplay,
+                windowFrame: nil,
+                in: threeDisplays,
+                screensHaveSeparateSpaces: true
+            ) == .displayClippedSlideOffscreen,
+            "a fully shared seam presents as a display-clipped slide with separate Spaces"
+        )
+        expect(
+            StashSessionPolicy.collapsePresentation(
                 at: .right,
                 of: portraitDisplay,
                 windowFrame: CGRect(x: 380, y: 80, width: 700, height: 300),
@@ -749,6 +798,22 @@ struct EdgeStashLogicTests {
                 displayStillPresent: true
             ),
             "a seam that flips from slide-off to minimize must restore the window"
+        )
+        expect(
+            StashSessionPolicy.shouldReleaseAfterTopologyChange(
+                current: .displayClippedSlideOffscreen,
+                next: .systemMinimize,
+                displayStillPresent: true
+            ),
+            "turning off separate display Spaces must release a clipped shared-edge stash"
+        )
+        expect(
+            StashSessionPolicy.shouldReleaseAfterTopologyChange(
+                current: .slideOffscreen,
+                next: .displayClippedSlideOffscreen,
+                displayStillPresent: true
+            ),
+            "an outer edge that becomes a shared clipped edge must release its stale stash"
         )
         expect(
             !StashSessionPolicy.shouldReleaseAfterTopologyChange(

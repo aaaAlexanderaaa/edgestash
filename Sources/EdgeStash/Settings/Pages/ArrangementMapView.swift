@@ -90,7 +90,8 @@ struct ArrangementMapView: View {
                     at: edge,
                     of: geometry,
                     in: geometries,
-                    selection: selection
+                    selection: selection,
+                    screensHaveSeparateSpaces: NSScreen.screensHaveSeparateSpaces
                 )
                 edgeMark(
                     edge: edge,
@@ -168,13 +169,15 @@ struct ArrangementMapView: View {
             at: .left,
             of: geometry,
             in: geometries,
-            selection: selection
+            selection: selection,
+            screensHaveSeparateSpaces: NSScreen.screensHaveSeparateSpaces
         )
         let right = DisplayArrangementPolicy.previewKind(
             at: .right,
             of: geometry,
             in: geometries,
-            selection: selection
+            selection: selection,
+            screensHaveSeparateSpaces: NSScreen.screensHaveSeparateSpaces
         )
         let main = display.isMain ? L10n.displayPrimary : display.name
         return "\(main), \(strategyLabel(left)), \(strategyLabel(right))"

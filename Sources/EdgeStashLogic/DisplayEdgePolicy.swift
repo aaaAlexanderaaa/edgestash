@@ -46,6 +46,7 @@ public struct DisplayGeometry: Equatable {
 
 public enum DisplayEdgeCollapseStrategy: Equatable {
     case slideOffscreen
+    case displayClippedSlideOffscreen
     case systemMinimize
 }
 
@@ -137,14 +138,17 @@ public enum DisplayEdgePolicy {
         at edge: DisplayEdge,
         of display: DisplayGeometry,
         in displays: [DisplayGeometry],
+        screensHaveSeparateSpaces: Bool = false,
         tolerance: CGFloat = adjacencyTolerance
     ) -> DisplayEdgeCollapseStrategy {
-        hasAdjacentDisplay(
+        let isShared = hasAdjacentDisplay(
             at: edge,
             of: display,
             in: displays,
             tolerance: tolerance
-        ) ? .systemMinimize : .slideOffscreen
+        )
+        guard isShared else { return .slideOffscreen }
+        return screensHaveSeparateSpaces ? .displayClippedSlideOffscreen : .systemMinimize
     }
 
     /// Chooses a strategy for the vertical segment occupied by this window. A
@@ -155,6 +159,7 @@ public enum DisplayEdgePolicy {
         of display: DisplayGeometry,
         windowFrame: CGRect,
         in displays: [DisplayGeometry],
+        screensHaveSeparateSpaces: Bool = false,
         tolerance: CGFloat = adjacencyTolerance
     ) -> DisplayEdgeCollapseStrategy {
         let windowLowerBound = max(display.frame.minY, windowFrame.minY)
@@ -171,7 +176,8 @@ public enum DisplayEdgePolicy {
             return min(windowUpperBound, sharedUpperBound)
                 - max(windowLowerBound, sharedLowerBound) > 0
         }
-        return overlapsSharedSegment ? .systemMinimize : .slideOffscreen
+        guard overlapsSharedSegment else { return .slideOffscreen }
+        return screensHaveSeparateSpaces ? .displayClippedSlideOffscreen : .systemMinimize
     }
 
     public static func resolvedSelection(

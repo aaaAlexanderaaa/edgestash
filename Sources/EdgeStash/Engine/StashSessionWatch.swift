@@ -61,7 +61,15 @@ extension StashSession {
             ?? owningDisplay(for: windowQuartz, screens: screens, primaryHeight: primaryHeight)?.1
             ?? NSScreen.main
         guard let screen else { return }
-        let kind: StashOverlayKind = presentation == .systemMinimize ? .seamBeacon : .outerStrip
+        let kind: StashOverlayKind
+        switch presentation {
+        case .displayClippedSlideOffscreen, .systemMinimize:
+            // A shared seam must keep EdgeStash's own panel wholly inside the
+            // owning display even when the third-party window slides through it.
+            kind = .seamBeacon
+        case .slideOffscreen, nil:
+            kind = .outerStrip
+        }
         let frame = StashGeometryPolicy.markerPanelFrame(
             kind: kind,
             edge: edge,

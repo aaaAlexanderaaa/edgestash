@@ -32,7 +32,9 @@ logical display map, edge halo, and seam beacon, and defer later product ideas.
 - A macOS menu-bar app that stashes selected application windows at display
   edges and restores them through markers, hover, shortcuts, or Dock activity
 - Per-application enablement, appearance, edge selection, and shortcuts
-- Exposed-edge slide-off presentation and shared-edge system minimization
+- Exposed-edge slide-off presentation plus conditional shared-edge slide-off:
+  WindowServer per-display clipping when displays have separate Spaces, with
+  system minimization as the shared-desktop fallback
 - Logical display arrangement map and real-display edge halo
 - Shared-edge seam beacon
 - Merged strips, pinning, focus return, launch-at-login, Spaces handling, and
@@ -66,7 +68,7 @@ logical display map, edge halo, and seam beacon, and defer later product ideas.
 | `untrusted` | Accessibility is unavailable | Settings remains usable; no window control | permission becomes available | do not start observers |
 | `idle` | trusted engine sees an eligible window | window remains unmanaged | edge capture | no mutation |
 | `collapsed-outer` | window reaches an exposed edge segment | window slides offscreen; outer marker remains | reveal action | restore the saved frame |
-| `collapsed-seam` | window reaches a shared edge segment | system minimizes the window; seam beacon remains | reveal action | never slide onto the neighboring display |
+| `collapsed-seam` | window reaches a shared edge segment | with separate display Spaces the window slides behind the owning-display clip; otherwise macOS minimizes it; seam beacon remains | reveal action | restore rather than retain a stale strategy after display/Spaces changes |
 | `expanded` | marker, shortcut, or Dock reveals a stash | window sits on its owning edge | pointer leaves or user collapses | pinning suppresses automatic collapse |
 
 ## Normative invariants
@@ -81,8 +83,10 @@ logical display map, edge halo, and seam beacon, and defer later product ideas.
   capture, or window-content snapshot APIs.
 - **INV-5 — permission boundary.** Settings does not start Accessibility
   observers. The engine starts only after trust is already present.
-- **INV-6 — geometry safety.** Exposed segments may slide offscreen. Shared
-  segments must use system minimization and keep a beacon on the owning display.
+- **INV-6 — geometry safety.** Exposed segments slide offscreen. Shared
+  segments use a distinct display-clipped slide only while
+  `NSScreen.screensHaveSeparateSpaces` is true, otherwise they use system
+  minimization. Their beacon stays wholly inside the owning display.
 - **INV-7 — reduced motion.** Reduced-motion mode avoids slide decoration and
   uses immediate positioning or fades.
 - **INV-8 — recovery.** Rescue records are cleared only after the corresponding
@@ -95,7 +99,8 @@ logical display map, edge halo, and seam beacon, and defer later product ideas.
   it is opened from the menu bar item or by reopening the app.
 - Display topology changes release stashes whose presentation strategy is no
   longer valid.
-- The Behavior map and live engine use the same display-adjacency policy.
+- The Behavior map and live engine use the same display-adjacency policy and
+  the same current separate-Spaces input.
 - The halo ignores mouse events and clears when Settings leaves Behavior or
   closes.
 - Overlapping same-edge markers may fuse, and an expanded stash may be pinned.
@@ -106,6 +111,8 @@ logical display map, edge halo, and seam beacon, and defer later product ideas.
 - If Accessibility is lost, restore managed windows where possible, preserve
   unresolved rescue records, and suspend the live engine.
 - If shared-edge minimization fails after positioning, restore the prior frame.
+- If display topology or the effective separate-Spaces mode changes the
+  presentation kind, release the stash instead of reusing stale hidden geometry.
 - If a topology change invalidates a stash, restore it instead of preserving a
   stale offscreen state.
 - If work expands past the first-version scope, stop and record a new owner
@@ -165,3 +172,8 @@ logical display map, edge halo, and seam beacon, and defer later product ideas.
   where an undecodable document starts the reader fresh — still no
   compatibility readers. Verified by `swift run EdgeStashLogicTests` and a
   Debug build of the app target.
+- **2026-08-29 — conditional shared-edge slide:** shared segments now use a
+  separately modeled WindowServer-clipped slide whenever
+  `NSScreen.screensHaveSeparateSpaces` is true. The shared-desktop path keeps
+  system minimization, topology reconciliation distinguishes the two slide
+  presentations, and the seam beacon remains inside its owning display.

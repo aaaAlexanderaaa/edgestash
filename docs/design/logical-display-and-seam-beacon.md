@@ -16,9 +16,10 @@ supersedes: []
 
 The person who already stashes windows on several displays needs to see
 **logical** desktop geometry — the rectangles macOS uses, not the physical
-bezels — and to tell what a given edge will do. On a shared seam, a
-minimized window must still leave a findable placeholder. That placeholder
-is not the same object as an outer slide-off strip.
+bezels — and to tell what a given edge will do. On a shared seam, either a
+display-clipped slide or its minimization fallback must still leave a findable
+placeholder. That placeholder is not the same object as an outer slide-off
+strip.
 
 ## Raw layer
 
@@ -50,6 +51,15 @@ slide the real window onto the neighboring display.
 
 Context: these two items are the only new surfaces in this version.
 
+### raw[5] — 2026-08-29
+
+> 开启「显示器具有单独的空间」时，先利用 macOS 在显示器接缝处的按屏裁剪，
+> 实现一个不依赖最小化的版本；关闭时仍需要安全回退。
+
+Context: owner observed that manually parked cross-display windows are clipped
+to the owning display and requested an implementation trial before retaining
+minimization as the only shared-edge behavior.
+
 ## Translated layer
 
 ### Outcomes
@@ -59,12 +69,14 @@ Context: these two items are the only new surfaces in this version.
   vertical segments.
   - from: raw[1]
 - **O2 — Edge halo.** Selecting a logical edge lights that edge on the
-  real display, previewing slide-off, minimize, or disabled.
-  - from: raw[1]
-- **O3 — Seam beacon.** A shared-edge minimized stash keeps a visible
-  placeholder on the owning display's seam. It is visually distinct from
-  the outer strip and does not move the real window off that display.
-  - from: raw[2], raw[3]
+  real display, previewing slide-off, display-clipped slide, minimize, or
+  disabled according to the current Spaces configuration.
+  - from: raw[1], raw[5]
+- **O3 — Seam beacon.** A shared-edge stash keeps a visible placeholder wholly
+  inside the owning display's seam. With separate display Spaces the real
+  window slides behind WindowServer's per-display clip; without them it uses
+  system minimization.
+  - from: raw[2], raw[3], raw[5]
 - **O4 — No extra product.** No third new surface in this version.
   - from: raw[4]
 
@@ -76,7 +88,7 @@ Context: these two items are the only new surfaces in this version.
 | `map-idle` | Behavior page, displays present | logical rectangles, shared segments marked | select a display or edge | n/a |
 | `halo-preview` | an edge is selected in the map | halo on that real edge; map shows the same strategy | change selection; close Settings | halo ends when Settings closes or selection clears |
 | `outer-strip` | window stashed on an exposed segment | current slide-off strip | hover / shortcut / Dock | unchanged current behavior |
-| `seam-beacon` | window stashed on a shared segment via minimize | quieter beacon on the seam | hover / shortcut / Dock restores | beacon gone when session ends |
+| `seam-beacon` | window stashed on a shared segment | quieter beacon on the seam; target window is clipped-slide or minimized according to separate-Spaces state | hover / shortcut / Dock restores | strategy changes release the stash; beacon is gone when session ends |
 | `reduce-motion` | system reduce motion | halo and beacon fade only; no slide decoration | same | n/a |
 
 - from: raw[1], raw[2], raw[3]
@@ -171,7 +183,7 @@ This is not a web surface.
 |---|---|---|---|---|---|---|---|
 | `map-idle` | 3-display stagger like the owner screenshot | pending | pending | pending | pending | pending | owner look |
 | `halo-preview` | outer / partial / full share | pending | pending | pending | pending | pending | owner look |
-| `seam-beacon` | shared-edge minimize | pending | pending | pending | pending | pending | owner look |
+| `seam-beacon` | shared-edge clipped slide / minimize fallback | logic-tested | pending | complete | pending | pending | owner look |
 | `reduce-motion` | system setting on | pending | pending | pending | pending | pending | owner look |
 
 ## Reconciliation log
@@ -185,3 +197,7 @@ This is not a web surface.
   outer strip, and seam beacon live in this repository. Halo clears when
   Settings leaves Behavior or the window closes. Owner look on a
   multi-display Mac is still required.
+- **2026-08-29 — shared-edge trial:** raw[5] adds a WindowServer-clipped slide
+  for shared seams while displays have separate Spaces. The minimization path
+  remains the fallback for a shared desktop, and both continue to use the
+  inside-only seam beacon.

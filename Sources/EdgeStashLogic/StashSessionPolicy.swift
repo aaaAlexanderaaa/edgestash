@@ -17,6 +17,7 @@ public enum StashSessionEvent: Equatable {
 
 public enum StashCollapsePresentation: Equatable {
     case slideOffscreen
+    case displayClippedSlideOffscreen
     case systemMinimize
 }
 
@@ -72,13 +73,15 @@ public enum StashSessionPolicy {
         return true
     }
 
-    /// Shared seams must minimize. Sliding a real window off a shared edge
-    /// lands it on the neighbor — the parent engine's main geometry pitfall.
+    /// Separate per-display Spaces let WindowServer clip a shared-edge window
+    /// to its owning display. A shared desktop cannot provide that boundary,
+    /// so the safe fallback remains system minimization.
     public static func collapsePresentation(
         at edge: DisplayEdge,
         of display: DisplayGeometry,
         windowFrame: CGRect?,
-        in displays: [DisplayGeometry]
+        in displays: [DisplayGeometry],
+        screensHaveSeparateSpaces: Bool = false
     ) -> StashCollapsePresentation {
         let strategy: DisplayEdgeCollapseStrategy
         if let windowFrame {
@@ -86,18 +89,22 @@ public enum StashSessionPolicy {
                 at: edge,
                 of: display,
                 windowFrame: windowFrame,
-                in: displays
+                in: displays,
+                screensHaveSeparateSpaces: screensHaveSeparateSpaces
             )
         } else {
             strategy = DisplayEdgePolicy.collapseStrategy(
                 at: edge,
                 of: display,
-                in: displays
+                in: displays,
+                screensHaveSeparateSpaces: screensHaveSeparateSpaces
             )
         }
         switch strategy {
         case .slideOffscreen:
             return .slideOffscreen
+        case .displayClippedSlideOffscreen:
+            return .displayClippedSlideOffscreen
         case .systemMinimize:
             return .systemMinimize
         }

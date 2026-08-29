@@ -21,7 +21,8 @@ struct DisplayBoundarySettingsView: View {
                     DisplayEdgePolicy.collapseStrategy(
                         at: edge,
                         of: geometry,
-                        in: geometries
+                        in: geometries,
+                        screensHaveSeparateSpaces: NSScreen.screensHaveSeparateSpaces
                     ) == .systemMinimize
             }
         }
@@ -170,9 +171,13 @@ struct DisplayBoundaryRow: View {
         case .outer:
             return L10n.displayOuterEdge
         case .partiallyShared:
-            return L10n.displayPartialShared
+            return NSScreen.screensHaveSeparateSpaces
+                ? L10n.displayPartialSharedClipped
+                : L10n.displayPartialShared
         case .fullyShared:
-            return L10n.displayFullyShared
+            return NSScreen.screensHaveSeparateSpaces
+                ? L10n.displayFullySharedClipped
+                : L10n.displayFullyShared
         }
     }
 
