@@ -1,0 +1,152 @@
+import AppKit
+import SwiftUI
+
+/// One managed application inside the Apps page: identity on the first line,
+/// tint / opacity / snap-side fields on the second, and an inline note when
+/// the Dock currently blocks part of the chosen coverage.
+struct StashAppRow: View {
+    @Environment(\.colorScheme) private var colorScheme
+    let app: AppEntry
+    let colorName: String
+    let opacity: Double
+    let snapSide: String
+    let blockedDockSide: String?
+    let onColorChange: (String) -> Void
+    let onOpacityChange: (Double) -> Void
+    let onSnapSideChange: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 11) {
+                appBadge
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(app.name)
+                        .font(SettingsTheme.TypeRole.body)
+                        .lineLimit(1)
+                    Text(app.id)
+                        .font(SettingsTheme.TypeRole.mono)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+
+                Spacer(minLength: 8)
+
+                FieldMenu(
+                    title: snapSideLabel(snapSide),
+                    minWidth: snapFieldWidth,
+                    leadingImage: edgeGlyphImage(side: snapSide, colorScheme: colorScheme),
+                    alignment: .trailing,
+                    choices: snapSideChoices.map { key in
+                        let usable = edgeIsFree(key, dockSide: blockedDockSide)
+                        return MenuChoice(
+                            title: snapSideLabel(key),
+                            image: edgeGlyphImage(side: key, colorScheme: colorScheme, enabled: usable),
+                            isSelected: key == snapSide,
+                            isEnabled: usable
+                        ) {
+                            onSnapSideChange(key)
+                        }
+                    }
+                )
+
+                FieldMenu(
+                    title: opacityLabel(opacity),
+                    minWidth: opacityFieldWidth,
+                    leadingImage: opacityGlyphImage(alpha: opacity, colorScheme: colorScheme),
+                    alignment: .trailing,
+                    choices: opacityStops.map { level in
+                        MenuChoice(
+                            title: opacityLabel(level),
+                            image: opacityGlyphImage(alpha: level, colorScheme: colorScheme),
+                            isSelected: level == opacity
+                        ) {
+                            onOpacityChange(level)
+                        }
+                    }
+                )
+            }
+
+            HStack(spacing: 10) {
+                StashColorField(
+                    colorName: colorName,
+                    opacity: opacity,
+                    title: SnapshotColorPalette.displayName(for: colorName),
+                    choices: tintChoices()
+                )
+
+                if let note = dockConflictNote(for: snapSide, dockSide: blockedDockSide) {
+                    Label {
+                        Text(note)
+                            .font(.caption)
+                            .foregroundStyle(SettingsTheme.ColorToken.rail)
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.caption)
+                            .foregroundStyle(SettingsTheme.ColorToken.rail)
+                    }
+                }
+            }
+            .padding(.leading, 41)
+        }
+    }
+
+    private var appBadge: some View {
+        Group {
+            if let icon = app.icon {
+                Image(nsImage: icon)
+                    .resizable()
+            } else {
+                Image(systemName: "app.dashed")
+                    .resizable()
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(width: 30, height: 30)
+    }
+
+    private func tintChoices() -> [MenuChoice] {
+        var choices = SnapshotColorPalette.tokens.map { entry in
+            MenuChoice(
+                title: SnapshotColorPalette.title(for: entry.key),
+                image: entry.key == "adaptive"
+                    ? autoModeSwatchImage(size: 14, alpha: 1, edge: quietEdge)
+                    : tintedSwatchImage(
+                        size: 14,
+                        tint: NSColor(entry.color),
+                        alpha: 1,
+                        edge: quietEdge
+                    ),
+                isSelected: entry.key == colorName
+            ) {
+                onColorChange(entry.key)
+            }
+        }
+
+        let currentTint: NSColor
+        if colorName.hasPrefix("#"), let stored = NSColor(decodingColorCode: colorName) {
+            currentTint = stored
+        } else {
+            currentTint = .white
+        }
+
+        choices.append(MenuChoice(
+            title: L10n.tintCustom,
+            image: spectrumWheelIcon(size: 14, colorScheme: colorScheme),
+            isSelected: colorName.hasPrefix("#")
+        ) {
+            CustomTintPicker().present(startingFrom: currentTint) { code in
+                onColorChange(code)
+            }
+        })
+
+        return choices
+    }
+
+    private var quietEdge: NSColor {
+        colorScheme == .dark
+            ? NSColor.white.withAlphaComponent(0.38)
+            : NSColor.gray.withAlphaComponent(0.32)
+    }
+}
