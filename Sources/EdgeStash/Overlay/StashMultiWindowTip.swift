@@ -110,7 +110,9 @@ final class StashMultiWindowTip {
         case .remindLater:
             mutedUntilRelaunch = true
         case .timedOut:
-            break
+            if MultiWindowTipPolicy.shouldMuteUntilRelaunch(after: .timedOut) {
+                mutedUntilRelaunch = true
+            }
         }
         hide()
     }

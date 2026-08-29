@@ -66,6 +66,10 @@ struct SettingsRailItem: View {
             .padding(.leading, 8)
             .padding(.trailing, 10)
             .padding(.vertical, 9)
+            .background(
+                RoundedRectangle(cornerRadius: SettingsTheme.Radius.row, style: .continuous)
+                    .fill(isSelected ? SettingsTheme.ColorToken.rail.opacity(0.14) : Color.clear)
+            )
             .contentShape(RoundedRectangle(cornerRadius: SettingsTheme.Radius.row, style: .continuous))
         }
         .buttonStyle(SettingsRailButtonStyle())

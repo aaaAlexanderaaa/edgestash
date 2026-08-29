@@ -24,6 +24,19 @@ public enum StashCollapsePresentation: Equatable {
 /// AppKit-free stash session rules. The live engine (Task 5+) applies these
 /// outcomes; this type does not talk to Accessibility or move windows.
 public enum StashSessionPolicy {
+    /// Edge capture belongs to the window that was under the pointer when the
+    /// gesture began, and only after that window actually moved. AX positions
+    /// can round by a fraction of a point, so a one-point threshold filters a
+    /// click without making deliberate short drags feel unresponsive.
+    public static func isWindowDrag(
+        from initialFrame: CGRect,
+        to currentFrame: CGRect,
+        minimumTranslation: CGFloat = 1
+    ) -> Bool {
+        abs(currentFrame.minX - initialFrame.minX) >= minimumTranslation
+            || abs(currentFrame.minY - initialFrame.minY) >= minimumTranslation
+    }
+
     public static func phase(
         after event: StashSessionEvent,
         from current: StashSessionPhase
@@ -122,6 +135,62 @@ public enum StashSessionPolicy {
         return current != next
     }
 
+    /// Collapse binds an edge to the capture display. Prefer that display
+    /// over whichever screen currently owns the most pixels — a seam-spanning
+    /// frame would otherwise flip the presentation to the neighbor.
+    public static func displayForCollapse(
+        sessionDisplayID: String?,
+        intersectionDisplayID: String?,
+        displays: [DisplayGeometry]
+    ) -> DisplayGeometry? {
+        if let sessionDisplayID, let match = displays.first(where: { $0.id == sessionDisplayID }) {
+            return match
+        }
+        if let intersectionDisplayID, let match = displays.first(where: { $0.id == intersectionDisplayID }) {
+            return match
+        }
+        return displays.first
+    }
+
+    public static func shouldSnapToExpandedBeforeSlide(
+        _ presentation: StashCollapsePresentation
+    ) -> Bool {
+        presentation == .displayClippedSlideOffscreen
+    }
+
+    public static func captureRecheckDelays() -> [TimeInterval] {
+        [0.05, 0.12, 0.22]
+    }
+
+    public struct CaptureHit: Equatable {
+        public let windowID: UInt32?
+        public let pid: Int32
+
+        public init(windowID: UInt32?, pid: Int32) {
+            self.windowID = windowID
+            self.pid = pid
+        }
+    }
+
+    /// Exact window numbers win. A session that never learned its number may
+    /// still match when it is the only idle session for that process.
+    public static func captureSessionIndex(
+        hitWindowID: UInt32,
+        hitPID: Int32,
+        sessions: [CaptureHit]
+    ) -> Int? {
+        if let exact = sessions.firstIndex(where: {
+            $0.pid == hitPID && $0.windowID == hitWindowID
+        }) {
+            return exact
+        }
+        let nilIDIndexes = sessions.indices.filter {
+            sessions[$0].pid == hitPID && sessions[$0].windowID == nil
+        }
+        guard nilIDIndexes.count == 1 else { return nil }
+        return nilIDIndexes[0]
+    }
+
     /// After a successful edge snap write, a failed minimize must put the
     /// window back. Session field rollback alone is not enough.
     public static func shouldRestorePriorFrame(
@@ -153,5 +222,15 @@ public enum MultiWindowTipPolicy {
             && !suppressedPermanently
             && !suppressedThisLaunch
             && !alreadyVisible
+    }
+
+    public enum Dismissal: Equatable {
+        case remindLater
+        case neverAgain
+        case timedOut
+    }
+
+    public static func shouldMuteUntilRelaunch(after dismissal: Dismissal) -> Bool {
+        dismissal == .remindLater || dismissal == .timedOut
     }
 }

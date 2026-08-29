@@ -149,20 +149,10 @@ struct FieldMenu: View {
                     .lineLimit(1)
             }
             .padding(.horizontal, 9)
-            .padding(.vertical, 3)
+            .padding(.vertical, 5)
             .frame(maxWidth: .infinity, alignment: alignment)
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicatorSuppressed()
         .frame(width: minWidth, alignment: alignment)
-        .background(
-            Capsule(style: .continuous)
-                .fill(SettingsTheme.ColorToken.glass(for: colorScheme))
-        )
-        .overlay(
-            Capsule(style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.10), lineWidth: 1)
-        )
     }
 }
 
@@ -192,20 +182,10 @@ struct StashColorField: View {
                     .lineLimit(1)
             }
             .padding(.horizontal, 9)
-            .padding(.vertical, 3)
+            .padding(.vertical, 5)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicatorSuppressed()
         .frame(width: colorFieldWidth, alignment: .leading)
-        .background(
-            Capsule(style: .continuous)
-                .fill(SettingsTheme.ColorToken.glass(for: colorScheme))
-        )
-        .overlay(
-            Capsule(style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.10), lineWidth: 1)
-        )
     }
 
     private var swatchGlyph: NSImage {

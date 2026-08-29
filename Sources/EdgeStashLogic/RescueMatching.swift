@@ -62,9 +62,14 @@ public enum RescueMatching {
     }
 
     /// A size-only AX write is not a restore. Drop the record only when the
-    /// window was actually moved back on-screen as well.
-    public static func recordIsSettled(moved: Bool, resized: Bool) -> Bool {
-        moved && resized
+    /// window is visible, unminimized, and fully placed back on-screen.
+    public static func recordIsSettled(
+        moved: Bool,
+        resized: Bool,
+        alphaRestored: Bool,
+        unminimized: Bool
+    ) -> Bool {
+        moved && resized && alphaRestored && unminimized
     }
 
     public static func resemblesRecordedWindow(frame: CGRect, record: Record) -> Bool {
@@ -92,6 +97,15 @@ public enum RescueMatching {
             currentAnchor = frame.minX
         }
         return abs(currentAnchor - flushOnOwningEdge) <= Tolerances.edgeFlush
+    }
+
+    public static func shouldSkipRestoreBecauseAlreadyVisible(
+        frame: CGRect,
+        display: CGRect
+    ) -> Bool {
+        let visible = frame.intersection(display)
+        guard visible.width > 1, visible.height > 1 else { return false }
+        return visible.width >= frame.width - 8 && visible.height >= frame.height - 8
     }
 
     /// Kept as the value type threading recorded facts through the match.

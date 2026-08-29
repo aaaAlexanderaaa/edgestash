@@ -119,7 +119,7 @@ private final class StashMergeStripView: NSView {
         let text = segment.title as NSString
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 12, weight: .semibold),
-            .foregroundColor: NSColor.white
+            .foregroundColor: contrastingLabel(on: segment.color)
         ]
         let textSize = text.size(withAttributes: attributes)
         let width = min(max(textSize.width + padding * 2 + iconSize + 6, 72), 140)
@@ -146,6 +146,12 @@ private final class StashMergeStripView: NSView {
             ),
             withAttributes: attributes
         )
+    }
+
+    private func contrastingLabel(on color: NSColor) -> NSColor {
+        let rgb = color.usingColorSpace(.deviceRGB) ?? color
+        let luminance = 0.2126 * rgb.redComponent + 0.7152 * rgb.greenComponent + 0.0722 * rgb.blueComponent
+        return luminance > 0.6 ? NSColor.black.withAlphaComponent(0.85) : NSColor.white
     }
 
     private func reportHover(_ event: NSEvent) {

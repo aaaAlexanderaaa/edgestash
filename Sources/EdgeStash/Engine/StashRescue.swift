@@ -46,12 +46,22 @@ enum StashRescue {
         Preferences.shared.removeRescueDossier(processID: processID, windowNumber: windowNumber)
     }
 
-    static func recoverPending(reason: String) {
+    static func recoverPending(
+        reason: String,
+        liveHolds: [SessionLifecyclePolicy.LiveRescueHold] = []
+    ) {
         let preferences = Preferences.shared
         guard preferences.hasPendingRescueDossiers() else { return }
 
         if !AccessibilityGrant.isTrusted(prompt: false) {
             for dossier in preferences.rescueDossiers {
+                guard SessionLifecyclePolicy.shouldRestoreRescueRecord(
+                    processID: dossier.subject.processID,
+                    windowNumber: dossier.subject.windowNumber,
+                    liveHolds: liveHolds
+                ) else {
+                    continue
+                }
                 _ = StashSurface.setAlpha(windowID: dossier.subject.windowNumber, alpha: 1)
             }
             NSLog("[EdgeStash] rescue \(reason): AX untrusted, alpha-only for \(preferences.rescueDossiers.count) dossier(s)")
@@ -60,25 +70,51 @@ enum StashRescue {
 
         let queue = preferences.rescueDossiers.sorted { $0.recordedAt < $1.recordedAt }
         for dossier in queue {
-            _ = recover(dossier)
+            _ = recover(dossier, liveHolds: liveHolds)
         }
     }
 
     @discardableResult
-    static func recover(_ dossier: RescueDossier) -> Bool {
+    static func recover(
+        _ dossier: RescueDossier,
+        liveHolds: [SessionLifecyclePolicy.LiveRescueHold] = []
+    ) -> Bool {
+        guard SessionLifecyclePolicy.shouldRestoreRescueRecord(
+            processID: dossier.subject.processID,
+            windowNumber: dossier.subject.windowNumber,
+            liveHolds: liveHolds
+        ) else {
+            return false
+        }
         for pid in restorationTargets(for: dossier) {
             reviveApp(pid: pid)
             let appElement = AXUIElementCreateApplication(pid)
             guard let (element, windowID, frame) = locateRecordedWindow(in: appElement, dossier: dossier) else {
                 continue
             }
+            if let savedDisplay = dossier.placement.display.rect,
+               RescueMatching.shouldSkipRestoreBecauseAlreadyVisible(frame: frame, display: savedDisplay) {
+                _ = StashSurface.setAlpha(windowID: windowID, alpha: 1)
+                Preferences.shared.removeRescueDossier(
+                    processID: dossier.subject.processID,
+                    windowNumber: dossier.subject.windowNumber
+                )
+                return true
+            }
             let placement = placementFrame(for: dossier, current: frame)
-            _ = StashSurface.setAlpha(windowID: windowID, alpha: 1)
-            _ = StashAX.setMinimized(element, false)
+            let alphaRestored = StashSurface.setAlpha(windowID: windowID, alpha: 1)
+            let unminimized: Bool
+            if StashAX.isMinimized(element) == false {
+                unminimized = true
+            } else {
+                unminimized = StashAX.setMinimized(element, false)
+            }
             let applied = StashAX.applyFrame(element, placement)
             if RescueMatching.recordIsSettled(
                 moved: applied.moved,
-                resized: applied.sized
+                resized: applied.sized,
+                alphaRestored: alphaRestored,
+                unminimized: unminimized
             ) {
                 Preferences.shared.removeRescueDossier(
                     processID: dossier.subject.processID,

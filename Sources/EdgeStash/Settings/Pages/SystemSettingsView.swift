@@ -10,22 +10,12 @@ struct SystemSettingsView: View {
         SettingsPageScaffold(tab: .system) {
             SettingsCard(L10n.systemCardGeneral) {
                 VStack(alignment: .leading, spacing: 14) {
-                    HStack {
-                        Text(L10n.systemLaunchAtLogin)
-                        Spacer()
-                        Toggle("", isOn: $preferences.openAtLogin)
-                            .labelsHidden()
-                            .toggleStyle(.switch)
-                    }
+                    Toggle(L10n.systemLaunchAtLogin, isOn: $preferences.openAtLogin)
+                        .toggleStyle(.switch)
 
                     VStack(alignment: .leading, spacing: 4) {
-                        HStack {
-                            Text(L10n.systemMenuBarIcon)
-                            Spacer()
-                            Toggle("", isOn: $preferences.menuBarItemVisible)
-                                .labelsHidden()
-                                .toggleStyle(.switch)
-                        }
+                        Toggle(L10n.systemMenuBarIcon, isOn: $preferences.menuBarItemVisible)
+                            .toggleStyle(.switch)
                         if !preferences.menuBarItemVisible {
                             Text(L10n.systemMenuBarIconNote)
                                 .font(SettingsTheme.TypeRole.job)
@@ -54,12 +44,7 @@ struct SystemSettingsView: View {
                                 _ = AccessibilityGrant.isTrusted(prompt: true)
                                 AccessibilityGrant.openSystemSettings()
                             }
-                            .buttonStyle(.plain)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 4)
-                            .foregroundStyle(.white)
-                            .background(SettingsTheme.ColorToken.rail)
-                            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                            .buttonStyle(.borderedProminent)
                         }
                     }
                     Text(L10n.systemAccessNote)

@@ -45,6 +45,16 @@ final class AppCatalog: ObservableObject {
             entries.append(AppEntry(id: bundleID, name: title, icon: candidate.icon, isRunning: true))
         }
 
+        for (bundleID, profile) in Preferences.shared.appProfiles where profile.stashOn {
+            guard claimed.insert(bundleID).inserted else { continue }
+            let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
+            let name = url.flatMap { Bundle(url: $0)?.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String }
+                ?? url?.deletingPathExtension().lastPathComponent
+                ?? bundleID
+            let icon = url.map { NSWorkspace.shared.icon(forFile: $0.path) }
+            entries.append(AppEntry(id: bundleID, name: name, icon: icon, isRunning: false))
+        }
+
         entries.sort(by: catalogOrder)
         apps = entries
     }

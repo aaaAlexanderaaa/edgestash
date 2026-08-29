@@ -150,7 +150,6 @@ final class StashEffectOverlay {
         ring.strokeColor = accent.withAlphaComponent(0.6).cgColor
         ring.fillColor = NSColor.clear.cgColor
         ring.lineWidth = lineWidth
-        ring.position = bounds.origin
 
         let group = CAAnimationGroup()
         let scale = CABasicAnimation(keyPath: "transform.scale")

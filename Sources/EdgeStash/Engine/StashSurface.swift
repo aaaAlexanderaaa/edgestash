@@ -8,6 +8,29 @@ func CGSMainConnectionID() -> CInt
 func CGSSetWindowAlpha(_ cid: CInt, _ wid: CInt, _ alpha: Float) -> CGError
 
 enum StashSurface {
+    static func frontmostWindow(atQuartz point: CGPoint) -> (windowID: UInt32, pid: pid_t)? {
+        let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+            as? [[String: Any]] ?? []
+        for info in list {
+            guard (info[kCGWindowLayer as String] as? Int) == 0,
+                  let pid = info[kCGWindowOwnerPID as String] as? pid_t,
+                  let windowID = info[kCGWindowNumber as String] as? UInt32,
+                  let bounds = info[kCGWindowBounds as String] as? [String: Any] else {
+                continue
+            }
+            let frame = CGRect(
+                x: bounds["X"] as? CGFloat ?? 0,
+                y: bounds["Y"] as? CGFloat ?? 0,
+                width: bounds["Width"] as? CGFloat ?? 0,
+                height: bounds["Height"] as? CGFloat ?? 0
+            )
+            if frame.contains(point) {
+                return (windowID, pid)
+            }
+        }
+        return nil
+    }
+
     @discardableResult
     static func setAlpha(windowID: UInt32, alpha: Float) -> Bool {
         CGSSetWindowAlpha(CGSMainConnectionID(), CInt(windowID), alpha) == .success

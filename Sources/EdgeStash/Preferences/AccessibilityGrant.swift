@@ -9,9 +9,14 @@ enum AccessibilityGrant {
     }
 
     static func openSystemSettings() {
-        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") else {
-            return
+        let candidates = [
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+            "x-apple.systempreferences:com.apple.Settings.PrivacySecurity.PrivacyAccessibility"
+        ]
+        for candidate in candidates {
+            if let url = URL(string: candidate), NSWorkspace.shared.open(url) {
+                return
+            }
         }
-        NSWorkspace.shared.open(url)
     }
 }

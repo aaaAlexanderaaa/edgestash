@@ -134,11 +134,12 @@ extension StashSession {
         screens: [NSScreen],
         primaryHeight: CGFloat
     ) -> (DisplayGeometry, NSScreen)? {
-        let geometries = DisplayCatalog.cgGeometries(screens: screens)
-        guard let display = geometries.max(by: {
-            $0.frame.intersection(frame).width * $0.frame.intersection(frame).height
-                < $1.frame.intersection(frame).width * $1.frame.intersection(frame).height
-        }) else { return nil }
+        let geometries = DisplayCatalog.adjacencyGeometries(screens: screens)
+        guard let display = StashGeometryPolicy.owningDisplay(
+            for: frame,
+            in: geometries,
+            preferredID: displayID
+        ) else { return nil }
         guard let screen = DisplayCatalog.screen(withID: display.id, screens: screens) else { return nil }
         return (display, screen)
     }
@@ -222,6 +223,14 @@ extension StashSession {
         self.observerSource = source
     }
 
+    func uninstallObserver() {
+        if let observerSource {
+            CFRunLoopRemoveSource(CFRunLoopGetCurrent(), observerSource, .defaultMode)
+        }
+        observerSource = nil
+        observer = nil
+    }
+
     private func checkLeaveToCollapse() {
         refreshPinControl()
         guard phase == .expanded, !busy else { return }
@@ -229,20 +238,29 @@ extension StashSession {
         if usingSharedMinimize { return }
         if NSEvent.pressedMouseButtons != 0 { return }
         guard let frame = StashAX.frame(of: windowElement) ?? restoreFrame else { return }
-        let primaryHeight = DisplayCatalog.primaryHeight()
+        let screens = NSScreen.screens
+        let primaryHeight = DisplayCatalog.primaryHeight(screens: screens)
         let mouse = NSEvent.mouseLocation
-        let quartz = CGPoint(
-            x: mouse.x,
-            y: StashGeometryPolicy.quartzOriginY(appKitY: mouse.y, height: 1, primaryHeight: primaryHeight)
+        let windowAppKit = StashGeometryPolicy.appKitRect(fromQuartz: frame, primaryHeight: primaryHeight)
+        let screen = displayID.flatMap { DisplayCatalog.screen(withID: $0, screens: screens) }
+            ?? owningDisplay(for: frame, screens: screens, primaryHeight: primaryHeight)?.1
+            ?? NSScreen.main
+        let pinFrames = PinControlPolicy.frames(
+            edge: edge ?? .left,
+            windowAppKit: windowAppKit,
+            screenAppKit: screen?.frame ?? windowAppKit
         )
-        let buffer = frame.insetBy(
-            dx: -Preferences.shared.gateSpanX,
-            dy: -Preferences.shared.gateSpanY
-        )
-        if buffer.contains(quartz) { return }
-        if FocusReturnPolicy.shouldReleaseAfterLeaveCollapse(didCollapse: collapse()) {
-            scheduleFocusRelease()
+        if PinControlPolicy.pointerBlocksAutoCollapse(
+            mouseAppKit: mouse,
+            windowAppKit: windowAppKit,
+            gateSpanX: Preferences.shared.gateSpanX,
+            gateSpanY: Preferences.shared.gateSpanY,
+            triggerRect: pinFrames.triggerRect,
+            safeRect: pinFrames.safeRect
+        ) {
+            return
         }
+        _ = collapse()
     }
 
     private func handleNotification(_ name: String, element: AXUIElement) {

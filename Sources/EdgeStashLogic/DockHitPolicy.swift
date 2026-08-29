@@ -49,6 +49,17 @@ public enum DockHitPolicy {
         min(owningAxis / 4, 160)
     }
 
+    public static func shouldExpandActivatedApp(
+        clickedBundleID: String?,
+        activatedBundleID: String,
+        pointerStillInDock: Bool
+    ) -> Bool {
+        if let clickedBundleID {
+            return clickedBundleID == activatedBundleID
+        }
+        return pointerStillInDock
+    }
+
     public static func hitRect(
         screenFrame: CGRect,
         side: String,

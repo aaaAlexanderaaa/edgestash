@@ -11,7 +11,7 @@ struct DisplayBoundarySettingsView: View {
     }
 
     private var hasEnabledSharedBoundary: Bool {
-        let geometries = DisplayCatalog.geometries()
+        let geometries = DisplayCatalog.adjacencyGeometries()
         return displays.contains { display in
             let geometry = geometries.first { $0.id == display.id }
                 ?? DisplayGeometry(id: display.id, frame: display.frame)
@@ -94,7 +94,7 @@ struct DisplayBoundaryRow: View {
     let displayName: String
 
     private var geometries: [DisplayGeometry] {
-        DisplayCatalog.geometries()
+        DisplayCatalog.adjacencyGeometries()
     }
 
     var body: some View {
@@ -106,7 +106,7 @@ struct DisplayBoundaryRow: View {
                     .font(.system(size: 13, weight: .semibold))
                 if display.isMain {
                     Text(L10n.displayPrimary)
-                        .font(.system(size: 10, weight: .medium))
+                        .font(.caption)
                         .foregroundColor(.secondary)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
@@ -143,9 +143,11 @@ struct DisplayBoundaryRow: View {
 
     @ViewBuilder
     private func edgeToggle(_ edge: DisplayEdge, title: String) -> some View {
+        let geometry = geometries.first { $0.id == display.id }
+            ?? DisplayGeometry(id: display.id, frame: display.frame)
         let adjacency = DisplayEdgePolicy.adjacency(
             at: edge,
-            of: DisplayGeometry(id: display.id, frame: display.frame),
+            of: geometry,
             in: geometries
         )
         let isShared = adjacency != .outer
@@ -159,7 +161,7 @@ struct DisplayBoundaryRow: View {
                 Text(title)
                     .font(.system(size: 12, weight: .medium))
                 Text(detail)
-                    .font(.system(size: 10))
+                    .font(.caption)
                     .foregroundStyle(isShared ? SettingsTheme.ColorToken.rail : .secondary)
             }
         }

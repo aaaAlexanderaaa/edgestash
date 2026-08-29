@@ -38,17 +38,12 @@ private struct TuningRow: View {
                 .lineLimit(2)
 
             HStack(spacing: 10) {
-                SteppedTrack(value: $rawValue, limits: range, increment: step)
+                Slider(value: $rawValue, in: range, step: step)
 
-                Button {
+                Button(L10n.hoverReset) {
                     rawValue = defaultValue
-                } label: {
-                    Label(L10n.hoverReset, systemImage: "arrow.uturn.backward")
-                        .labelStyle(.titleAndIcon)
-                        .font(.footnote)
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
+                .buttonStyle(.borderless)
             }
             .padding(.top, 2)
         }

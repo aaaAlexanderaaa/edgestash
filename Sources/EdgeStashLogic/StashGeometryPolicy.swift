@@ -38,6 +38,9 @@ public enum StashGeometryPolicy {
     /// parking a window near an edge is not a commitment.
     public static let captureBand: CGFloat = outerPanelWidth * 3
     public static let mapEdgeHitWidth: CGFloat = 10
+    /// Extra pointer slop at the bezel. Title-bar drags leave the cursor over
+    /// the window, so capture also accepts a pointer inside the window frame.
+    public static let capturePointerSlop: CGFloat = 80
 
     public static func quartzOriginY(
         appKitY: CGFloat,
@@ -106,6 +109,44 @@ public enum StashGeometryPolicy {
             }
             return lhs.1 < rhs.1
         }?.0
+    }
+
+    public static func pointerAllowsEdgeCapture(
+        mouse: CGPoint,
+        edge: DisplayEdge,
+        displayFrame: CGRect,
+        windowFrame: CGRect,
+        slop: CGFloat = capturePointerSlop
+    ) -> Bool {
+        if windowFrame.insetBy(dx: -1, dy: -1).contains(mouse) {
+            return true
+        }
+        switch edge {
+        case .left:
+            return mouse.x <= displayFrame.minX + slop
+        case .right:
+            return mouse.x >= displayFrame.maxX - slop
+        }
+    }
+
+    public static func owningDisplay(
+        for frame: CGRect,
+        in displays: [DisplayGeometry],
+        preferredID: String? = nil
+    ) -> DisplayGeometry? {
+        let overlaps = displays.compactMap { display -> (DisplayGeometry, CGFloat)? in
+            let area = display.frame.intersection(frame)
+            let size = area.width * area.height
+            guard size > 0 else { return nil }
+            return (display, size)
+        }
+        if let best = overlaps.max(by: { $0.1 < $1.1 }) {
+            return best.0
+        }
+        if let preferredID {
+            return displays.first(where: { $0.id == preferredID })
+        }
+        return displays.first
     }
 
     /// Temporary / first-press shortcut: pick the nearest allowed edge even when
@@ -262,5 +303,12 @@ public enum StashGeometryPolicy {
 public enum HaloPreviewPolicy {
     public static func shouldClear(settingsTabIsBehavior: Bool, settingsWindowVisible: Bool) -> Bool {
         !settingsWindowVisible || !settingsTabIsBehavior
+    }
+
+    public static func shouldForgetTarget(settingsTabIsBehavior: Bool, settingsWindowVisible: Bool) -> Bool {
+        shouldClear(
+            settingsTabIsBehavior: settingsTabIsBehavior,
+            settingsWindowVisible: settingsWindowVisible
+        )
     }
 }

@@ -130,8 +130,8 @@ final class StashMergeCoordinator {
         }
         if clickLocked[key] == id { return }
         let delay = TimeInterval(Preferences.shared.revealDelayMS) / 1000
-        hoverTimers[key] = Timer.scheduledTimer(withTimeInterval: max(delay, 0.05), repeats: false) { _ in
-            session.mergeReveal()
+        hoverTimers[key] = Timer.scheduledTimer(withTimeInterval: max(delay, 0.05), repeats: false) { [weak session] _ in
+            session?.mergeReveal()
         }
     }
 

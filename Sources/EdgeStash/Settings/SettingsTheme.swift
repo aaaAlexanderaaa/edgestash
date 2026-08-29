@@ -10,25 +10,29 @@ enum SettingsTheme {
     enum ColorToken {
         static let rail = Color(.controlAccentColor)
         static let railMuted = Color(.controlAccentColor).opacity(0.55)
-        static let ink = Color(red: 34.0 / 255.0, green: 37.0 / 255.0, blue: 44.0 / 255.0)
-        static let glass = Color(red: 240.0 / 255.0, green: 242.0 / 255.0, blue: 246.0 / 255.0)
-        static let bezel = Color(red: 28.0 / 255.0, green: 30.0 / 255.0, blue: 35.0 / 255.0)
-        static let hairline = Color(red: 205.0 / 255.0, green: 210.0 / 255.0, blue: 218.0 / 255.0)
+        static let ink = Color(NSColor.labelColor)
+        static let glass = Color(NSColor.controlBackgroundColor)
+        static let bezel = Color(NSColor.windowBackgroundColor)
+        static let hairline = Color(NSColor.separatorColor)
 
         static func ink(for scheme: ColorScheme) -> Color {
-            scheme == .dark ? Color(red: 238.0 / 255.0, green: 240.0 / 255.0, blue: 244.0 / 255.0) : ink
+            _ = scheme
+            return Color(NSColor.labelColor)
         }
 
         static func glass(for scheme: ColorScheme) -> Color {
-            scheme == .dark ? Color(red: 32.0 / 255.0, green: 34.0 / 255.0, blue: 39.0 / 255.0) : glass
+            _ = scheme
+            return Color(NSColor.controlBackgroundColor)
         }
 
         static func pageBackground(for scheme: ColorScheme) -> Color {
-            scheme == .dark ? Color(NSColor.windowBackgroundColor) : glass
+            _ = scheme
+            return Color(NSColor.windowBackgroundColor)
         }
 
         static func hairline(for scheme: ColorScheme) -> Color {
-            scheme == .dark ? Color.white.opacity(0.12) : hairline
+            _ = scheme
+            return Color(NSColor.separatorColor)
         }
 
         static func railNSColor(enabled: Bool = true) -> NSColor {
@@ -51,10 +55,10 @@ enum SettingsTheme {
     }
 
     enum TypeRole {
-        static let railTitle = Font.system(size: 22, weight: .semibold, design: .rounded)
-        static let pageTitle = Font.system(size: 15, weight: .semibold)
-        static let job = Font.system(size: 12)
-        static let body = Font.system(size: 13)
-        static let mono = Font.system(size: 11, design: .monospaced)
+        static let railTitle = Font.headline
+        static let pageTitle = Font.headline
+        static let job = Font.caption
+        static let body = Font.body
+        static let mono = Font.system(.caption, design: .monospaced)
     }
 }

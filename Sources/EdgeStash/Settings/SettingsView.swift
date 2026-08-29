@@ -50,9 +50,9 @@ struct SettingsView: View {
             SettingsRail(
                 tabs: railTabs,
                 selectedTab: $selectedTab,
-                showsEmbeddedTitle: true
+                showsEmbeddedTitle: false
             )
-            .navigationTitle("")
+            .navigationTitle("EdgeStash")
             .navigationSplitViewColumnWidth(
                 min: SettingsTheme.Space.railWidth,
                 ideal: SettingsTheme.Space.railWidth,
@@ -70,7 +70,7 @@ struct SettingsView: View {
             SettingsRail(
                 tabs: railTabs,
                 selectedTab: $selectedTab,
-                showsEmbeddedTitle: true
+                showsEmbeddedTitle: false
             )
             .frame(width: SettingsTheme.Space.railWidth)
 

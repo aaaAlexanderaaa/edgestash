@@ -63,7 +63,9 @@ final class StashHotkeys {
             guard status == noErr, let hotkeyRef else { continue }
             hotkeyRefs[identifier] = hotkeyRef
             bundleIDsByID[identifier] = binding.0
-            registeredBundleIDs.insert(binding.0)
+            if CarbonHotkeyPolicy.shouldExcludeFromEventMonitor(carbonHandlerInstalled: handlerRef != nil) {
+                registeredBundleIDs.insert(binding.0)
+            }
         }
     }
 

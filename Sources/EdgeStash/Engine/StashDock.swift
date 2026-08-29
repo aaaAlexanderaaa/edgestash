@@ -1,18 +1,57 @@
 import AppKit
+import ApplicationServices
 import CoreGraphics
 import EdgeStashLogic
 
 enum StashDock {
-    private static var lastDown: (at: Date, inDock: Bool)?
+    private static var lastDown: (at: Date, inDock: Bool, bundleID: String?)?
     private static let intentWindow: TimeInterval = 0.8
 
     static func noteMouseDown(at point: CGPoint) {
-        lastDown = (Date(), isDockPoint(point))
+        let inDock = isDockPoint(point)
+        lastDown = (Date(), inDock, inDock ? bundleID(at: point) : nil)
     }
 
     static func hasRecentClick(now: Date = Date()) -> Bool {
         guard let lastDown, lastDown.inDock else { return false }
         return now.timeIntervalSince(lastDown.at) <= intentWindow
+    }
+
+    static func clickedBundleID() -> String? {
+        lastDown?.bundleID
+    }
+
+    static func consumeRecentClick() {
+        lastDown = nil
+    }
+
+    /// Best-effort Dock icon identity: the Dock AX title usually matches the
+    /// running app's localized name.
+    private static func bundleID(at point: CGPoint) -> String? {
+        guard let dock = NSWorkspace.shared.runningApplications.first(where: {
+            $0.bundleIdentifier == dockProcessBundleID
+        }) else {
+            return nil
+        }
+        let app = AXUIElementCreateApplication(dock.processIdentifier)
+        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
+        let quartzY = StashGeometryPolicy.quartzOriginY(
+            appKitY: point.y,
+            height: 1,
+            primaryHeight: primaryHeight
+        )
+        var element: AXUIElement?
+        guard AXUIElementCopyElementAtPosition(app, Float(point.x), Float(quartzY), &element) == .success,
+              let element else {
+            return nil
+        }
+        var title: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXTitleAttribute as CFString, &title) == .success,
+              let name = title as? String,
+              !name.isEmpty else {
+            return nil
+        }
+        return NSWorkspace.shared.runningApplications.first { $0.localizedName == name }?.bundleIdentifier
     }
 
     static func isDockPoint(_ point: CGPoint) -> Bool {

@@ -67,6 +67,12 @@ enum DisplayCatalog {
         }
     }
 
+    /// Quartz frames for adjacency / collapse policy. Settings map drawing
+    /// keeps AppKit `geometries()` so the tiles match the desktop.
+    static func adjacencyGeometries(screens: [NSScreen] = NSScreen.screens) -> [DisplayGeometry] {
+        cgGeometries(screens: screens)
+    }
+
     static func cgGeometries(screens: [NSScreen] = NSScreen.screens) -> [DisplayGeometry] {
         let primaryHeight = screens.first?.frame.height ?? 0
         return screens.map {

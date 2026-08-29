@@ -40,10 +40,11 @@ final class HaloController: ObservableObject {
     }
 
     private func reconcile() {
-        if HaloPreviewPolicy.shouldClear(
+        if HaloPreviewPolicy.shouldForgetTarget(
             settingsTabIsBehavior: settingsTabIsBehavior,
             settingsWindowVisible: settingsWindowVisible
         ) {
+            target = nil
             hideWindow()
             return
         }
@@ -55,7 +56,7 @@ final class HaloController: ObservableObject {
             hideWindow()
             return
         }
-        let geometries = DisplayCatalog.geometries()
+        let geometries = DisplayCatalog.adjacencyGeometries()
         guard let geometry = geometries.first(where: { $0.id == target.displayID }) else {
             hideWindow()
             return

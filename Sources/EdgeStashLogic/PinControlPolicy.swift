@@ -138,4 +138,20 @@ public enum PinControlPolicy {
     public static func shouldAutoCollapse(isPinned: Bool) -> Bool {
         !isPinned
     }
+
+    /// Leave-to-collapse must treat the pin corridor as inside the stash,
+    /// not as empty desktop. The button sits outside the window frame.
+    public static func pointerBlocksAutoCollapse(
+        mouseAppKit: CGPoint,
+        windowAppKit: CGRect,
+        gateSpanX: CGFloat,
+        gateSpanY: CGFloat,
+        triggerRect: CGRect,
+        safeRect: CGRect
+    ) -> Bool {
+        let buffer = windowAppKit.insetBy(dx: -gateSpanX, dy: -gateSpanY)
+        return buffer.contains(mouseAppKit)
+            || triggerRect.contains(mouseAppKit)
+            || safeRect.contains(mouseAppKit)
+    }
 }

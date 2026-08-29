@@ -91,16 +91,49 @@ struct EdgeStashLogicTests {
             "visible on-screen frame is not a plausible hidden candidate"
         )
         expect(
-            RescueMatching.recordIsSettled(moved: true, resized: true),
-            "rescue records clear only after both position and size writes succeed"
+            RescueMatching.recordIsSettled(
+                moved: true,
+                resized: true,
+                alphaRestored: true,
+                unminimized: true
+            ),
+            "rescue records clear only after visibility and frame restoration succeed"
         )
         expect(
-            !RescueMatching.recordIsSettled(moved: false, resized: true),
+            !RescueMatching.recordIsSettled(
+                moved: false,
+                resized: true,
+                alphaRestored: true,
+                unminimized: true
+            ),
             "a size-only AX write must keep the rescue record"
         )
         expect(
-            !RescueMatching.recordIsSettled(moved: true, resized: false),
+            !RescueMatching.recordIsSettled(
+                moved: true,
+                resized: false,
+                alphaRestored: true,
+                unminimized: true
+            ),
             "a position-only AX write must keep the rescue record"
+        )
+        expect(
+            !RescueMatching.recordIsSettled(
+                moved: true,
+                resized: true,
+                alphaRestored: false,
+                unminimized: true
+            ),
+            "a failed alpha restore must keep the rescue record"
+        )
+        expect(
+            !RescueMatching.recordIsSettled(
+                moved: true,
+                resized: true,
+                alphaRestored: true,
+                unminimized: false
+            ),
+            "a failed unminimize must keep the rescue record"
         )
 
         let rightRecord = RescueMatching.Record(
@@ -147,6 +180,10 @@ struct EdgeStashLogicTests {
             "minimize must keep a regular session"
         )
         expect(
+            SessionLifecyclePolicy.shouldRemoveManagerSession(for: .appDisabled),
+            "disabling an app must remove its manager session"
+        )
+        expect(
             SessionLifecyclePolicy.shouldClearRescueRecords(
                 for: .windowDestroyed,
                 restorePositionSucceeded: false,
@@ -161,6 +198,33 @@ struct EdgeStashLogicTests {
                 isFloating: false
             ),
             "quit must keep rescue records when restore fails"
+        )
+        expect(
+            !SessionLifecyclePolicy.shouldClearRescueRecords(
+                for: .appDisabled,
+                restorePositionSucceeded: false,
+                isFloating: false
+            ),
+            "disabling an app must keep rescue records when restore fails"
+        )
+        expect(
+            SessionLifecyclePolicy.shouldClearRescueRecords(
+                for: .appDisabled,
+                restorePositionSucceeded: true,
+                restoreAlphaSucceeded: true,
+                isFloating: false
+            ),
+            "disabling an app clears rescue records after a successful restore"
+        )
+        expect(
+            !SessionLifecyclePolicy.shouldClearRescueRecords(
+                for: .appDisabled,
+                restorePositionSucceeded: true,
+                restoreAlphaSucceeded: true,
+                restoreUnminimizeSucceeded: false,
+                isFloating: false
+            ),
+            "disabling an app must keep rescue records when unminimize fails"
         )
         expect(
             SessionLifecyclePolicy.shouldClearRescueRecords(
@@ -604,8 +668,8 @@ struct EdgeStashLogicTests {
                 of: leftDisplay,
                 in: sideBySideDisplays,
                 selection: DisplayEdgeSelection(leftEnabled: true, rightEnabled: true)
-            ) == .systemMinimize,
-            "an enabled shared edge previews as minimize"
+            ) == .slideOffscreen,
+            "a partially shared edge keeps a slide preview on its exposed intervals"
         )
         expect(
             DisplayArrangementPolicy.previewKind(
@@ -625,6 +689,15 @@ struct EdgeStashLogicTests {
                 selection: DisplayEdgeSelection(leftEnabled: true, rightEnabled: false)
             ) == .disabled,
             "a disabled edge previews as disabled even when shared"
+        )
+        expect(
+            DisplayArrangementPolicy.previewKind(
+                at: .left,
+                of: middleDisplay,
+                in: threeDisplays,
+                selection: middleBothEdgesEnabled
+            ) == .systemMinimize,
+            "a fully shared edge previews as minimize across its whole length"
         )
 
         let mapSlots = DisplayArrangementPolicy.fittedSlots(
@@ -654,6 +727,20 @@ struct EdgeStashLogicTests {
         expect(
             StashSessionPolicy.phase(after: .capture, from: .idle) == .captured,
             "idle accepts a capture into ownership"
+        )
+        expect(
+            !StashSessionPolicy.isWindowDrag(
+                from: CGRect(x: 10, y: 20, width: 800, height: 600),
+                to: CGRect(x: 10.4, y: 20.4, width: 800, height: 600)
+            ),
+            "sub-point AX rounding after a click must not arm edge capture"
+        )
+        expect(
+            StashSessionPolicy.isWindowDrag(
+                from: CGRect(x: 10, y: 20, width: 800, height: 600),
+                to: CGRect(x: 11, y: 20, width: 800, height: 600)
+            ),
+            "a deliberate one-point window translation is a capture drag"
         )
         expect(
             StashSessionPolicy.phase(after: .collapse, from: .captured) == .collapsed,
@@ -868,8 +955,12 @@ struct EdgeStashLogicTests {
             "failed auto-collapse must not return focus to another app"
         )
         expect(
-            FocusReturnPolicy.shouldReleaseAfterLeaveCollapse(didCollapse: true),
-            "successful leave collapse may return focus"
+            !FocusReturnPolicy.shouldReleaseAfterLeaveCollapse(didCollapse: true),
+            "leave collapse must not return focus before the slide finishes"
+        )
+        expect(
+            FocusReturnPolicy.shouldReleaseAfterLeaveCollapse(didCollapse: true, slideFinished: true),
+            "successful leave collapse may return focus after the slide finishes"
         )
         expect(
             MultiWindowTipPolicy.shouldPresent(
@@ -1364,6 +1455,364 @@ struct EdgeStashLogicTests {
                 candidateIsCollapsedManaged: true
             ),
             "a still-collapsed managed window is not a focus-return target"
+        )
+
+        expect(
+            AppShortcutPolicy.shouldCaptureIdleFrontWindow(
+                hasIdleWindow: true,
+                hasManagedWindow: true
+            ),
+            "a shortcut must still stash an idle window when another is already managed"
+        )
+        expect(
+            !AppShortcutPolicy.shouldCaptureIdleFrontWindow(
+                hasIdleWindow: false,
+                hasManagedWindow: true
+            ),
+            "a shortcut with no idle window falls through to managed toggle"
+        )
+        expect(
+            SessionLifecyclePolicy.shouldClearRescueRecords(
+                for: .accessibilityLost,
+                restorePositionSucceeded: true,
+                restoreAlphaSucceeded: true,
+                isFloating: false
+            ),
+            "a successful restore after trust loss must clear the rescue dossier"
+        )
+        expect(
+            !SessionLifecyclePolicy.shouldClearRescueRecords(
+                for: .accessibilityLost,
+                restorePositionSucceeded: false,
+                isFloating: false
+            ),
+            "a failed restore after trust loss must keep the rescue dossier"
+        )
+        expect(
+            SessionLifecyclePolicy.shouldUninstallObservers(for: .accessibilityLost),
+            "trust loss must tear down per-window AX observers"
+        )
+        expect(
+            SessionLifecyclePolicy.shouldRemoveManagerSession(for: .accessibilityLost),
+            "trust loss must drop sessions so they are rediscovered after grant"
+        )
+        expect(
+            SessionLifecyclePolicy.shouldRecoverOnSubjectLaunch(
+                launchedBundleID: "com.example.safari",
+                pendingSubjectBundleIDs: ["com.example.safari"]
+            ),
+            "a later app launch must retry pending rescue"
+        )
+        expect(
+            !SessionLifecyclePolicy.shouldRecoverOnSubjectLaunch(
+                launchedBundleID: "com.example.mail",
+                pendingSubjectBundleIDs: ["com.example.safari"]
+            ),
+            "an unrelated app launch must not recover live collapsed dossiers"
+        )
+        expect(
+            !SessionLifecyclePolicy.shouldRecoverOnSubjectLaunch(
+                launchedBundleID: nil,
+                pendingSubjectBundleIDs: ["com.example.safari"]
+            ),
+            "a launch without a bundle id must not sweep every pending dossier"
+        )
+        expect(
+            !SessionLifecyclePolicy.shouldRestoreRescueRecord(
+                processID: 77,
+                windowNumber: 42,
+                liveHolds: [
+                    .init(processID: 77, windowNumber: 42)
+                ]
+            ),
+            "a live managed session must keep its crash dossier until it ends"
+        )
+        expect(
+            !SessionLifecyclePolicy.shouldRestoreRescueRecord(
+                processID: 77,
+                windowNumber: 42,
+                liveHolds: [
+                    .init(processID: 77, windowNumber: nil)
+                ]
+            ),
+            "an unresolved live session of the same process still owns its dossier"
+        )
+        expect(
+            SessionLifecyclePolicy.shouldRestoreRescueRecord(
+                processID: 77,
+                windowNumber: 42,
+                liveHolds: [
+                    .init(processID: 88, windowNumber: 42)
+                ]
+            ),
+            "a relaunched process may restore the recorded window"
+        )
+        expect(
+            SessionLifecyclePolicy.shouldRestoreRescueRecord(
+                processID: 77,
+                windowNumber: 99,
+                liveHolds: [
+                    .init(processID: 77, windowNumber: 42)
+                ]
+            ),
+            "a sibling window of the same process may still be rescued"
+        )
+        expect(
+            !SessionLifecyclePolicy.shouldRecoverOnPreferenceChange(),
+            "preference updates must not run rescue against live collapsed sessions"
+        )
+        expect(
+            SessionEventTapPolicy.shouldReenableTap(type: .tapDisabledByTimeout),
+            "a timeout-disabled session tap must be turned back on"
+        )
+        expect(
+            SessionEventTapPolicy.shouldReenableTap(type: .tapDisabledByUserInput),
+            "a user-input-disabled session tap must be turned back on"
+        )
+        expect(
+            !SessionEventTapPolicy.shouldReenableTap(type: .leftMouseDown),
+            "ordinary mouse-down must not be treated as a tap-disable event"
+        )
+        expect(
+            SessionMouseRelayPolicy.shouldAccept(
+                kind: .down,
+                buttonPressed: true,
+                lastAccepted: nil
+            ),
+            "the first physical press must start a capture gesture"
+        )
+        expect(
+            !SessionMouseRelayPolicy.shouldAccept(
+                kind: .down,
+                buttonPressed: true,
+                lastAccepted: .down
+            ),
+            "tap and monitor copies of the same press must not restart the gesture"
+        )
+        expect(
+            SessionMouseRelayPolicy.shouldAccept(
+                kind: .up,
+                buttonPressed: false,
+                lastAccepted: .down
+            ),
+            "mouse-up must complete the press that started the gesture"
+        )
+        expect(
+            !SessionMouseRelayPolicy.shouldAccept(
+                kind: .up,
+                buttonPressed: false,
+                lastAccepted: .up
+            ),
+            "a leftover mouse-up must not abort in-flight capture retries"
+        )
+        expect(
+            !SessionMouseRelayPolicy.shouldAccept(
+                kind: .down,
+                buttonPressed: false,
+                lastAccepted: .up
+            ),
+            "a late tap mouse-down after release must not arm a new gesture"
+        )
+        expect(
+            SessionMouseRelayPolicy.shouldAccept(
+                kind: .down,
+                buttonPressed: true,
+                lastAccepted: .up
+            ),
+            "a real second press after release must start a new gesture"
+        )
+
+        let collapseLeft = DisplayGeometry(id: "L", frame: CGRect(x: 0, y: 0, width: 1440, height: 900))
+        let collapseRight = DisplayGeometry(id: "R", frame: CGRect(x: 1440, y: 0, width: 1440, height: 900))
+        expect(
+            StashSessionPolicy.displayForCollapse(
+                sessionDisplayID: "L",
+                intersectionDisplayID: "R",
+                displays: [collapseLeft, collapseRight]
+            )?.id == "L",
+            "collapse must keep the capture display when the frame straddles a seam"
+        )
+        expect(
+            StashSessionPolicy.shouldSnapToExpandedBeforeSlide(.displayClippedSlideOffscreen),
+            "a clipped seam slide must snap to the owning expanded frame first"
+        )
+        expect(
+            !StashSessionPolicy.shouldSnapToExpandedBeforeSlide(.slideOffscreen),
+            "an outer-edge slide keeps the live origin"
+        )
+        expect(
+            !StashSessionPolicy.captureRecheckDelays().isEmpty,
+            "mouse-up capture must re-read the AX frame after it can settle"
+        )
+        expect(
+            StashSessionPolicy.captureSessionIndex(
+                hitWindowID: 42,
+                hitPID: 7,
+                sessions: [
+                    .init(windowID: 42, pid: 7),
+                    .init(windowID: 99, pid: 7)
+                ]
+            ) == 0,
+            "an exact window number wins the capture hit"
+        )
+        expect(
+            StashSessionPolicy.captureSessionIndex(
+                hitWindowID: 42,
+                hitPID: 7,
+                sessions: [
+                    .init(windowID: nil, pid: 7)
+                ]
+            ) == 0,
+            "a unique idle session may capture even before AX reports a window number"
+        )
+        expect(
+            StashSessionPolicy.captureSessionIndex(
+                hitWindowID: 42,
+                hitPID: 7,
+                sessions: [
+                    .init(windowID: nil, pid: 7),
+                    .init(windowID: nil, pid: 7)
+                ]
+            ) == nil,
+            "two window-number-less sessions of the same process must not guess"
+        )
+        expect(
+            StashSessionPolicy.captureSessionIndex(
+                hitWindowID: 42,
+                hitPID: 7,
+                sessions: [
+                    .init(windowID: nil, pid: 7),
+                    .init(windowID: 42, pid: 7)
+                ]
+            ) == 1,
+            "an exact window number still wins when a sibling has no number yet"
+        )
+        expect(
+            StashSessionPolicy.captureSessionIndex(
+                hitWindowID: 42,
+                hitPID: 7,
+                sessions: [
+                    .init(windowID: nil, pid: 8)
+                ]
+            ) == nil,
+            "a missing window number on a different process is not a capture hit"
+        )
+        expect(
+            MultiWindowTipPolicy.shouldMuteUntilRelaunch(after: .timedOut),
+            "a timed-out multi-window tip must stay quiet until relaunch"
+        )
+        expect(
+            MultiWindowTipPolicy.shouldMuteUntilRelaunch(after: .remindLater),
+            "remind-later must mute the multi-window tip until relaunch"
+        )
+        expect(
+            !MultiWindowTipPolicy.shouldMuteUntilRelaunch(after: .neverAgain),
+            "never-again is a permanent preference, not a launch mute"
+        )
+
+        let pointerDisplay = CGRect(x: 0, y: 0, width: 1440, height: 900)
+        let capturedWindow = CGRect(x: 0, y: 80, width: 800, height: 600)
+        expect(
+            StashGeometryPolicy.pointerAllowsEdgeCapture(
+                mouse: CGPoint(x: 400, y: 200),
+                edge: .left,
+                displayFrame: pointerDisplay,
+                windowFrame: capturedWindow
+            ),
+            "a title-bar drag onto the edge must capture even when the pointer is over the window"
+        )
+        expect(
+            StashGeometryPolicy.pointerAllowsEdgeCapture(
+                mouse: CGPoint(x: 10, y: 10),
+                edge: .left,
+                displayFrame: pointerDisplay,
+                windowFrame: capturedWindow
+            ),
+            "a pointer still on the bezel must keep allowing capture"
+        )
+        expect(
+            !StashGeometryPolicy.pointerAllowsEdgeCapture(
+                mouse: CGPoint(x: 900, y: 10),
+                edge: .left,
+                displayFrame: pointerDisplay,
+                windowFrame: capturedWindow
+            ),
+            "a pointer far from both the window and the edge must not confirm capture"
+        )
+        expect(
+            StashGeometryPolicy.owningDisplay(
+                for: CGRect(x: -800, y: 80, width: 800, height: 600),
+                in: [collapseLeft, collapseRight],
+                preferredID: "L"
+            )?.id == "L",
+            "a fully off-screen window must not attach to a zero-overlap neighbor"
+        )
+
+        let pinWindow = CGRect(x: 100, y: 100, width: 400, height: 300)
+        let leavePinFrames = PinControlPolicy.frames(
+            edge: .left,
+            windowAppKit: pinWindow,
+            screenAppKit: CGRect(x: 0, y: 0, width: 1440, height: 900)
+        )
+        expect(
+            PinControlPolicy.pointerBlocksAutoCollapse(
+                mouseAppKit: CGPoint(x: leavePinFrames.buttonFrame.midX, y: leavePinFrames.buttonFrame.midY),
+                windowAppKit: pinWindow,
+                gateSpanX: 32,
+                gateSpanY: 32,
+                triggerRect: leavePinFrames.triggerRect,
+                safeRect: leavePinFrames.safeRect
+            ),
+            "moving onto the pin must not auto-collapse the expanded stash"
+        )
+        expect(
+            HaloPreviewPolicy.shouldForgetTarget(
+                settingsTabIsBehavior: false,
+                settingsWindowVisible: true
+            ),
+            "leaving Behavior must forget the halo target, not only hide it"
+        )
+        expect(
+            LaunchAtLoginSync.publishedState(enabled: false, requiresApproval: true),
+            "a login item waiting for approval must keep the toggle on"
+        )
+        expect(
+            CarbonHotkeyPolicy.shouldExcludeFromEventMonitor(carbonHandlerInstalled: true),
+            "Carbon-backed chords skip the NSEvent path only when the handler is live"
+        )
+        expect(
+            !CarbonHotkeyPolicy.shouldExcludeFromEventMonitor(carbonHandlerInstalled: false),
+            "failed Carbon install must fall back to the NSEvent monitor"
+        )
+        expect(
+            DockHitPolicy.shouldExpandActivatedApp(
+                clickedBundleID: "com.apple.Safari",
+                activatedBundleID: "com.apple.Notes",
+                pointerStillInDock: true
+            ) == false,
+            "a Dock click for Safari must not expand Notes"
+        )
+        expect(
+            DockHitPolicy.shouldExpandActivatedApp(
+                clickedBundleID: nil,
+                activatedBundleID: "com.apple.Safari",
+                pointerStillInDock: true
+            ),
+            "when the Dock icon cannot be identified, expand only if the pointer is still on the Dock"
+        )
+        expect(
+            RescueMatching.shouldSkipRestoreBecauseAlreadyVisible(
+                frame: CGRect(x: 80, y: 80, width: 800, height: 600),
+                display: CGRect(x: 0, y: 0, width: 1440, height: 900)
+            ),
+            "rescue must not teleport a window that is already fully on-screen"
+        )
+        expect(
+            !RescueMatching.shouldSkipRestoreBecauseAlreadyVisible(
+                frame: CGRect(x: -799, y: 80, width: 800, height: 600),
+                display: CGRect(x: 0, y: 0, width: 1440, height: 900)
+            ),
+            "a parked off-screen window still needs rescue"
         )
 
         if failed > 0 {

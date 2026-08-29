@@ -10,6 +10,11 @@ final class StashEngine {
     private var mouseUpMonitor: Any?
     private var localMouseDown: Any?
     private var localMouseUp: Any?
+    private var eventTap: CFMachPort?
+    private var eventTapSource: CFRunLoopSource?
+    private var lastAcceptedMouse: SessionMouseRelayPolicy.Kind?
+    private var captureGesture: (session: StashSession, initialFrame: CGRect)?
+    private var captureRetryGeneration = 0
     private var syncTimer: Timer?
     private var minimizeTimer: Timer?
     private let hotkeys = StashHotkeys()
@@ -71,6 +76,14 @@ final class StashEngine {
             StashFocusReturn.noteActivation(app)
         }
         guard isRunning, StashDock.hasRecentClick() else { return }
+        guard DockHitPolicy.shouldExpandActivatedApp(
+            clickedBundleID: StashDock.clickedBundleID(),
+            activatedBundleID: bundleID,
+            pointerStillInDock: StashDock.isDockPoint(NSEvent.mouseLocation)
+        ) else {
+            return
+        }
+        StashDock.consumeRecentClick()
         let managed = sessions.filter { $0.bundleID == bundleID && $0.isManaged && !$0.isPinned }
         guard let session = preferred(in: managed, bundleID: bundleID) else { return }
         session.expandFromDock()
@@ -81,6 +94,9 @@ final class StashEngine {
         guard isRunning else { return }
         hotkeys.reload()
         sessions.forEach { $0.detachIfTopologyChanged() }
+        if SessionLifecyclePolicy.shouldRecoverOnPreferenceChange() {
+            StashRescue.recoverPending(reason: "topology")
+        }
         syncSessions()
     }
 
@@ -99,11 +115,13 @@ final class StashEngine {
     }
 
     private func observeMice() {
-        mouseDownMonitor = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDown) { _ in
-            StashDock.noteMouseDown(at: NSEvent.mouseLocation)
+        StashEngineMouseRelay.shared.engine = self
+        installSessionEventTap()
+        mouseDownMonitor = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDown) { [weak self] _ in
+            self?.handleMouseDown()
         }
-        localMouseDown = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { event in
-            StashDock.noteMouseDown(at: NSEvent.mouseLocation)
+        localMouseDown = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
+            self?.handleMouseDown()
             return event
         }
         mouseUpMonitor = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseUp) { [weak self] _ in
@@ -115,23 +133,144 @@ final class StashEngine {
         }
     }
 
-    private func handleMouseUp() {
+    private func installSessionEventTap() {
+        let mask = (1 << CGEventType.leftMouseDown.rawValue) | (1 << CGEventType.leftMouseUp.rawValue)
+        guard let tap = CGEvent.tapCreate(
+            tap: .cgSessionEventTap,
+            place: .headInsertEventTap,
+            options: .listenOnly,
+            eventsOfInterest: CGEventMask(mask),
+            callback: { _, type, event, _ in
+                if SessionEventTapPolicy.shouldReenableTap(type: type) {
+                    StashEngineMouseRelay.shared.reenableEventTap()
+                    return Unmanaged.passUnretained(event)
+                }
+                DispatchQueue.main.async {
+                    if type == .leftMouseDown {
+                        StashEngineMouseRelay.shared.engine?.handleMouseDown()
+                    } else if type == .leftMouseUp {
+                        StashEngineMouseRelay.shared.engine?.handleMouseUp()
+                    }
+                }
+                return Unmanaged.passUnretained(event)
+            },
+            userInfo: nil
+        ) else {
+            return
+        }
+        eventTap = tap
+        StashEngineMouseRelay.shared.eventTap = tap
+        let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+        eventTapSource = source
+        CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .commonModes)
+        CGEvent.tapEnable(tap: tap, enable: true)
+    }
+
+    private func shouldAcceptMouse(_ kind: SessionMouseRelayPolicy.Kind) -> Bool {
+        let accepted = SessionMouseRelayPolicy.shouldAccept(
+            kind: kind,
+            buttonPressed: (NSEvent.pressedMouseButtons & 1) != 0,
+            lastAccepted: lastAcceptedMouse
+        )
+        guard accepted else { return false }
+        lastAcceptedMouse = kind
+        return true
+    }
+
+    func handleMouseDown() {
+        guard shouldAcceptMouse(.down) else { return }
+        captureRetryGeneration += 1
         let mouse = NSEvent.mouseLocation
-        for session in sessions where session.isIdle {
-            if session.considerCapture(mouseAppKit: mouse) {
-                lastPreferredSession[session.bundleID] = ObjectIdentifier(session)
-                considerMultiWindowTip(for: session.bundleID)
-            }
+        StashDock.noteMouseDown(at: mouse)
+        captureGesture = nil
+
+        let primaryHeight = DisplayCatalog.primaryHeight(screens: NSScreen.screens)
+        let mouseQuartz = CGPoint(
+            x: mouse.x,
+            y: StashGeometryPolicy.quartzOriginY(
+                appKitY: mouse.y,
+                height: 1,
+                primaryHeight: primaryHeight
+            )
+        )
+        guard let hit = StashSurface.frontmostWindow(atQuartz: mouseQuartz) else {
+            return
+        }
+        let idle = sessions.filter(\.isIdle)
+        let candidates = idle.map {
+            StashSessionPolicy.CaptureHit(windowID: $0.windowID, pid: $0.pid)
+        }
+        guard let index = StashSessionPolicy.captureSessionIndex(
+            hitWindowID: hit.windowID,
+            hitPID: hit.pid,
+            sessions: candidates
+        ),
+              let initialFrame = idle[index].captureGestureFrame else {
+            return
+        }
+        let session = idle[index]
+        session.resolveWindowID(fallback: hit.windowID)
+        captureGesture = (session, initialFrame)
+    }
+
+    func handleMouseUp() {
+        guard shouldAcceptMouse(.up) else { return }
+        guard let captureGesture,
+              sessions.contains(where: { $0 === captureGesture.session }) else {
+            self.captureGesture = nil
+            return
+        }
+        captureRetryGeneration += 1
+        let generation = captureRetryGeneration
+        attemptCapture(captureGesture, attempt: 0, generation: generation)
+    }
+
+    private func attemptCapture(
+        _ gesture: (session: StashSession, initialFrame: CGRect),
+        attempt: Int,
+        generation: Int
+    ) {
+        guard generation == captureRetryGeneration,
+              sessions.contains(where: { $0 === gesture.session }) else {
+            return
+        }
+        if gesture.session.considerCapture(
+            mouseAppKit: NSEvent.mouseLocation,
+            initialFrame: gesture.initialFrame
+        ) {
+            captureGesture = nil
+            lastPreferredSession[gesture.session.bundleID] = ObjectIdentifier(gesture.session)
+            considerMultiWindowTip(for: gesture.session.bundleID)
+            return
+        }
+        let delays = StashSessionPolicy.captureRecheckDelays()
+        guard attempt < delays.count else {
+            captureGesture = nil
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + delays[attempt]) { [weak self] in
+            self?.attemptCapture(gesture, attempt: attempt + 1, generation: generation)
         }
     }
 
     @objc private func appDidLaunch(_ notification: Notification) {
-        guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
-              let bundleID = app.bundleIdentifier,
-              Preferences.shared.stashActive(bundleID: bundleID) else {
-            return
+        let launched = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+        if let launched, let bundleID = launched.bundleIdentifier,
+           Preferences.shared.stashActive(bundleID: bundleID) {
+            discover(app: launched, bundleID: bundleID)
         }
-        discover(app: app, bundleID: bundleID)
+        if SessionLifecyclePolicy.shouldRecoverOnSubjectLaunch(
+            launchedBundleID: launched?.bundleIdentifier,
+            pendingSubjectBundleIDs: Set(Preferences.shared.rescueDossiers.map(\.subject.bundleID))
+        ) {
+            StashRescue.recoverPending(reason: "app-launch", liveHolds: liveRescueHolds())
+        }
+    }
+
+    private func liveRescueHolds() -> [SessionLifecyclePolicy.LiveRescueHold] {
+        sessions.filter(\.isManaged).map {
+            SessionLifecyclePolicy.LiveRescueHold(processID: $0.pid, windowNumber: $0.windowID)
+        }
     }
 
     @objc private func appDidActivate(_ notification: Notification) {
@@ -154,7 +293,7 @@ final class StashEngine {
         let pids = Set(runningApps.map(\.processIdentifier))
         sessions.removeAll { session in
             if !Preferences.shared.stashActive(bundleID: session.bundleID) && !session.isTemporary {
-                session.shutdown(event: .appTerminated)
+                session.shutdown(event: .appDisabled)
                 return true
             }
             if !pids.contains(session.pid) {
@@ -263,8 +402,11 @@ final class StashEngine {
     private func handleAppShortcut(_ bundleID: String) {
         discoverEnabledWindows(bundleID: bundleID)
         let group = sessions.filter { $0.bundleID == bundleID }
-        if group.contains(where: \.isIdle) && !group.contains(where: \.isManaged) {
-            _ = group.first?.captureNearestAllowed()
+        if AppShortcutPolicy.shouldCaptureIdleFrontWindow(
+            hasIdleWindow: group.contains(where: \.isIdle),
+            hasManagedWindow: group.contains(where: \.isManaged)
+        ), let idle = preferredIdle(in: group, bundleID: bundleID) {
+            _ = idle.captureNearestAllowed()
             merged.reconcile(sessions: sessions)
             return
         }
@@ -332,6 +474,17 @@ final class StashEngine {
         }
     }
 
+    private func preferredIdle(in group: [StashSession], bundleID: String) -> StashSession? {
+        let idle = group.filter(\.isIdle)
+        if let app = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == bundleID }) {
+            let focused = StashAX.focusedWindow(of: AXUIElementCreateApplication(app.processIdentifier))
+            if let focused, let match = idle.first(where: { $0.sameWindow(as: focused) }) {
+                return match
+            }
+        }
+        return idle.first
+    }
+
     private func preferred(in group: [StashSession], bundleID: String) -> StashSession? {
         if let remembered = lastPreferredSession[bundleID],
            let match = group.first(where: { ObjectIdentifier($0) == remembered }) {
@@ -352,10 +505,22 @@ final class StashEngine {
         if let mouseUpMonitor { NSEvent.removeMonitor(mouseUpMonitor) }
         if let localMouseDown { NSEvent.removeMonitor(localMouseDown) }
         if let localMouseUp { NSEvent.removeMonitor(localMouseUp) }
+        if let eventTapSource {
+            CFRunLoopRemoveSource(CFRunLoopGetCurrent(), eventTapSource, .commonModes)
+        }
+        if let eventTap {
+            CGEvent.tapEnable(tap: eventTap, enable: false)
+        }
+        eventTap = nil
+        eventTapSource = nil
+        StashEngineMouseRelay.shared.eventTap = nil
         mouseDownMonitor = nil
         mouseUpMonitor = nil
         localMouseDown = nil
         localMouseUp = nil
+        captureGesture = nil
+        lastAcceptedMouse = nil
+        StashEngineMouseRelay.shared.engine = nil
         syncTimer?.invalidate()
         minimizeTimer?.invalidate()
         syncTimer = nil
@@ -371,6 +536,17 @@ final class StashEngine {
 }
 
 /// AX observer callbacks cannot capture `self` without a stable hop.
+private final class StashEngineMouseRelay {
+    static let shared = StashEngineMouseRelay()
+    weak var engine: StashEngine?
+    var eventTap: CFMachPort?
+
+    func reenableEventTap() {
+        guard let eventTap else { return }
+        CGEvent.tapEnable(tap: eventTap, enable: true)
+    }
+}
+
 private final class StashEngineFocusRelay {
     static let shared = StashEngineFocusRelay()
     weak var engine: StashEngine?

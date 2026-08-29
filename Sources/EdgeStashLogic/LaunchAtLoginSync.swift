@@ -2,7 +2,11 @@ import Foundation
 
 public enum LaunchAtLoginSync {
     public static func publishedState(actualStatus: Bool) -> Bool {
-        actualStatus
+        publishedState(enabled: actualStatus, requiresApproval: false)
+    }
+
+    public static func publishedState(enabled: Bool, requiresApproval: Bool) -> Bool {
+        enabled || requiresApproval
     }
 
     public static func resolvedInitialStatus(queriedExists: Bool?, cachedStatus: Bool?) -> Bool {

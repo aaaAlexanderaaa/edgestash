@@ -8,6 +8,10 @@ public enum CarbonHotkeyPolicy {
     public static let option: UInt32 = 1 << 11
     public static let control: UInt32 = 1 << 12
 
+    public static func shouldExcludeFromEventMonitor(carbonHandlerInstalled: Bool) -> Bool {
+        carbonHandlerInstalled
+    }
+
     public static func carbonModifiers(fromNSEvent modifiers: UInt) -> UInt32 {
         let normalized = AppShortcutPolicy.normalizedModifiers(modifiers)
         var result: UInt32 = 0
@@ -54,8 +58,11 @@ public enum FocusReturnPolicy {
 
     /// Pointer-leave collapse may return focus only after the window
     /// actually collapsed. A failed collapse must keep the stash frontmost.
-    public static func shouldReleaseAfterLeaveCollapse(didCollapse: Bool) -> Bool {
-        didCollapse
+    public static func shouldReleaseAfterLeaveCollapse(
+        didCollapse: Bool,
+        slideFinished: Bool = false
+    ) -> Bool {
+        didCollapse && slideFinished
     }
 
     public static func isEligibleTarget(

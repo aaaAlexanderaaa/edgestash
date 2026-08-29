@@ -79,7 +79,7 @@ struct ArrangementMapView: View {
                     .lineLimit(1)
                 if display.isMain {
                     Text(L10n.displayPrimary)
-                        .font(.system(size: 9, weight: .medium))
+                        .font(.caption)
                         .foregroundStyle(.secondary)
                 }
             }

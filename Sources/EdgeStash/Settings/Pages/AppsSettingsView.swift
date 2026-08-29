@@ -36,6 +36,14 @@ struct AppsPage: View {
                             let snapSide = preferences.snapPreference(for: app.id)
 
                             HStack(alignment: .top, spacing: 12) {
+                                TickBox(
+                                    isOn: Binding(
+                                        get: { isEnabled },
+                                        set: { preferences.applyAppStash(bundleID: app.id, stashOn: $0, tint: tintToken) }
+                                    )
+                                )
+                                .padding(.top, 8)
+
                                 StashAppRow(
                                     app: app,
                                     colorName: tintToken,
@@ -55,16 +63,7 @@ struct AppsPage: View {
                                         preferences.applySnapSide(bundleID: app.id, snapSide: newSnapSide)
                                     }
                                 )
-                                .opacity(isEnabled ? 1 : 0.45)
-                                .disabled(!isEnabled)
-
-                                TickBox(
-                                    isOn: Binding(
-                                        get: { isEnabled },
-                                        set: { preferences.applyAppStash(bundleID: app.id, stashOn: $0, tint: tintToken) }
-                                    )
-                                )
-                                .padding(.top, 8)
+                                .opacity(isEnabled ? 1 : 0.72)
                             }
                             .padding(.vertical, 8)
 

@@ -33,7 +33,10 @@ final class Preferences: ObservableObject {
     private static let stripBrightness: CGFloat = 0.96
 
     @Published var appProfiles: [String: AppStashProfile] {
-        didSet { save() }
+        didSet {
+            save()
+            postChange()
+        }
     }
 
     @Published var gateSpanX: CGFloat = defaultGateSpanX {
@@ -309,7 +312,7 @@ final class Preferences: ObservableObject {
     }
 
     func hasPendingRescueDossiers() -> Bool {
-        !rescueDossiers.isEmpty || !ghostedWindowIDs.isEmpty
+        !rescueDossiers.isEmpty
     }
 
     func stashActive(bundleID: String) -> Bool {
@@ -411,7 +414,7 @@ final class Preferences: ObservableObject {
         for display: ConnectedDisplay,
         screens: [NSScreen] = NSScreen.screens
     ) -> DisplayEdgeSelection {
-        let geometries = DisplayCatalog.geometries(screens: screens)
+        let geometries = DisplayCatalog.adjacencyGeometries(screens: screens)
         let geometry = geometries.first { $0.id == display.id }
             ?? DisplayGeometry(id: display.id, frame: display.frame)
         return DisplayEdgePolicy.resolvedSelection(
@@ -486,7 +489,10 @@ final class Preferences: ObservableObject {
                 NSLog("[EdgeStash] SMAppService \(enable ? "register" : "unregister") failed: \(error)")
             }
             applyLaunchAtLogin(
-                LaunchAtLoginSync.publishedState(actualStatus: service.status == .enabled)
+                LaunchAtLoginSync.publishedState(
+                    enabled: service.status == .enabled,
+                    requiresApproval: service.status == .requiresApproval
+                )
             )
         } else {
             let escapedPath = Self.appleScriptEscaped(Bundle.main.bundlePath)
@@ -530,8 +536,10 @@ final class Preferences: ObservableObject {
 
     private func loadLaunchAtLogin(storedLaunchFlag: Bool?) {
         if #available(macOS 13.0, *) {
+            let status = SMAppService.mainApp.status
             let enabled = LaunchAtLoginSync.publishedState(
-                actualStatus: SMAppService.mainApp.status == .enabled
+                enabled: status == .enabled,
+                requiresApproval: status == .requiresApproval
             )
             self.openAtLogin = enabled
         } else {

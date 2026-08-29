@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct AboutPage: View {
@@ -7,14 +8,9 @@ struct AboutPage: View {
         SettingsPageScaffold(tab: .about) {
             SettingsCard {
                 HStack(alignment: .top, spacing: 16) {
-                    Image(systemName: "rectangle.lefthalf.inset.filled.arrow.left")
-                        .font(.system(size: 28, weight: .semibold))
-                        .foregroundStyle(SettingsTheme.ColorToken.rail)
+                    Image(nsImage: NSApp.applicationIconImage)
+                        .resizable()
                         .frame(width: 64, height: 64)
-                        .background(
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .fill(SettingsTheme.ColorToken.rail.opacity(0.12))
-                        )
 
                     VStack(alignment: .leading, spacing: 8) {
                         HStack(alignment: .firstTextBaseline, spacing: 8) {
