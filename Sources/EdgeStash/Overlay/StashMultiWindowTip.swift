@@ -22,6 +22,10 @@ final class StashMultiWindowTip {
     private var model = TipModel()
 
     func consider(appName: String, collapsedCount: Int) {
+        if MultiWindowTipPolicy.shouldDismiss(collapsedCount: collapsedCount) {
+            hide()
+            return
+        }
         guard MultiWindowTipPolicy.shouldPresent(
             collapsedCount: collapsedCount,
             suppressedPermanently: Preferences.shared.mutedMultiWindowAdvice,
@@ -30,6 +34,7 @@ final class StashMultiWindowTip {
         ) else {
             return
         }
+        hide()
         model.seconds = Self.readSeconds
         expiry = Date().addingTimeInterval(TimeInterval(Self.readSeconds))
         present(appName: appName)
@@ -37,6 +42,11 @@ final class StashMultiWindowTip {
 
     func resetForLaunch() {
         mutedUntilRelaunch = false
+        hide()
+    }
+
+    func hideForSpaceChange() {
+        guard MultiWindowTipPolicy.shouldHideOnSpaceChange() else { return }
         hide()
     }
 
@@ -84,7 +94,7 @@ final class StashMultiWindowTip {
         // Countdown from a fixed deadline rather than a decrementing counter,
         // so throttled timer fires can never overstay the promised window.
         ticker?.invalidate()
-        ticker = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
             guard let self, let expiry = self.expiry else { return }
             let remaining = Int(expiry.timeIntervalSinceNow.rounded(.up))
             self.model.seconds = max(0, remaining)
@@ -92,6 +102,8 @@ final class StashMultiWindowTip {
                 self.close(.timedOut)
             }
         }
+        RunLoop.main.add(timer, forMode: .common)
+        ticker = timer
     }
 
     private enum TipOutcome {

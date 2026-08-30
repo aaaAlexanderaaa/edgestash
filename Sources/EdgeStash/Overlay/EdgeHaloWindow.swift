@@ -3,7 +3,7 @@ import EdgeStashLogic
 
 /// Settings-only teaching light. Preview, not a strip or beacon.
 final class EdgeHaloWindow: NSPanel {
-    private let band = HaloBandView()
+    private let band = StashGlassSurface()
 
     init() {
         super.init(
@@ -19,13 +19,14 @@ final class EdgeHaloWindow: NSPanel {
         level = .statusBar
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         contentView = band
+        band.autoresizingMask = [.width, .height]
     }
 
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
 
     func show(kind: DisplayEdgePreviewKind, frame: CGRect, reduceMotion: Bool) {
-        band.kind = kind
+        band.apply(role: .halo(kind), tint: SettingsTheme.ColorToken.railNSColor())
         setFrame(frame, display: true)
         alphaValue = 0
         orderFront(nil)
@@ -42,30 +43,5 @@ final class EdgeHaloWindow: NSPanel {
         }, completionHandler: { [weak self] in
             self?.orderOut(nil)
         })
-    }
-}
-
-private final class HaloBandView: NSView {
-    var kind: DisplayEdgePreviewKind = .slideOffscreen {
-        didSet { needsDisplay = true }
-    }
-
-    override var isOpaque: Bool { false }
-
-    override func draw(_ dirtyRect: NSRect) {
-        super.draw(dirtyRect)
-        effectiveAppearance.performAsCurrentDrawingAppearance {
-            let color: NSColor
-            switch kind {
-            case .disabled:
-                color = NSColor.secondaryLabelColor.withAlphaComponent(0.35)
-            case .slideOffscreen:
-                color = SettingsTheme.ColorToken.railNSColor()
-            case .systemMinimize:
-                color = SettingsTheme.ColorToken.railNSColor().withAlphaComponent(0.55)
-            }
-            color.setFill()
-            NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 4), xRadius: 3, yRadius: 3).fill()
-        }
     }
 }

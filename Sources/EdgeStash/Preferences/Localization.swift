@@ -66,9 +66,10 @@ enum L10n {
 
         // Display boundaries
         "display.card": "屏幕边界",
-        "display.intro": "逐台显示器勾选允许收纳的左右两侧。开启「显示器具有单独的空间」时，共用段利用系统按屏裁剪滑出；关闭时回退到 macOS 最小化。",
+        "display.intro": "逐台显示器勾选允许收纳的左右两侧。暴露段滑出屏外；显示器锚定能力可用时，共用段交给 macOS 最小化，窗口真正离开屏幕。",
         "display.none": "没有探测到显示器",
         "display.sharedNote": "共用段交给系统最小化",
+        "display.sharedUnavailable": "这台 Mac 当前没有可用的显示器锚定迁移能力；接缝区段不会收纳，以免窗口被错误地绑在某个桌面。外侧区段不受影响。此能力需要 macOS 26.4 或更高版本。",
         "display.sharedHowTo": "若最小化后的窗口在程序坞里成了独立缩略图，请到「系统设置 → 桌面与程序坞」开启「将窗口最小化成应用程序图标」（旧系统名称或有出入）。",
         "display.openDockPane": "打开「桌面与程序坞」",
         "display.primary": "主屏",
@@ -78,8 +79,8 @@ enum L10n {
         "display.outerEdge": "外侧边",
         "display.partialShared": "部分共用 · 按窗口所在段自动处理",
         "display.fullyShared": "完全共用 · 仅系统最小化",
-        "display.partialSharedClipped": "部分共用 · 共用段按屏裁剪滑出",
-        "display.fullySharedClipped": "完全共用 · 按屏裁剪滑出",
+        "display.partialSharedUnavailable": "部分共用 · 当前仅外侧段可收纳",
+        "display.fullySharedUnavailable": "完全共用 · 当前不可收纳",
 
         // Arrangement map
         "map.card": "显示器排布（逻辑）",
@@ -114,10 +115,10 @@ enum L10n {
         // Extras
         "system.cardExtras": "进阶表现",
         "system.effects": "展开与收起的动画",
-        "system.effects.note": "窗口展开或收起时是否播放光束与涟漪动画。",
+        "system.effects.note": "窗口展开或收起时是否沿边缘播放一小段玻璃高光。",
         "system.merged": "合并长条",
         "system.merged.note": "同一条边上彼此重叠的提示条会拼成一根长条，长条分段、可逐段点选。",
-        "merged.note.flourish": "合并状态下不再播放光束与涟漪，把切换的延迟降到最低。",
+        "merged.note.flourish": "合并状态下不再播放高光，把切换的延迟降到最低。",
         "merged.note.speed": "各家应用的窗口机制不同，收放速度也会略有差别。",
         "merged.note.tint": "给应用分配不同的颜色，合并后一眼就能分清每段是谁。",
         "merged.overload.title": "这根合并长条上的窗口太多了，连续切换可能一顿一顿的。",
@@ -137,6 +138,11 @@ enum L10n {
         "multiwindow.body": "「%@」有不止一个窗口收着。点程序坞图标只会放出最近的那个；应用快捷键想在全部和最近之间选一个作用范围，去设置里调。",
         "multiwindow.later": "等会再说",
         "multiwindow.mute": "别再提醒",
+
+        // Seam availability — first-time only; everyday words, no invented nouns.
+        "seam.limitation.title": "现在打不开这扇窗口",
+        "seam.fullscreenDisabled": "窗口没有丢，它还在边上。这台屏幕正在全屏使用某个应用；如果现在打开，会把你从全屏里拉出来。退出全屏之后，再把鼠标放到这条边上就可以打开。",
+        "seam.revealFailed": "窗口没有丢，它还在边上。这台屏幕现在不能把窗口移过来，常见原因是正在全屏。退出全屏，或用三指滑回平时那一页之后，再把鼠标放到这条边上就可以打开。",
 
         // Pin
         "pin.release": "取消固定",
@@ -242,9 +248,10 @@ enum L10n {
 
         // Display boundaries
         "display.card": "Display edges",
-        "display.intro": "Pick the stashable left and right sides of every display. With Displays have separate Spaces enabled, shared segments slide behind the per-display clip; otherwise they fall back to macOS minimization.",
+        "display.intro": "Pick the stashable left and right sides of every display. Exposed segments slide offscreen; when display anchoring is available, shared segments use macOS minimization so stashed windows truly leave the screen.",
         "display.none": "No displays detected",
         "display.sharedNote": "Shared segments minimize",
+        "display.sharedUnavailable": "Display-anchored migration is not available on this Mac. Shared seam segments will not stash, avoiding a window being tied to the wrong desktop; exposed outer segments still work. This capability requires macOS 26.4 or later.",
         "display.sharedHowTo": "If a minimized window keeps its own Dock thumbnail, enable \"Minimize windows into application icon\" under System Settings → Desktop & Dock (names differ slightly on older macOS).",
         "display.openDockPane": "Open Desktop & Dock",
         "display.primary": "Primary",
@@ -254,8 +261,8 @@ enum L10n {
         "display.outerEdge": "Outer edge",
         "display.partialShared": "Partially shared · decided per segment",
         "display.fullyShared": "Fully shared · minimization only",
-        "display.partialSharedClipped": "Partially shared · shared segment clips and slides",
-        "display.fullySharedClipped": "Fully shared · per-display clipped slide",
+        "display.partialSharedUnavailable": "Partially shared · only exposed segments can stash now",
+        "display.fullySharedUnavailable": "Fully shared · unavailable now",
 
         // Arrangement map
         "map.card": "Display layout (logical)",
@@ -290,7 +297,7 @@ enum L10n {
         // Extras
         "system.cardExtras": "Finer points",
         "system.effects": "Expand & tuck animation",
-        "system.effects.note": "Whether windows play a beam-and-ripple flourish as they expand or tuck.",
+        "system.effects.note": "Whether windows play a short glass sheen as they expand or tuck.",
         "system.merged": "Merged strip",
         "system.merged.note": "Strips overlapping on one edge join into a single segmented bar you can click segment by segment.",
         "merged.note.flourish": "Merged bars skip the flourish so switching stays instant.",
@@ -313,6 +320,11 @@ enum L10n {
         "multiwindow.body": "“%@” has more than one window tucked away. Its Dock icon releases only the newest; whether the app shortcut frees everything or just the latest is a Settings choice.",
         "multiwindow.later": "Maybe later",
         "multiwindow.mute": "Don't remind me",
+
+        // Seam availability — first-time only; everyday words, no invented nouns.
+        "seam.limitation.title": "This window will not open here",
+        "seam.fullscreenDisabled": "The window is still here, on this edge. This screen is in full screen, and opening the window now would pull you out of it. Leave full screen, then move the pointer to this edge to open it.",
+        "seam.revealFailed": "The window is still here, on this edge. This screen cannot bring it back right now — usually because it is in full screen. Leave full screen, or swipe to the page you normally use, then move the pointer to this edge.",
 
         // Pin
         "pin.release": "Release",
@@ -437,6 +449,7 @@ extension L10n {
     static var displayIntro: String { text("display.intro") }
     static var displayNone: String { text("display.none") }
     static var displaySharedNote: String { text("display.sharedNote") }
+    static var displaySharedUnavailable: String { text("display.sharedUnavailable") }
     static var displaySharedHowTo: String { text("display.sharedHowTo") }
     static var displayOpenDockPane: String { text("display.openDockPane") }
     static var displayPrimary: String { text("display.primary") }
@@ -446,8 +459,8 @@ extension L10n {
     static var displayOuterEdge: String { text("display.outerEdge") }
     static var displayPartialShared: String { text("display.partialShared") }
     static var displayFullyShared: String { text("display.fullyShared") }
-    static var displayPartialSharedClipped: String { text("display.partialSharedClipped") }
-    static var displayFullySharedClipped: String { text("display.fullySharedClipped") }
+    static var displayPartialSharedUnavailable: String { text("display.partialSharedUnavailable") }
+    static var displayFullySharedUnavailable: String { text("display.fullySharedUnavailable") }
 
     static var mapCard: String { text("map.card") }
     static var mapIntro: String { text("map.intro") }
@@ -505,6 +518,10 @@ extension L10n {
     }
     static var multiwindowLater: String { text("multiwindow.later") }
     static var multiwindowMute: String { text("multiwindow.mute") }
+
+    static var seamLimitationTitle: String { text("seam.limitation.title") }
+    static var seamFullscreenDisabled: String { text("seam.fullscreenDisabled") }
+    static var seamRevealFailed: String { text("seam.revealFailed") }
 
     static var pinRelease: String { text("pin.release") }
     static var pinPlace: String { text("pin.place") }

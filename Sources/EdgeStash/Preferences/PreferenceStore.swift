@@ -30,6 +30,7 @@ struct StoredDocument: Codable {
     var decoratesSlides: Bool?
     var mergesStrips: Bool?
     var advisedStripOverload: Bool?
+    var advisedSeamRevealLimitation: Bool?
     var mutedMultiWindowAdvice: Bool?
     var languageID: Int?
     var dockClearance: String?

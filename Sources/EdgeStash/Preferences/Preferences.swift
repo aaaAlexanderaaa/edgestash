@@ -33,10 +33,7 @@ final class Preferences: ObservableObject {
     private static let stripBrightness: CGFloat = 0.96
 
     @Published var appProfiles: [String: AppStashProfile] {
-        didSet {
-            save()
-            postChange()
-        }
+        didSet { persistUserChange(notify: PreferenceSignal.didChange) }
     }
 
     @Published var gateSpanX: CGFloat = defaultGateSpanX {
@@ -46,8 +43,7 @@ final class Preferences: ObservableObject {
                 gateSpanX = clamped
                 return
             }
-            save()
-            postChange()
+            persistUserChange(notify: PreferenceSignal.didChange)
         }
     }
 
@@ -58,97 +54,79 @@ final class Preferences: ObservableObject {
                 gateSpanY = clamped
                 return
             }
-            save()
-            postChange()
+            persistUserChange(notify: PreferenceSignal.didChange)
         }
     }
 
     @Published var revealDelayMS: Int = defaultRevealDelayMS {
-        didSet {
-            save()
-            postChange()
-        }
+        didSet { persistUserChange(notify: PreferenceSignal.didChange) }
     }
 
     @Published var transientChordModifiers: UInt? {
-        didSet {
-            save()
-            postChange()
-        }
+        didSet { persistUserChange(notify: PreferenceSignal.didChange) }
     }
 
     @Published var transientChordKeyCode: UInt16? {
-        didSet {
-            save()
-            postChange()
-        }
+        didSet { persistUserChange(notify: PreferenceSignal.didChange) }
     }
 
     @Published var openAtLogin: Bool = false {
-        didSet { save() }
+        didSet { persistUserChange() }
     }
 
     @Published var menuBarItemVisible: Bool = true {
-        didSet {
-            save()
-            NotificationCenter.default.post(name: PreferenceSignal.menuBarVisibilityDidChange, object: nil)
-        }
+        didSet { persistUserChange(notify: PreferenceSignal.menuBarVisibilityDidChange) }
     }
 
     @Published var decoratesSlides: Bool = true {
-        didSet {
-            save()
-            postChange()
-        }
+        didSet { persistUserChange(notify: PreferenceSignal.didChange) }
     }
 
     @Published var mergesStrips: Bool = true {
-        didSet {
-            save()
-            postChange()
-        }
+        didSet { persistUserChange(notify: PreferenceSignal.didChange) }
     }
 
     @Published var advisedStripOverload: Bool = false {
-        didSet { save() }
+        didSet { persistUserChange() }
+    }
+
+    @Published var advisedSeamRevealLimitation: Bool = false {
+        didSet { persistUserChange() }
     }
 
     @Published var mutedMultiWindowAdvice: Bool = false {
-        didSet { save() }
+        didSet { persistUserChange() }
     }
 
     @Published var language: Int = 0 {
-        didSet {
-            save()
-            NotificationCenter.default.post(name: PreferenceSignal.languageDidChange, object: nil)
-        }
+        didSet { persistUserChange(notify: PreferenceSignal.languageDidChange) }
     }
 
     @Published var dockClearanceRawValue: String = DockClearanceMode.automatic.rawValue {
-        didSet {
-            save()
-            postChange()
-        }
+        didSet { persistUserChange(notify: PreferenceSignal.didChange) }
     }
 
     @Published var displayEdgePreferences: [String: DisplayEdgeSelection] = [:] {
-        didSet {
-            save()
-            postChange()
-        }
+        didSet { persistUserChange(notify: PreferenceSignal.didChange) }
     }
 
     @Published var ghostedWindowIDs: [String] = [] {
-        didSet { save() }
+        didSet { persistUserChange() }
     }
 
     @Published var rescueDossiers: [RescueDossier] = [] {
-        didSet { save() }
+        didSet { persistUserChange() }
     }
 
     @Published private(set) var displayTopologyRevision: UInt = 0
 
+    /// `didSet` on loaded fields must not notify while `shared` is still
+    /// inside `dispatch_once`.
+    private var isHydrating = false
+
     private init() {
+        isHydrating = true
+        defer { isHydrating = false }
         PreferenceStore.sweepStaleDefaultKeys(in: .standard)
         let stored = PreferenceStore.load()
 
@@ -191,6 +169,9 @@ final class Preferences: ObservableObject {
         }
         if let advised = stored.advisedStripOverload {
             self.advisedStripOverload = advised
+        }
+        if let advisedSeam = stored.advisedSeamRevealLimitation {
+            self.advisedSeamRevealLimitation = advisedSeam
         }
         if let muted = stored.mutedMultiWindowAdvice {
             self.mutedMultiWindowAdvice = muted
@@ -236,6 +217,7 @@ final class Preferences: ObservableObject {
         stored.decoratesSlides = decoratesSlides
         stored.mergesStrips = mergesStrips
         stored.advisedStripOverload = advisedStripOverload
+        stored.advisedSeamRevealLimitation = advisedSeamRevealLimitation
         stored.mutedMultiWindowAdvice = mutedMultiWindowAdvice
         stored.languageID = language
         stored.dockClearance = dockClearanceRawValue
@@ -247,6 +229,16 @@ final class Preferences: ObservableObject {
 
     private func save() {
         PreferenceStore.save(snapshot())
+    }
+
+    private func persistUserChange(notify name: Notification.Name? = nil) {
+        guard PreferencePublicationPolicy.shouldPublishSideEffects(isHydrating: isHydrating) else {
+            return
+        }
+        save()
+        if let name {
+            NotificationCenter.default.post(name: name, object: nil)
+        }
     }
 
     /// Tint tokens name how a strip is colored: "adaptive" tracks the system

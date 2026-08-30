@@ -34,6 +34,7 @@ final class StashPinWindow: NSPanel {
         ignoresMouseEvents = false
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         button.onToggle = { [weak self] in self?.onToggle?() }
+        button.autoresizingMask = [.width, .height]
         contentView = button
         alphaValue = 0
     }
@@ -126,21 +127,32 @@ private final class StashPinButton: NSView {
     private var accent = NSColor.systemOrange
     private var pressed = false
     private var hovered = false
+    private let glass = StashGlassSurface()
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
+        glass.autoresizingMask = [.width, .height]
+        addSubview(glass)
     }
 
     required init?(coder: NSCoder) {
         super.init(coder: coder)
         wantsLayer = true
+        glass.autoresizingMask = [.width, .height]
+        addSubview(glass)
+    }
+
+    override func layout() {
+        super.layout()
+        glass.frame = bounds
     }
 
     func apply(pinned: Bool, accent: NSColor) {
         self.pinned = pinned
         self.accent = accent
+        glass.apply(role: .disc, tint: accent)
         needsDisplay = true
         setAccessibilityElement(true)
         setAccessibilityRole(.button)
@@ -185,14 +197,6 @@ private final class StashPinButton: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
-        let disk = bounds.insetBy(dx: 2, dy: 2)
-        let fill = (pinned ? accent : NSColor.windowBackgroundColor.withAlphaComponent(hovered ? 0.92 : 0.78))
-        fill.setFill()
-        NSBezierPath(ovalIn: disk).fill()
-        accent.withAlphaComponent(pinned || hovered ? 0.95 : 0.45).setStroke()
-        let ring = NSBezierPath(ovalIn: disk.insetBy(dx: 0.5, dy: 0.5))
-        ring.lineWidth = 1.4
-        ring.stroke()
         let symbol = pinned ? "pin.fill" : "pin"
         let config = NSImage.SymbolConfiguration(pointSize: 14, weight: .semibold)
         guard let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?

@@ -10,6 +10,14 @@ final class StashEngine {
     private var mouseUpMonitor: Any?
     private var localMouseDown: Any?
     private var localMouseUp: Any?
+    private var mouseMoveMonitor: Any?
+    private var approachTargetID: String?
+    private var spaceRebuildGeneration = 0
+    /// Sessions whose collapse completed under a parked pointer. A parked
+    /// pointer is not an approach, so the band stays disarmed until the
+    /// pointer has left it once — the same exit-rearm rule as the merged
+    /// strip's click lock.
+    private var approachSuppressedIDs = Set<String>()
     private var eventTap: CFMachPort?
     private var eventTapSource: CFRunLoopSource?
     private var lastAcceptedMouse: SessionMouseRelayPolicy.Kind?
@@ -102,9 +110,36 @@ final class StashEngine {
 
     @objc private func spaceDidChange() {
         guard isRunning else { return }
+        StashMultiWindowTip.shared.hideForSpaceChange()
         merged.resetForSpaceChange(sessions: sessions)
-        sessions.forEach { $0.refreshAfterSpaceChange() }
-        merged.reconcile(sessions: sessions)
+        // A dwell started before the switch must not fire after the user has
+        // left the Space; pending hovers and the approach target reset here.
+        sessions.forEach { $0.cancelHoverReveal() }
+        sessions.forEach { $0.cancelPendingSpaceReveal() }
+        approachTargetID = nil
+        for session in sessions {
+            if SpaceChangePolicy.shouldHideMarkerDuringSpaceTransition(
+                presentation: session.presentation,
+                isCollapsed: session.isCollapsed
+            ) {
+                session.hideMarkerForSpaceChange()
+            } else if session.presentation == .systemMinimize, session.isCollapsed {
+                session.refreshSeamSpaceAvailability()
+                if let restoreFrame = session.restoreFrame {
+                    session.showMarker(windowQuartz: restoreFrame)
+                }
+            }
+        }
+        // Space switching animates through transitional geometry; rebuild only
+        // after the system settles, and only the latest switch wins.
+        spaceRebuildGeneration += 1
+        let generation = spaceRebuildGeneration
+        DispatchQueue.main.asyncAfter(deadline: .now() + SpaceChangePolicy.rebuildDelay) { [weak self] in
+            guard let self, self.spaceRebuildGeneration == generation else { return }
+            self.sessions.forEach { $0.refreshMarkerAfterSpaceChange() }
+            self.merged.reconcile(sessions: self.sessions)
+            self.reevaluateSeamApproach()
+        }
     }
 
     private func observeWorkspace() {
@@ -130,6 +165,67 @@ final class StashEngine {
         localMouseUp = NSEvent.addLocalMonitorForEvents(matching: .leftMouseUp) { [weak self] event in
             self?.handleMouseUp()
             return event
+        }
+        mouseMoveMonitor = NSEvent.addGlobalMonitorForEvents(matching: .mouseMoved) { [weak self] _ in
+            self?.reevaluateSeamApproach()
+        }
+    }
+
+    /// A seam beacon's own panel is only a few points wide and cannot reach
+    /// past the seam, so collapsed seam stashes additionally own an approach
+    /// band (see `SeamApproachPolicy`). Only a target change starts or cancels
+    /// the hover dwell — re-arming on every mouse move would never let the
+    /// dwell finish.
+    private func reevaluateSeamApproach(rearm: Bool = false) {
+        let screens = NSScreen.screens
+        let primaryHeight = DisplayCatalog.primaryHeight(screens: screens)
+        let mouse = NSEvent.mouseLocation
+        let pointer = CGPoint(
+            x: mouse.x,
+            y: StashGeometryPolicy.quartzOriginY(appKitY: mouse.y, height: 0, primaryHeight: primaryHeight)
+        )
+        let displays = DisplayCatalog.adjacencyGeometries(screens: screens)
+        let segments = sessions.compactMap { session -> SeamApproachSegment? in
+            guard session.isCollapsed,
+                  !session.markerSuppressed,
+                  session.presentation == .systemMinimize,
+                  session.canBeginSeamReveal,
+                  let edge = session.edge,
+                  let frame = session.restoreFrame,
+                  let displayID = session.displayID else {
+                return nil
+            }
+            return SeamApproachSegment(
+                id: session.mergeID,
+                displayID: displayID,
+                edge: edge,
+                minY: frame.minY - StashGeometryPolicy.panelBleed,
+                maxY: frame.maxY + StashGeometryPolicy.panelBleed
+            )
+        }
+        for segment in segments where approachSuppressedIDs.contains(segment.id) {
+            if !SeamApproachPolicy.contains(pointer: pointer, segment: segment, displays: displays) {
+                approachSuppressedIDs.remove(segment.id)
+            }
+        }
+        let candidates = segments.filter { !approachSuppressedIDs.contains($0.id) }
+        let nextID = SeamApproachPolicy.target(pointer: pointer, segments: candidates, displays: displays)
+        if nextID == approachTargetID {
+            // A dwell that fired mid-drag aborts on the pressed button; after
+            // mouse-up the same target re-arms. beginHoverReveal is idempotent
+            // while a dwell is pending, so an ordinary move changes nothing.
+            if rearm, let nextID, let session = sessions.first(where: { $0.mergeID == nextID }) {
+                session.beginHoverReveal()
+            }
+            return
+        }
+        if let previous = approachTargetID,
+           let session = sessions.first(where: { $0.mergeID == previous }) {
+            session.cancelHoverReveal()
+        }
+        approachTargetID = nextID
+        if let nextID, let session = sessions.first(where: { $0.mergeID == nextID }) {
+            session.beginHoverReveal()
         }
     }
 
@@ -214,6 +310,10 @@ final class StashEngine {
     }
 
     func handleMouseUp() {
+        // Drags post dragged-events, not mouse-moves, so the band is stale at
+        // mouse-up: cancel a dwell whose target the pointer left mid-drag, or
+        // re-arm one that aborted on the pressed button while still inside.
+        reevaluateSeamApproach(rearm: true)
         guard shouldAcceptMouse(.up) else { return }
         guard let captureGesture,
               sessions.contains(where: { $0 === captureGesture.session }) else {
@@ -318,6 +418,7 @@ final class StashEngine {
         }
         pruneAppObservers(validPIDs: pids)
         merged.reconcile(sessions: sessions)
+        reevaluateSeamApproach()
         Set(sessions.map(\.bundleID)).forEach { considerMultiWindowTip(for: $0) }
     }
 
@@ -353,13 +454,23 @@ final class StashEngine {
     private func attach(_ session: StashSession) {
         session.onEnded = { [weak self] ended, _ in
             self?.sessions.removeAll { $0 === ended }
+            self?.approachSuppressedIDs.remove(ended.mergeID)
             if self?.temporarySession === ended {
                 self?.temporarySession = nil
             }
             self?.merged.reconcile(sessions: self?.sessions ?? [])
+            self?.reevaluateSeamApproach()
         }
         session.onChanged = { [weak self] _ in
             self?.merged.reconcile(sessions: self?.sessions ?? [])
+            self?.reevaluateSeamApproach()
+        }
+        session.onCollapsed = { [weak self] collapsed in
+            self?.approachSuppressedIDs.insert(collapsed.mergeID)
+            self?.reevaluateSeamApproach()
+        }
+        session.onSeamMarkerActivity = { [weak self] _ in
+            self?.reevaluateSeamApproach()
         }
         session.focusContext = { [weak self] in
             let collapsed = Set((self?.sessions ?? []).filter(\.isCollapsed).map(\.pid))
@@ -505,6 +616,10 @@ final class StashEngine {
         if let mouseUpMonitor { NSEvent.removeMonitor(mouseUpMonitor) }
         if let localMouseDown { NSEvent.removeMonitor(localMouseDown) }
         if let localMouseUp { NSEvent.removeMonitor(localMouseUp) }
+        if let mouseMoveMonitor { NSEvent.removeMonitor(mouseMoveMonitor) }
+        mouseMoveMonitor = nil
+        approachTargetID = nil
+        approachSuppressedIDs.removeAll()
         if let eventTapSource {
             CFRunLoopRemoveSource(CFRunLoopGetCurrent(), eventTapSource, .commonModes)
         }

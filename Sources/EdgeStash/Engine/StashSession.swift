@@ -28,6 +28,8 @@ final class StashSession {
     var mergeID: String { String(describing: ObjectIdentifier(self)) }
     var onEnded: ((StashSession, SessionLifecyclePolicy.Event) -> Void)?
     var onChanged: ((StashSession) -> Void)?
+    var onCollapsed: ((StashSession) -> Void)?
+    var onSeamMarkerActivity: ((StashSession) -> Void)?
     var focusContext: (() -> (settingsIsKey: Bool, collapsedPIDs: Set<pid_t>))?
 
     var presentation: StashCollapsePresentation?
@@ -36,6 +38,24 @@ final class StashSession {
     var displayID: String?
     var usingSharedMinimize = false
     var restoringShared = false
+    var seamSpaceAvailability: SeamSpaceAvailability = .unavailable
+    var canBeginSeamReveal: Bool {
+        SpaceChangePolicy.shouldBeginSeamDwell(availability: seamSpaceAvailability)
+    }
+    /// After a click-collapse, marker hover stays locked until the pointer
+    /// leaves the marker once — a parked pointer must not bounce the window
+    /// back out. While locked, a click expands immediately, so clicking
+    /// toggles collapse/expand without hover fighting it.
+    var clickCollapseLockActive = false
+    /// Set only by the post-Space-change rebuild (where the on-screen window
+    /// list has settled): a slide-stashed window parked on another Space keeps
+    /// its marker hidden until the user returns. Any local capture/expand
+    /// clears it, because interacting with the window proves it is here.
+    var markerHiddenForSpace = false
+    /// Leave-collapse state: the first sample of a continuous outside run, and
+    /// the last time the pointer was over a sibling window of the same app.
+    var outsideSince: Date?
+    var lastSiblingInteractionAt: Date?
     var busy = false
     var observer: AXObserver?
     var observerSource: CFRunLoopSource?
@@ -46,8 +66,12 @@ final class StashSession {
     var hoverDelayTimer: Timer?
     var leaveTimer: Timer?
     var lastMinimizeCheck = Date.distantPast
+    /// Wall time of the last EdgeStash-owned `setMinimized(true)`. The poll
+    /// must not treat AX lag during this settle as a Dock restore.
+    var lastOwnedMinimizeAt = Date.distantPast
     var focusReleaseGeneration = 0
     var lifecycleGeneration = 0
+    var spaceRevealGeneration = 0
 
     init(appElement: AXUIElement, windowElement: AXUIElement, pid: pid_t, bundleID: String) {
         self.appElement = appElement
@@ -58,8 +82,28 @@ final class StashSession {
         if let frame = StashAX.frame(of: windowElement) {
             lockedWidth = frame.width
         }
-        marker.onHoverEntered = { [weak self] in self?.beginHoverReveal() }
-        marker.onHoverExited = { [weak self] in self?.cancelHoverReveal() }
+        // Seam beacons are driven by the engine's approach band. The global
+        // mouse monitor goes quiet over our own panel, so panel hover events
+        // poke the band's reevaluation instead of starting hover directly —
+        // one state machine, two trigger sources.
+        marker.onHoverEntered = { [weak self] in
+            guard let self else { return }
+            if self.presentation == .systemMinimize {
+                self.onSeamMarkerActivity?(self)
+            } else {
+                guard !self.clickCollapseLockActive else { return }
+                self.beginHoverReveal()
+            }
+        }
+        marker.onHoverExited = { [weak self] in
+            guard let self else { return }
+            self.clickCollapseLockActive = false
+            if self.presentation == .systemMinimize {
+                self.onSeamMarkerActivity?(self)
+            } else {
+                self.cancelHoverReveal()
+            }
+        }
         marker.onClicked = { [weak self] in self?.handleMarkerClick() }
         pinWindow.onToggle = { [weak self] in self?.togglePin() }
         installObserver()
@@ -98,6 +142,12 @@ final class StashSession {
 
     var mergeMember: MergeMember? {
         guard isManaged, let edge, let restoreFrame else { return nil }
+        // A disabled seam beacon must remain independently visible and
+        // clickable for its explanation; it cannot disappear into an enabled
+        // merged strip.
+        if presentation == .systemMinimize, isCollapsed, !canBeginSeamReveal {
+            return nil
+        }
         let screens = NSScreen.screens
         let primaryHeight = DisplayCatalog.primaryHeight(screens: screens)
         let screen = displayID.flatMap { DisplayCatalog.screen(withID: $0, screens: screens) }
@@ -186,6 +236,8 @@ final class StashSession {
     func toggleFromShortcut() {
         switch phase {
         case .collapsed:
+            // Shortcut reveals are deliberate like Dock reveals: they
+            // participate in focus return.
             _ = expand(fromDock: true)
         case .expanded, .captured:
             if isPinned { isPinned = false }
@@ -222,8 +274,7 @@ final class StashSession {
                 at: edge,
                 of: display,
                 windowFrame: restoreFrame,
-                in: displays,
-                screensHaveSeparateSpaces: NSScreen.screensHaveSeparateSpaces
+                in: displays
             )
         } else {
             next = nil
@@ -237,9 +288,41 @@ final class StashSession {
         }
     }
 
-    func refreshAfterSpaceChange() {
-        guard isManaged, let restoreFrame else { return }
-        showMarker(windowQuartz: restoreFrame)
+    func hideMarkerForSpaceChange() {
+        hideMarker()
+        pinWindow.conceal()
+    }
+
+    /// Rebuild after a Space switch has settled. A collapsed seam beacon is
+    /// display-anchored and remains visible, enabled only when that display's
+    /// current Space is an ordinary user Space. Expanded and slide-stashed
+    /// windows show a marker only on the Space that contains the real window.
+    func refreshMarkerAfterSpaceChange() {
+        guard isManaged, let restoreFrame else {
+            hideMarker()
+            return
+        }
+        let onActiveSpace: Bool
+        if let windowID {
+            onActiveSpace = StashSurface.isOnScreen(windowID: windowID, pid: pid)
+        } else {
+            // The window number was never resolved; keep the marker reachable
+            // rather than hiding a stash the user cannot verify.
+            onActiveSpace = true
+        }
+        markerHiddenForSpace = !SpaceChangePolicy.shouldShowMarker(
+            presentation: presentation,
+            windowOnActiveSpace: onActiveSpace,
+            isCollapsed: isCollapsed
+        )
+        if presentation == .systemMinimize, isCollapsed {
+            refreshSeamSpaceAvailability()
+        }
+        if markerHiddenForSpace {
+            hideMarker()
+        } else {
+            showMarker(windowQuartz: restoreFrame)
+        }
         refreshPinControl()
     }
 
@@ -257,9 +340,13 @@ final class StashSession {
 
     func shutdown(event: SessionLifecyclePolicy.Event) {
         lifecycleGeneration += 1
+        spaceRevealGeneration += 1
         animator.cancel()
         busy = false
         restoringShared = false
+        clickCollapseLockActive = false
+        outsideSince = nil
+        lastSiblingInteractionAt = nil
         hoverDelayTimer?.invalidate()
         leaveTimer?.invalidate()
         let shouldRestore = SessionLifecyclePolicy.shouldRestoreVisibility(for: event)
@@ -274,9 +361,13 @@ final class StashSession {
             if let restoreFrame {
                 positionOK = StashAX.setFrame(windowElement, restoreFrame)
             }
-            if let windowID {
-                alphaOK = StashSurface.setAlpha(windowID: windowID, alpha: 1)
-            }
+        }
+        if SessionLifecyclePolicy.shouldRestoreAlpha(for: event), let windowID {
+            alphaOK = StashSurface.setAlpha(windowID: windowID, alpha: 1)
+        }
+        if event == .detachedFromEdge, usingSharedMinimize {
+            unminimizeOK = StashAX.isMinimized(windowElement) == false
+                || StashAX.setMinimized(windowElement, false)
         }
         if SessionLifecyclePolicy.shouldClearRescueRecords(
             for: event,
@@ -297,7 +388,14 @@ final class StashSession {
         edge = nil
         presentation = nil
         usingSharedMinimize = false
+        lastOwnedMinimizeAt = .distantPast
         isPinned = false
+        if SessionLifecyclePolicy.shouldClearDisplayBinding(for: event) {
+            displayID = nil
+            restoreFrame = nil
+            rescueVisibleFrame = nil
+            rescueDisplayFrame = nil
+        }
         if isTemporary, !TemporaryShortcutPolicy.shouldKeepAfterIdle(
             stashActive: Preferences.shared.stashActive(bundleID: bundleID)
         ) {
@@ -319,6 +417,7 @@ final class StashSession {
         primaryHeight _: CGFloat
     ) -> Bool {
         guard StashSessionPolicy.phase(after: .capture, from: phase) == .captured else { return false }
+        markerHiddenForSpace = false
         self.edge = edge
         self.displayID = display.id
         self.rescueDisplayFrame = display.frame
@@ -375,9 +474,20 @@ final class StashSession {
             at: edge,
             of: display,
             windowFrame: frame,
-            in: cgDisplays,
-            screensHaveSeparateSpaces: NSScreen.screensHaveSeparateSpaces
+            in: cgDisplays
         )
+        if presentation == .systemMinimize {
+            guard let screen = DisplayCatalog.screen(withID: display.id, screens: screens),
+                  let cgDisplayID = DisplayCatalog.displayID(for: screen) else {
+                return false
+            }
+            let availability = DisplaySpaceTransport.shared.availability(for: cgDisplayID)
+            guard SpaceChangePolicy.shouldBeginSeamDwell(availability: availability) else {
+                seamSpaceAvailability = availability
+                return false
+            }
+            seamSpaceAvailability = availability
+        }
         self.presentation = presentation
         lockedWidth = abs(frame.width - lockedWidth) > 15 ? frame.width : (lockedWidth > 0 ? lockedWidth : frame.width)
         let expanded = CGRect(
@@ -405,6 +515,7 @@ final class StashSession {
             guard moved else { return false }
             usingSharedMinimize = true
             restoringShared = false
+            lastOwnedMinimizeAt = Date()
             guard StashAX.setMinimized(windowElement, true) else {
                 usingSharedMinimize = false
                 if StashSessionPolicy.shouldRestorePriorFrame(
@@ -416,13 +527,8 @@ final class StashSession {
                 return false
             }
             finishCollapse(next: next, frame: expanded, merged: merged)
-        case .slideOffscreen, .displayClippedSlideOffscreen:
+        case .slideOffscreen:
             usingSharedMinimize = false
-            var origin = frame.origin
-            if StashSessionPolicy.shouldSnapToExpandedBeforeSlide(presentation) {
-                _ = StashAX.setFrame(windowElement, expanded)
-                origin = StashAX.frame(of: windowElement)?.origin ?? expanded.origin
-            }
             let hidden = StashGeometryPolicy.visualHiddenOrigin(
                 edge: edge,
                 frame: frame,
@@ -431,7 +537,7 @@ final class StashSession {
             )
             playEffects(collapsing: true, merged: merged, frame: expanded, primaryHeight: primaryHeight)
             slide(
-                from: origin,
+                from: frame.origin,
                 to: hidden,
                 collapsing: true,
                 merged: merged
@@ -457,30 +563,21 @@ final class StashSession {
         guard !busy else { return false }
         busy = true
         hoverDelayTimer?.invalidate()
-        if let running = NSRunningApplication(processIdentifier: pid) {
-            running.activate(options: .activateIgnoringOtherApps)
+        markerHiddenForSpace = false
+        if usingSharedMinimize {
+            return prepareAndExpandSharedMinimize(
+                next: next,
+                restoreFrame: restoreFrame,
+                fromDock: fromDock
+            )
         }
+
+        // Outer-edge reveals keep their existing activation-first animation;
+        // only minimized seam reveals require confirmed Space membership.
+        activateApp()
         if fromDock {
             StashFocusReturn.remember(excluding: pid)
         }
-        if usingSharedMinimize {
-            restoringShared = true
-            guard StashAX.setMinimized(windowElement, false) else {
-                restoringShared = false
-                busy = false
-                return false
-            }
-            usingSharedMinimize = false
-            let token = lifecycleGeneration
-            DispatchQueue.main.async { [weak self] in
-                guard let self, self.lifecycleGeneration == token else { return }
-                _ = StashAX.setFrame(self.windowElement, restoreFrame)
-                self.finishExpand(next: next, frame: restoreFrame, fromDock: fromDock)
-                self.restoringShared = false
-            }
-            return true
-        }
-
         let current = StashAX.frame(of: windowElement) ?? restoreFrame
         if let windowID {
             _ = StashSurface.setAlpha(windowID: windowID, alpha: 1)
@@ -499,21 +596,185 @@ final class StashSession {
         return true
     }
 
-    func finishExpand(next: StashSessionPhase, frame: CGRect, fromDock: Bool) {
-        phase = next
-        if let running = NSRunningApplication(processIdentifier: pid) {
-            running.activate(options: .activateIgnoringOtherApps)
+    private func prepareAndExpandSharedMinimize(
+        next: StashSessionPhase,
+        restoreFrame: CGRect,
+        fromDock: Bool
+    ) -> Bool {
+        // A system-owned Dock thumbnail may already have deminimized and
+        // switched Spaces before EdgeStash receives the AX notification. Do
+        // not move a now-visible foreign window; adopt the system result.
+        if StashAX.isMinimized(windowElement) == false {
+            usingSharedMinimize = false
+            restoringShared = true
+            _ = StashAX.setFrame(windowElement, restoreFrame)
+            finishExpand(next: next, frame: restoreFrame, fromDock: false, activatesApp: false)
+            restoringShared = false
+            return true
         }
-        _ = StashAX.setBool(windowElement, kAXMainAttribute as String, true)
-        _ = StashAX.setBool(windowElement, kAXFocusedAttribute as String, true)
+
+        guard let windowID,
+              let displayID,
+              let screen = DisplayCatalog.screen(withID: displayID),
+              let cgDisplayID = DisplayCatalog.displayID(for: screen) else {
+            failSharedReveal(availability: .unavailable)
+            return false
+        }
+
+        seamSpaceAvailability = DisplaySpaceTransport.shared.availability(for: cgDisplayID)
+        guard canBeginSeamReveal else {
+            failSharedReveal(availability: seamSpaceAvailability)
+            return false
+        }
+
+        restoringShared = true
+        spaceRevealGeneration += 1
+        let revealToken = spaceRevealGeneration
+        let lifecycleToken = lifecycleGeneration
+        DisplaySpaceTransport.shared.prepareMinimizedWindow(
+            windowID: windowID,
+            for: cgDisplayID
+        ) { [weak self] result in
+            guard let self,
+                  self.lifecycleGeneration == lifecycleToken,
+                  self.spaceRevealGeneration == revealToken,
+                  self.phase == .collapsed,
+                  self.usingSharedMinimize else {
+                return
+            }
+            switch result {
+            case .success:
+                if fromDock { StashFocusReturn.remember(excluding: self.pid) }
+                guard StashAX.setMinimized(self.windowElement, false) else {
+                    self.failSharedReveal(availability: .unavailable)
+                    return
+                }
+                self.usingSharedMinimize = false
+                DispatchQueue.main.async { [weak self] in
+                    guard let self,
+                          self.lifecycleGeneration == lifecycleToken,
+                          self.spaceRevealGeneration == revealToken else {
+                        return
+                    }
+                    _ = StashAX.setFrame(self.windowElement, restoreFrame)
+                    self.finishExpand(next: next, frame: restoreFrame, fromDock: fromDock)
+                    self.restoringShared = false
+                }
+            case let .failure(error):
+                let availability: SeamSpaceAvailability = error == .disabledFullScreen
+                    ? .disabledFullScreen
+                    : .unavailable
+                self.failSharedReveal(availability: availability)
+            }
+        }
+        return true
+    }
+
+    func cancelPendingSpaceReveal() {
+        spaceRevealGeneration += 1
+        let observedMinimized = StashAX.isMinimized(windowElement)
+        let action = SpaceChangePolicy.pendingSeamRevealCancellation(
+            phase: phase,
+            revealInFlight: restoringShared,
+            observedMinimized: observedMinimized
+        )
+        switch action {
+        case .none:
+            return
+        case .clearTransaction:
+            if phase == .collapsed {
+                usingSharedMinimize = true
+            }
+            restoringShared = false
+            busy = false
+        case .restoreCollapsedMinimizeThenClear:
+            // Keep revealInFlight true while issuing the compensating AX write
+            // so its asynchronous deminiaturized notification cannot be
+            // mistaken for a system-owned Dock reveal.
+            usingSharedMinimize = true
+            lastOwnedMinimizeAt = Date()
+            let reminimized = StashAX.setMinimized(windowElement, true)
+            restoringShared = false
+            busy = false
+            guard reminimized else {
+                // AX refused the only truthful collapsed presentation. Leave
+                // through the visibility-restoring release path; it keeps the
+                // rescue dossier if AX also refuses to make the window visible.
+                shutdown(event: .miniaturized)
+                return
+            }
+        }
+    }
+
+    /// An expanded seam window was minimized outside the collapse() write.
+    /// Minimize is the hide, so keep the session and restore the beacon.
+    func adoptSeamRecollapse() {
+        guard presentation == .systemMinimize else { return }
+        guard let next = StashSessionPolicy.phase(after: .collapse, from: phase),
+              let frame = restoreFrame else {
+            return
+        }
+        usingSharedMinimize = true
+        lastOwnedMinimizeAt = Date()
+        restoringShared = false
+        hoverDelayTimer?.invalidate()
+        hoverDelayTimer = nil
+        leaveTimer?.invalidate()
+        leaveTimer = nil
+        finishCollapse(next: next, frame: frame, merged: false)
+    }
+
+    func refreshSeamSpaceAvailability() {
+        guard presentation == .systemMinimize,
+              let displayID,
+              let screen = DisplayCatalog.screen(withID: displayID),
+              let cgDisplayID = DisplayCatalog.displayID(for: screen) else {
+            seamSpaceAvailability = .unavailable
+            return
+        }
+        seamSpaceAvailability = DisplaySpaceTransport.shared.availability(for: cgDisplayID)
+    }
+
+    private func failSharedReveal(availability: SeamSpaceAvailability) {
+        seamSpaceAvailability = availability
+        restoringShared = false
+        busy = false
+        cancelHoverReveal()
+        if let restoreFrame { showMarker(windowQuartz: restoreFrame) }
+        notifyChanged()
+        marker.showDisabledExplanation()
+    }
+
+    func finishExpand(
+        next: StashSessionPhase,
+        frame: CGRect,
+        fromDock: Bool,
+        activatesApp: Bool = true
+    ) {
+        phase = next
+        if activatesApp { activateApp() }
         showMarker(windowQuartz: frame)
         startLeaveWatch()
+        outsideSince = nil
+        lastSiblingInteractionAt = nil
         busy = false
         refreshPinControl()
         notifyChanged()
         if FocusReturnPolicy.shouldReleaseAfterExpand(fromDock: fromDock) {
             scheduleFocusRelease()
         }
+    }
+
+    /// Full app activation plus AX main/focused writes. Reserved for
+    /// deliberate reveals and for a presented window the pointer has entered —
+    /// activation raises the app's whole window stack, so a passing hover must
+    /// never trigger it.
+    func activateApp() {
+        if let running = NSRunningApplication(processIdentifier: pid) {
+            running.activate(options: .activateIgnoringOtherApps)
+        }
+        _ = StashAX.setBool(windowElement, kAXMainAttribute as String, true)
+        _ = StashAX.setBool(windowElement, kAXFocusedAttribute as String, true)
     }
 
     func finishCollapse(next: StashSessionPhase, frame: CGRect, merged: Bool) {
@@ -523,6 +784,7 @@ final class StashSession {
         busy = false
         refreshPinControl()
         notifyChanged()
+        onCollapsed?(self)
         if !merged {
             scheduleFocusRelease()
         }

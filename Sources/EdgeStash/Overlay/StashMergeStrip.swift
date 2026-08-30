@@ -40,6 +40,7 @@ final class StashMergeStrip: NSPanel {
         level = .mainMenu
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         contentView = content
+        content.autoresizingMask = [.width, .height]
         content.onHover = { [weak self] id in self?.onHoverSegment?(id) }
         content.onClick = { [weak self] id in self?.onClickSegment?(id) }
     }
@@ -55,20 +56,44 @@ final class StashMergeStrip: NSPanel {
 
 private final class StashMergeStripView: NSView {
     var model: StashMergeStripModel? {
-        didSet { needsDisplay = true }
+        didSet {
+            syncGlassChips()
+            needsDisplay = true
+        }
     }
     var onHover: ((ObjectIdentifier?) -> Void)?
     var onClick: ((ObjectIdentifier) -> Void)?
+    private var glassChips: [ObjectIdentifier: StashGlassSurface] = [:]
+    private var glassContainer: NSView?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
+        installGlassContainerIfNeeded()
     }
 
     required init?(coder: NSCoder) {
         super.init(coder: coder)
         wantsLayer = true
+        installGlassContainerIfNeeded()
+    }
+
+    private var usesSystemGlass: Bool {
+        if #available(macOS 26.0, *) {
+            return NSClassFromString("NSGlassEffectView") != nil
+        }
+        return false
+    }
+
+    private func installGlassContainerIfNeeded() {
+        guard usesSystemGlass, glassContainer == nil else { return }
+        if #available(macOS 26.0, *) {
+            let container = NSGlassEffectContainerView()
+            container.autoresizingMask = [.width, .height]
+            addSubview(container, positioned: .below, relativeTo: nil)
+            glassContainer = container
+        }
     }
 
     override func updateTrackingAreas() {
@@ -95,21 +120,56 @@ private final class StashMergeStripView: NSView {
         }
     }
 
+    override func layout() {
+        super.layout()
+        glassContainer?.frame = bounds
+        syncGlassChips()
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         guard let model else { return }
         effectiveAppearance.performAsCurrentDrawingAppearance {
-            for segment in model.segments {
-                let active = segment.id == model.activeID
-                let hovered = segment.id == model.hoveredID
-                let slot = segment.slotRect.insetBy(dx: -1, dy: 1)
-                let alpha: CGFloat = active ? 0.95 : (hovered ? 0.75 : 0.45)
-                segment.color.withAlphaComponent(alpha).setFill()
-                NSBezierPath(roundedRect: slot, xRadius: 2, yRadius: 2).fill()
-                if model.showsLabels {
-                    drawLabel(for: segment, edge: model.edge, emphasized: active || hovered)
+            if !usesSystemGlass {
+                for segment in model.segments {
+                    let active = segment.id == model.activeID
+                    let hovered = segment.id == model.hoveredID
+                    let strength: CGFloat = active ? 1 : (hovered ? 0.75 : 0.5)
+                    StashGlassPainter.paintCapsule(
+                        segment.slotRect.insetBy(dx: 0, dy: 1),
+                        tint: segment.color,
+                        strength: strength
+                    )
                 }
             }
+            for segment in model.segments where model.showsLabels {
+                let active = segment.id == model.activeID
+                let hovered = segment.id == model.hoveredID
+                drawLabel(for: segment, edge: model.edge, emphasized: active || hovered)
+            }
+        }
+    }
+
+    private func syncGlassChips() {
+        guard usesSystemGlass, let model else { return }
+        let host = glassContainer ?? self
+        let ids = Set(model.segments.map(\.id))
+        for stale in glassChips.keys where !ids.contains(stale) {
+            glassChips[stale]?.removeFromSuperview()
+            glassChips[stale] = nil
+        }
+        for segment in model.segments {
+            let chip = glassChips[segment.id] ?? StashGlassSurface()
+            if chip.superview == nil {
+                host.addSubview(chip)
+                glassChips[segment.id] = chip
+            }
+            chip.frame = segment.slotRect.insetBy(dx: 0, dy: 1)
+            let enabled = segment.id == model.activeID || segment.id == model.hoveredID
+            chip.apply(
+                role: .rail(kind: .outerStrip, edge: model.edge, enabled: enabled),
+                tint: segment.color
+            )
         }
     }
 

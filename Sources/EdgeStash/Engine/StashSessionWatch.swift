@@ -7,14 +7,26 @@ extension StashSession {
         guard usingSharedMinimize, phase == .collapsed, !restoringShared else { return }
         guard now.timeIntervalSince(lastMinimizeCheck) >= 0.5 else { return }
         lastMinimizeCheck = now
-        if StashAX.isMinimized(windowElement) == false {
-            _ = expand(fromDock: false)
-        }
+        // The poll and the AX notification must agree. Adopting "not
+        // minimized" during settle is what turned an owned collapse into a
+        // false expand and then a session-killing miniaturized event.
+        guard SeamSessionDurabilityPolicy.shouldAdoptUnminimizedPoll(
+            ownsCollapsedMinimize: usingSharedMinimize,
+            elapsedSinceOwnedMinimize: now.timeIntervalSince(lastOwnedMinimizeAt),
+            observedMinimized: StashAX.isMinimized(windowElement)
+        ) else { return }
+        _ = expand(fromDock: false)
     }
 
     func beginHoverReveal() {
         guard phase == .collapsed, !markerSuppressed else { return }
-        hoverDelayTimer?.invalidate()
+        if presentation == .systemMinimize {
+            guard canBeginSeamReveal else { return }
+        }
+        // The marker panel and the seam approach band can both see the same
+        // arrival; a pending dwell must not restart or the reveal would lag
+        // one extra delay behind every entry.
+        if let timer = hoverDelayTimer, timer.isValid { return }
         let delay = TimeInterval(Preferences.shared.revealDelayMS) / 1000
         if delay <= 0 {
             _ = expand(fromDock: false)
@@ -35,9 +47,13 @@ extension StashSession {
         hoverDelayTimer?.invalidate()
         switch phase {
         case .collapsed:
+            // A click while the lock is held expands immediately; the lock
+            // stays on so the next click collapses again (click toggle).
             _ = expand(fromDock: false)
         case .expanded:
-            _ = collapse()
+            if collapse() {
+                clickCollapseLockActive = true
+            }
         default:
             break
         }
@@ -51,7 +67,7 @@ extension StashSession {
     }
 
     func showMarker(windowQuartz: CGRect) {
-        guard let edge, !markerSuppressed else {
+        guard let edge, !markerSuppressed, !markerHiddenForSpace else {
             hideMarker()
             return
         }
@@ -63,9 +79,9 @@ extension StashSession {
         guard let screen else { return }
         let kind: StashOverlayKind
         switch presentation {
-        case .displayClippedSlideOffscreen, .systemMinimize:
+        case .systemMinimize:
             // A shared seam must keep EdgeStash's own panel wholly inside the
-            // owning display even when the third-party window slides through it.
+            // owning display; the stashed window itself is minimized.
             kind = .seamBeacon
         case .slideOffscreen, nil:
             kind = .outerStrip
@@ -77,20 +93,32 @@ extension StashSession {
             displayAppKit: screen.frame,
             primaryHeight: primaryHeight
         )
+        // Glass owns translucency. Pre-multiplying tint alpha here produced
+        // a muddy gray slab on the adaptive white/black default.
         let color = Preferences.shared.stripColor(for: bundleID)
-            .withAlphaComponent(CGFloat(Preferences.shared.tintAlpha(for: bundleID)))
+            .withAlphaComponent(max(0.35, CGFloat(Preferences.shared.tintAlpha(for: bundleID))))
         let name = NSRunningApplication(processIdentifier: pid)?.localizedName ?? bundleID
+        let markerEnabled = kind != .seamBeacon || canBeginSeamReveal
+        let explanation = seamSpaceAvailability == .disabledFullScreen
+            ? L10n.seamFullscreenDisabled
+            : L10n.seamRevealFailed
         marker.present(
             kind: kind,
             edge: edge,
             color: color,
             frame: frame,
             title: name,
+            enabled: markerEnabled,
+            disabledExplanation: explanation,
             reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         )
     }
 
     func hideMarker() {
+        // The click-collapse lock only makes sense while the marker is visible
+        // under a parked pointer; a programmatic hide (Space change, merge
+        // suppression) must not strand it.
+        clickCollapseLockActive = false
         marker.dismiss(reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
     }
 
@@ -98,10 +126,25 @@ extension StashSession {
         guard let frame = StashAX.frame(of: windowElement) else { return }
         let screens = NSScreen.screens
         let primaryHeight = DisplayCatalog.primaryHeight(screens: screens)
-        guard let (display, screen) = owningDisplay(for: frame, screens: screens, primaryHeight: primaryHeight) else {
-            return
+        let geometries = DisplayCatalog.adjacencyGeometries(screens: screens)
+        let parked = geometries.compactMap { display -> (DisplayGeometry, DisplayEdge)? in
+            guard let edge = StashGeometryPolicy.parkedEdge(of: frame, in: display.frame) else { return nil }
+            return (display, edge)
+        }.first
+        let display: DisplayGeometry
+        let edge: DisplayEdge
+        if let parked {
+            display = parked.0
+            edge = parked.1
+        } else {
+            guard let owned = owningDisplay(for: frame, screens: screens, primaryHeight: primaryHeight),
+                  let parkedEdge = StashGeometryPolicy.parkedEdge(of: frame, in: owned.0.frame) else {
+                return
+            }
+            display = owned.0
+            edge = parkedEdge
         }
-        guard let edge = parkedEdge(of: frame, in: display.frame) else { return }
+        guard let screen = DisplayCatalog.screen(withID: display.id, screens: screens) else { return }
         let selection = Preferences.shared.displayEdgeSelection(
             for: ConnectedDisplay(id: display.id, name: screen.localizedName, frame: screen.frame, isMain: false)
         )
@@ -112,21 +155,6 @@ extension StashSession {
             edgeEnabled: selection.isEnabled(edge)
         ) else { return }
         _ = capture(edge: edge, frame: frame, display: display, screen: screen, primaryHeight: primaryHeight)
-    }
-
-    /// A window parked by a previous run shows only its edge lip: the sliver
-    /// inside the owning display is lip-sized, hugging one edge, with the
-    /// bulk of the window off-screen. Tolerance covers window-manager nudges
-    /// between sessions.
-    private func parkedEdge(of frame: CGRect, in display: CGRect) -> DisplayEdge? {
-        let visible = frame.intersection(display)
-        guard frame.width - visible.width > 24 else { return nil }
-        let tolerance: CGFloat = 6
-        let reach = StashGeometryPolicy.edgeLip + tolerance
-        guard visible.width <= reach else { return nil }
-        if visible.maxX - display.minX <= reach { return .left }
-        if display.maxX - visible.minX <= reach { return .right }
-        return nil
     }
 
     func owningDisplay(
@@ -234,14 +262,18 @@ extension StashSession {
     private func checkLeaveToCollapse() {
         refreshPinControl()
         guard phase == .expanded, !busy else { return }
-        guard PinControlPolicy.shouldAutoCollapse(isPinned: isPinned) else { return }
-        if usingSharedMinimize { return }
-        if NSEvent.pressedMouseButtons != 0 { return }
-        guard let frame = StashAX.frame(of: windowElement) ?? restoreFrame else { return }
+        let mouse = NSEvent.mouseLocation
         let screens = NSScreen.screens
         let primaryHeight = DisplayCatalog.primaryHeight(screens: screens)
-        let mouse = NSEvent.mouseLocation
+        guard let frame = StashAX.frame(of: windowElement) ?? restoreFrame else { return }
         let windowAppKit = StashGeometryPolicy.appKitRect(fromQuartz: frame, primaryHeight: primaryHeight)
+        guard PinControlPolicy.shouldAutoCollapse(isPinned: isPinned) else { return }
+        if usingSharedMinimize { return }
+        let now = Date()
+        if NSEvent.pressedMouseButtons != 0 {
+            outsideSince = nil
+            return
+        }
         let screen = displayID.flatMap { DisplayCatalog.screen(withID: $0, screens: screens) }
             ?? owningDisplay(for: frame, screens: screens, primaryHeight: primaryHeight)?.1
             ?? NSScreen.main
@@ -250,17 +282,56 @@ extension StashSession {
             windowAppKit: windowAppKit,
             screenAppKit: screen?.frame ?? windowAppKit
         )
-        if PinControlPolicy.pointerBlocksAutoCollapse(
+        let geometricallyOutside = !PinControlPolicy.pointerBlocksAutoCollapse(
             mouseAppKit: mouse,
             windowAppKit: windowAppKit,
             gateSpanX: Preferences.shared.gateSpanX,
             gateSpanY: Preferences.shared.gateSpanY,
             triggerRect: pinFrames.triggerRect,
             safeRect: pinFrames.safeRect
-        ) {
+        )
+        var pointerInSibling = false
+        var siblingFocused = false
+        if geometricallyOutside {
+            let mouseQuartz = CGPoint(
+                x: mouse.x,
+                y: StashGeometryPolicy.quartzOriginY(appKitY: mouse.y, height: 0, primaryHeight: primaryHeight)
+            )
+            pointerInSibling = StashSurface.isPointerInSiblingWindow(
+                pid: pid,
+                excluding: windowID,
+                atQuartz: mouseQuartz
+            )
+            if pointerInSibling {
+                lastSiblingInteractionAt = now
+            }
+            siblingFocused = isSiblingWindowFocused()
+        }
+        guard LeaveCollapsePolicy.countsAsInside(
+            geometricallyOutside: geometricallyOutside,
+            pointerInSibling: pointerInSibling,
+            siblingFocused: siblingFocused,
+            lastSiblingInteractionAt: lastSiblingInteractionAt,
+            now: now
+        ) else {
+            if outsideSince == nil { outsideSince = now }
+            if LeaveCollapsePolicy.shouldCollapse(outsideSince: outsideSince, now: now) {
+                outsideSince = nil
+                _ = collapse()
+            }
             return
         }
-        _ = collapse()
+        outsideSince = nil
+    }
+
+    /// The app is frontmost and its focused window is a sibling of the stashed
+    /// one: the user is working with the app, so the expanded stash stays out.
+    private func isSiblingWindowFocused() -> Bool {
+        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
+              let focused = StashAX.focusedWindow(of: appElement) else {
+            return false
+        }
+        return !sameWindow(as: focused)
     }
 
     private func handleNotification(_ name: String, element: AXUIElement) {
@@ -268,33 +339,72 @@ extension StashSession {
             shutdown(event: .windowDestroyed)
             return
         }
-        if name == kAXWindowMiniaturizedNotification as String {
-            if usingSharedMinimize { return }
-            shutdown(event: .miniaturized)
+        let minimizeNotification: ManagedMinimizeNotification?
+        switch name {
+        case kAXWindowMiniaturizedNotification as String:
+            minimizeNotification = .miniaturized
+        case kAXWindowDeminiaturizedNotification as String:
+            minimizeNotification = .deminiaturized
+        default:
+            minimizeNotification = nil
+        }
+        if let minimizeNotification {
+            let action = ManagedMinimizeNotificationPolicy.action(
+                for: minimizeNotification,
+                phase: phase,
+                ownsCollapsedMinimize: usingSharedMinimize,
+                revealInFlight: restoringShared,
+                observedMinimized: StashAX.isMinimized(element),
+                presentation: presentation
+            )
+            switch action {
+            case .ignore:
+                break
+            case .releaseSession:
+                shutdown(event: .miniaturized)
+            case .adoptSystemReveal:
+                _ = expand(fromDock: false)
+            case .recollapse:
+                adoptSeamRecollapse()
+            }
             return
         }
-        if name == kAXWindowDeminiaturizedNotification as String, usingSharedMinimize {
-            _ = expand(fromDock: false)
-        }
-        if name == kAXMovedNotification as String, phase == .expanded, !busy {
-            guard let frame = StashAX.frame(of: windowElement), let edge else { return }
+        if name == kAXMovedNotification as String, !busy, let edge {
+            guard let frame = StashAX.frame(of: windowElement) else { return }
             let screens = NSScreen.screens
             let primaryHeight = DisplayCatalog.primaryHeight(screens: screens)
-            guard let display = owningDisplay(for: frame, screens: screens, primaryHeight: primaryHeight)?.0 else {
-                return
-            }
-            let stillOnEdge: Bool
-            switch edge {
-            case .left:
-                stillOnEdge = abs(frame.minX - display.frame.minX) <= 20
-            case .right:
-                stillOnEdge = abs(frame.maxX - display.frame.maxX) <= 20
-            }
-            if StashSessionPolicy.shouldDetachAfterOffEdgeMove(
-                isPinned: isPinned,
-                stillOnEdge: stillOnEdge
-            ) {
-                shutdown(event: .detachedFromEdge)
+            let geometries = DisplayCatalog.adjacencyGeometries(screens: screens)
+            let display = displayID.flatMap { id in geometries.first { $0.id == id } }
+                ?? owningDisplay(for: frame, screens: screens, primaryHeight: primaryHeight)?.0
+            guard let display else { return }
+            if phase == .expanded {
+                let stillOnEdge: Bool
+                switch edge {
+                case .left:
+                    stillOnEdge = abs(frame.minX - display.frame.minX) <= 20
+                case .right:
+                    stillOnEdge = abs(frame.maxX - display.frame.maxX) <= 20
+                }
+                if StashSessionPolicy.shouldDetachAfterOffEdgeMove(
+                    isPinned: isPinned,
+                    stillOnEdge: stillOnEdge
+                ) {
+                    shutdown(event: .detachedFromEdge)
+                }
+            } else if phase == .collapsed, let presentation {
+                let stillParked = StashGeometryPolicy.isStillOnStashEdge(
+                    frame: frame,
+                    display: display.frame,
+                    edge: edge,
+                    presentation: presentation
+                )
+                if StashSessionPolicy.shouldReleaseCollapsedAfterExternalMove(
+                    isCollapsed: true,
+                    isBusy: busy,
+                    stillParkedOnOwningEdge: stillParked
+                ) {
+                    shutdown(event: .detachedFromEdge)
+                }
             }
         }
     }

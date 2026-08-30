@@ -21,8 +21,7 @@ struct DisplayBoundarySettingsView: View {
                     DisplayEdgePolicy.collapseStrategy(
                         at: edge,
                         of: geometry,
-                        in: geometries,
-                        screensHaveSeparateSpaces: NSScreen.screensHaveSeparateSpaces
+                        in: geometries
                     ) == .systemMinimize
             }
         }
@@ -57,15 +56,22 @@ struct DisplayBoundarySettingsView: View {
                         VStack(alignment: .leading, spacing: 6) {
                             Text(L10n.displaySharedNote)
                                 .font(.system(size: 12, weight: .semibold))
-                            Text(L10n.displaySharedHowTo)
+                            if DisplaySpaceTransport.shared.isAvailable {
+                                Text(L10n.displaySharedHowTo)
+                                    .font(.system(size: 11))
+                                    .foregroundColor(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Button(L10n.displayOpenDockPane) {
+                                    openDesktopAndDockSettings()
+                                }
+                                .buttonStyle(.link)
                                 .font(.system(size: 11))
-                                .foregroundColor(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                            Button(L10n.displayOpenDockPane) {
-                                openDesktopAndDockSettings()
+                            } else {
+                                Text(L10n.displaySharedUnavailable)
+                                    .font(.system(size: 11))
+                                    .foregroundColor(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
                             }
-                            .buttonStyle(.link)
-                            .font(.system(size: 11))
                         }
                     }
                     .padding(12)
@@ -173,13 +179,13 @@ struct DisplayBoundaryRow: View {
         case .outer:
             return L10n.displayOuterEdge
         case .partiallyShared:
-            return NSScreen.screensHaveSeparateSpaces
-                ? L10n.displayPartialSharedClipped
-                : L10n.displayPartialShared
+            return DisplaySpaceTransport.shared.isAvailable
+                ? L10n.displayPartialShared
+                : L10n.displayPartialSharedUnavailable
         case .fullyShared:
-            return NSScreen.screensHaveSeparateSpaces
-                ? L10n.displayFullySharedClipped
-                : L10n.displayFullyShared
+            return DisplaySpaceTransport.shared.isAvailable
+                ? L10n.displayFullyShared
+                : L10n.displayFullySharedUnavailable
         }
     }
 

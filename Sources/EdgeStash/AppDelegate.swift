@@ -34,6 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         installTextEditingChords()
+        updateStatusBarVisibility()
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(handleMenuBarVisibilityChange),
@@ -46,7 +47,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             name: PreferenceSignal.languageDidChange,
             object: nil
         )
-        updateStatusBarVisibility()
         StashRescue.recoverPending(reason: RescueTrigger.appLaunch)
         if AccessibilityGrant.isTrusted(prompt: false) {
             startEngineIfTrusted()
