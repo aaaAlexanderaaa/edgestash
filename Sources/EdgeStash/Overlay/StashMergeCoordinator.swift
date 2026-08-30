@@ -112,6 +112,10 @@ final class StashMergeCoordinator {
         clickLocked.removeAll()
     }
 
+    /// Space transitions dismiss the fused strip, but must also release
+    /// individual-marker suppression. `tearDown()` alone leaves
+    /// `markerSuppressed` set, so `showMarker` no-ops and a merged collapsed
+    /// seam beacon stays blank for `SpaceChangePolicy.rebuildDelay`.
     func resetForSpaceChange(sessions: [StashSession]) {
         tearDown()
         sessions.forEach { $0.setMarkerSuppressed(false) }
