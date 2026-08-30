@@ -281,6 +281,18 @@ struct EdgeStashLogicTests {
             "dragging off the stash edge must keep the live window frame"
         )
         expect(
+            SessionLifecyclePolicy.shouldRestoreAlpha(for: .detachedFromEdge),
+            "a Mission Control drag off a collapsed stash must restore window alpha"
+        )
+        expect(
+            SessionLifecyclePolicy.shouldClearDisplayBinding(for: .detachedFromEdge),
+            "leaving a stash must forget the capture display so the next snap uses the window's new home"
+        )
+        expect(
+            !SessionLifecyclePolicy.shouldClearDisplayBinding(for: .appQuitting),
+            "quit restore keeps the recorded display until the window is back"
+        )
+        expect(
             !SessionLifecyclePolicy.shouldRemoveManagerSession(for: .detachedFromEdge),
             "a detached window stays as an idle session so it can snap again"
         )
@@ -291,6 +303,215 @@ struct EdgeStashLogicTests {
                 isFloating: false
             ),
             "manual detach owns the window; stash rescue records must drop"
+        )
+
+        expect(
+            ManagedMinimizeNotificationPolicy.action(
+                for: .miniaturized,
+                phase: .collapsed,
+                ownsCollapsedMinimize: true,
+                revealInFlight: false,
+                observedMinimized: true
+            ) == .ignore,
+            "the notification produced by an owned seam collapse must preserve the session"
+        )
+        expect(
+            ManagedMinimizeNotificationPolicy.action(
+                for: .miniaturized,
+                phase: .collapsed,
+                ownsCollapsedMinimize: false,
+                revealInFlight: true,
+                observedMinimized: false
+            ) == .ignore,
+            "the exact post-deminimize/pre-finish race must ignore the delayed collapse notification"
+        )
+        expect(
+            ManagedMinimizeNotificationPolicy.action(
+                for: .miniaturized,
+                phase: .collapsed,
+                ownsCollapsedMinimize: false,
+                revealInFlight: true,
+                observedMinimized: true
+            ) == .ignore,
+            "AX lag that still reports minimized during a seam reveal must not release the collapsed session"
+        )
+        expect(
+            ManagedMinimizeNotificationPolicy.action(
+                for: .miniaturized,
+                phase: .collapsed,
+                ownsCollapsedMinimize: false,
+                revealInFlight: false,
+                observedMinimized: true
+            ) == .ignore,
+            "a collapsed window that is still minimized is already parked; a late miniaturized notification cannot consume it"
+        )
+        expect(
+            ManagedMinimizeNotificationPolicy.action(
+                for: .miniaturized,
+                phase: .expanded,
+                ownsCollapsedMinimize: false,
+                revealInFlight: false,
+                observedMinimized: false
+            ) == .ignore,
+            "a delayed minimize notification after reveal must follow current AX state and stay harmless"
+        )
+        expect(
+            ManagedMinimizeNotificationPolicy.action(
+                for: .miniaturized,
+                phase: .expanded,
+                ownsCollapsedMinimize: false,
+                revealInFlight: false,
+                observedMinimized: nil
+            ) == .ignore,
+            "an unreadable AX minimized value cannot authorize destructive session release"
+        )
+        expect(
+            ManagedMinimizeNotificationPolicy.action(
+                for: .miniaturized,
+                phase: .expanded,
+                ownsCollapsedMinimize: false,
+                revealInFlight: false,
+                observedMinimized: true
+            ) == .releaseSession,
+            "a genuine external minimize of an expanded slide stash still releases the session"
+        )
+        expect(
+            ManagedMinimizeNotificationPolicy.action(
+                for: .miniaturized,
+                phase: .expanded,
+                ownsCollapsedMinimize: false,
+                revealInFlight: false,
+                observedMinimized: true,
+                presentation: .systemMinimize
+            ) == .recollapse,
+            "minimize is the seam hide; an expanded seam window that miniaturizes must keep the session"
+        )
+        expect(
+            ManagedMinimizeNotificationPolicy.action(
+                for: .miniaturized,
+                phase: .collapsed,
+                ownsCollapsedMinimize: true,
+                revealInFlight: false,
+                observedMinimized: true,
+                presentation: .systemMinimize
+            ) == .ignore,
+            "an owned seam collapse notification still cannot consume the session"
+        )
+        expect(
+            ManagedMinimizeNotificationPolicy.action(
+                for: .deminiaturized,
+                phase: .collapsed,
+                ownsCollapsedMinimize: true,
+                revealInFlight: false,
+                observedMinimized: false
+            ) == .adoptSystemReveal,
+            "a system-owned Dock restoration of a collapsed seam window is adopted"
+        )
+        expect(
+            ManagedMinimizeNotificationPolicy.action(
+                for: .deminiaturized,
+                phase: .collapsed,
+                ownsCollapsedMinimize: true,
+                revealInFlight: true,
+                observedMinimized: false
+            ) == .ignore,
+            "an EdgeStash reveal in flight owns its deminimize notification"
+        )
+        expect(
+            ManagedMinimizeNotificationPolicy.action(
+                for: .deminiaturized,
+                phase: .collapsed,
+                ownsCollapsedMinimize: true,
+                revealInFlight: false,
+                observedMinimized: true
+            ) == .ignore,
+            "a stale deminimize notification cannot reveal a window that is currently minimized"
+        )
+
+        var repeatedSeamSessionRemainsManaged = true
+        for _ in 0..<100 {
+            let ownedCollapse = ManagedMinimizeNotificationPolicy.action(
+                for: .miniaturized,
+                phase: .collapsed,
+                ownsCollapsedMinimize: true,
+                revealInFlight: false,
+                observedMinimized: true
+            )
+            let delayedAfterReveal = ManagedMinimizeNotificationPolicy.action(
+                for: .miniaturized,
+                phase: .expanded,
+                ownsCollapsedMinimize: false,
+                revealInFlight: false,
+                observedMinimized: false
+            )
+            if ownedCollapse == .releaseSession || delayedAfterReveal == .releaseSession {
+                repeatedSeamSessionRemainsManaged = false
+            }
+        }
+        expect(
+            repeatedSeamSessionRemainsManaged,
+            "100 owned collapse/reveal cycles must never consume the seam session"
+        )
+
+        // The 0.5s minimize poll and AX notifications are two observers of the
+        // same hide. A poll that adopts "not minimized" during AX settle flips
+        // the session to expanded; the delayed miniaturized notification then
+        // looks like an external hide and used to release the beacon.
+        expect(
+            !SeamSessionDurabilityPolicy.shouldAdoptUnminimizedPoll(
+                ownsCollapsedMinimize: true,
+                elapsedSinceOwnedMinimize: 0.2,
+                observedMinimized: false
+            ),
+            "AX lag right after an owned minimize must not be adopted as a Dock reveal"
+        )
+        expect(
+            SeamSessionDurabilityPolicy.shouldAdoptUnminimizedPoll(
+                ownsCollapsedMinimize: true,
+                elapsedSinceOwnedMinimize: 1.6,
+                observedMinimized: false
+            ),
+            "after settle, a still-unminimized collapsed seam window may be a missed Dock restore"
+        )
+        expect(
+            !SeamSessionDurabilityPolicy.shouldAdoptUnminimizedPoll(
+                ownsCollapsedMinimize: true,
+                elapsedSinceOwnedMinimize: 2.0,
+                observedMinimized: true
+            ),
+            "a poll that still sees minimized must not expand"
+        )
+        expect(
+            !SeamSessionDurabilityPolicy.shouldAdoptUnminimizedPoll(
+                ownsCollapsedMinimize: false,
+                elapsedSinceOwnedMinimize: 2.0,
+                observedMinimized: false
+            ),
+            "a session that no longer owns the hide cannot be expanded by the poll"
+        )
+
+        var deadlyPairKeepsSession = true
+        for _ in 0..<100 {
+            let pollDuringSettle = SeamSessionDurabilityPolicy.shouldAdoptUnminimizedPoll(
+                ownsCollapsedMinimize: true,
+                elapsedSinceOwnedMinimize: 0.4,
+                observedMinimized: false
+            )
+            let lateMinimize = ManagedMinimizeNotificationPolicy.action(
+                for: .miniaturized,
+                phase: .expanded,
+                ownsCollapsedMinimize: false,
+                revealInFlight: false,
+                observedMinimized: true,
+                presentation: .systemMinimize
+            )
+            if pollDuringSettle || lateMinimize == .releaseSession {
+                deadlyPairKeepsSession = false
+            }
+        }
+        expect(
+            deadlyPairKeepsSession,
+            "100 poll-then-late-minimize sequences must keep a seam session"
         )
 
         expect(
@@ -485,30 +706,10 @@ struct EdgeStashLogicTests {
             DisplayEdgePolicy.collapseStrategy(
                 at: .right,
                 of: portraitDisplay,
-                windowFrame: CGRect(x: 380, y: 80, width: 700, height: 300),
-                in: mixedOrientationDisplays,
-                screensHaveSeparateSpaces: true
-            ) == .slideOffscreen,
-            "separate Spaces must not reclassify an exposed segment as a shared clipped slide"
-        )
-        expect(
-            DisplayEdgePolicy.collapseStrategy(
-                at: .right,
-                of: portraitDisplay,
                 windowFrame: CGRect(x: 380, y: 300, width: 700, height: 300),
                 in: mixedOrientationDisplays
             ) == .systemMinimize,
             "a window crossing into the physically shared segment must use system minimization"
-        )
-        expect(
-            DisplayEdgePolicy.collapseStrategy(
-                at: .right,
-                of: portraitDisplay,
-                windowFrame: CGRect(x: 380, y: 300, width: 700, height: 300),
-                in: mixedOrientationDisplays,
-                screensHaveSeparateSpaces: true
-            ) == .displayClippedSlideOffscreen,
-            "separate display Spaces let a shared segment use WindowServer clipping"
         )
         expect(
             DisplayEdgePolicy.collapseStrategy(
@@ -568,15 +769,6 @@ struct EdgeStashLogicTests {
                 in: threeDisplays
             ) == .systemMinimize,
             "the middle display's left shared boundary must use system minimization"
-        )
-        expect(
-            DisplayEdgePolicy.collapseStrategy(
-                at: .left,
-                of: middleDisplay,
-                in: threeDisplays,
-                screensHaveSeparateSpaces: true
-            ) == .displayClippedSlideOffscreen,
-            "a fully shared boundary uses a clipped slide when displays have separate Spaces"
         )
         expect(
             DisplayEdgePolicy.collapseStrategy(
@@ -670,16 +862,6 @@ struct EdgeStashLogicTests {
                 selection: DisplayEdgeSelection(leftEnabled: true, rightEnabled: true)
             ) == .slideOffscreen,
             "a partially shared edge keeps a slide preview on its exposed intervals"
-        )
-        expect(
-            DisplayArrangementPolicy.previewKind(
-                at: .right,
-                of: leftDisplay,
-                in: sideBySideDisplays,
-                selection: DisplayEdgeSelection(leftEnabled: true, rightEnabled: true),
-                screensHaveSeparateSpaces: true
-            ) == .slideOffscreen,
-            "an enabled shared edge previews a slide when per-display clipping is available"
         )
         expect(
             DisplayArrangementPolicy.previewKind(
@@ -852,16 +1034,6 @@ struct EdgeStashLogicTests {
         )
         expect(
             StashSessionPolicy.collapsePresentation(
-                at: .left,
-                of: middleDisplay,
-                windowFrame: nil,
-                in: threeDisplays,
-                screensHaveSeparateSpaces: true
-            ) == .displayClippedSlideOffscreen,
-            "a fully shared seam presents as a display-clipped slide with separate Spaces"
-        )
-        expect(
-            StashSessionPolicy.collapsePresentation(
                 at: .right,
                 of: portraitDisplay,
                 windowFrame: CGRect(x: 380, y: 80, width: 700, height: 300),
@@ -888,19 +1060,11 @@ struct EdgeStashLogicTests {
         )
         expect(
             StashSessionPolicy.shouldReleaseAfterTopologyChange(
-                current: .displayClippedSlideOffscreen,
-                next: .systemMinimize,
+                current: .systemMinimize,
+                next: .slideOffscreen,
                 displayStillPresent: true
             ),
-            "turning off separate display Spaces must release a clipped shared-edge stash"
-        )
-        expect(
-            StashSessionPolicy.shouldReleaseAfterTopologyChange(
-                current: .slideOffscreen,
-                next: .displayClippedSlideOffscreen,
-                displayStillPresent: true
-            ),
-            "an outer edge that becomes a shared clipped edge must release its stale stash"
+            "a seam that stops being shared must release the minimized stash"
         )
         expect(
             !StashSessionPolicy.shouldReleaseAfterTopologyChange(
@@ -949,6 +1113,30 @@ struct EdgeStashLogicTests {
         expect(
             !StashSessionPolicy.shouldDetachAfterOffEdgeMove(isPinned: false, stillOnEdge: true),
             "a window still on the stash edge stays managed"
+        )
+        expect(
+            StashSessionPolicy.shouldReleaseCollapsedAfterExternalMove(
+                isCollapsed: true,
+                isBusy: false,
+                stillParkedOnOwningEdge: false
+            ),
+            "Mission Control may drag a collapsed window off its parked edge; release it"
+        )
+        expect(
+            !StashSessionPolicy.shouldReleaseCollapsedAfterExternalMove(
+                isCollapsed: true,
+                isBusy: true,
+                stillParkedOnOwningEdge: false
+            ),
+            "an in-flight collapse slide is not an external move"
+        )
+        expect(
+            !StashSessionPolicy.shouldReleaseCollapsedAfterExternalMove(
+                isCollapsed: true,
+                isBusy: false,
+                stillParkedOnOwningEdge: true
+            ),
+            "a collapsed window that is still parked stays managed"
         )
         expect(
             !FocusReturnPolicy.shouldReleaseAfterLeaveCollapse(didCollapse: false),
@@ -1033,6 +1221,21 @@ struct EdgeStashLogicTests {
             "right slide-off keeps the lip inside the owning display"
         )
 
+        expect(
+            StashGeometryPolicy.barThickness == 5
+                && StashGeometryPolicy.outerPanelWidth == 11
+                && StashGeometryPolicy.seamPanelWidth == 9
+                && StashGeometryPolicy.haloThickness == 5
+                && StashGeometryPolicy.captureBand == 42,
+            "glass rails are 5pt in 11/9pt panels; capture band stays 42 so snap feel does not widen"
+        )
+        expect(
+            StashGeometryPolicy.tintStrength(kind: .outerStrip, enabled: true) == 1
+                && StashGeometryPolicy.tintStrength(kind: .seamBeacon, enabled: true) == 0.5
+                && StashGeometryPolicy.tintStrength(kind: .seamBeacon, enabled: false) == 0.28,
+            "outer is full tint; seam is half; disabled seam is quieter still"
+        )
+
         let seamLeft = StashGeometryPolicy.markerPanelFrame(
             kind: .seamBeacon,
             edge: .left,
@@ -1041,9 +1244,44 @@ struct EdgeStashLogicTests {
             primaryHeight: 900
         )
         expect(
-            seamLeft.minX >= 0 && seamLeft.maxX <= 1440,
-            "seam beacon must stay on the owning AppKit display"
+            seamLeft.minX >= 0 && seamLeft.maxX <= 1440 && seamLeft.width == 9,
+            "seam beacon must stay on the owning AppKit display as a 9pt panel"
         )
+        let seamRail = StashGeometryPolicy.visibleRailRect(
+            kind: .seamBeacon,
+            edge: .left,
+            in: CGRect(x: 0, y: 0, width: seamLeft.width, height: 200)
+        )
+        expect(
+            seamRail.minX == 2 && seamRail.width == 5,
+            "seam glass starts 2pt inside the seam and is 5pt thick"
+        )
+        let gap = StashGeometryPolicy.seamInnerGapRect(in: seamRail)
+        expect(
+            abs(gap.midX - seamRail.midX) < 0.01 && gap.width == 1 && gap.height > 0,
+            "seam distinction is a 1pt slit down the long axis"
+        )
+        let outerLeft = StashGeometryPolicy.markerPanelFrame(
+            kind: .outerStrip,
+            edge: .left,
+            windowQuartz: CGRect(x: 0, y: 80, width: 800, height: 600),
+            displayAppKit: CGRect(x: 0, y: 0, width: 1440, height: 900),
+            primaryHeight: 900
+        )
+        let outerRail = StashGeometryPolicy.visibleRailRect(
+            kind: .outerStrip,
+            edge: .left,
+            in: CGRect(origin: .zero, size: outerLeft.size)
+        )
+        expect(
+            outerLeft.width == 11 && outerRail.width == 5 && outerLeft.minX + outerRail.minX == 1,
+            "outer glass keeps 1pt on-screen clearance in an 11pt panel"
+        )
+        let haloLeft = StashGeometryPolicy.haloBand(
+            edge: .left,
+            displayAppKit: CGRect(x: 0, y: 0, width: 1440, height: 900)
+        )
+        expect(haloLeft.width == 5, "Settings halo previews the 5pt rail")
         let haloRight = StashGeometryPolicy.haloBand(
             edge: .right,
             displayAppKit: CGRect(x: 1440, y: 0, width: 1920, height: 1080)
@@ -1633,12 +1871,12 @@ struct EdgeStashLogicTests {
             "collapse must keep the capture display when the frame straddles a seam"
         )
         expect(
-            StashSessionPolicy.shouldSnapToExpandedBeforeSlide(.displayClippedSlideOffscreen),
-            "a clipped seam slide must snap to the owning expanded frame first"
-        )
-        expect(
-            !StashSessionPolicy.shouldSnapToExpandedBeforeSlide(.slideOffscreen),
-            "an outer-edge slide keeps the live origin"
+            StashSessionPolicy.displayForCollapse(
+                sessionDisplayID: nil,
+                intersectionDisplayID: nil,
+                displays: [collapseLeft, collapseRight]
+            ) == nil,
+            "a window that matches no display must not default to the first/primary screen"
         )
         expect(
             !StashSessionPolicy.captureRecheckDelays().isEmpty,
@@ -1747,6 +1985,94 @@ struct EdgeStashLogicTests {
             )?.id == "L",
             "a fully off-screen window must not attach to a zero-overlap neighbor"
         )
+        expect(
+            StashGeometryPolicy.owningDisplay(
+                for: CGRect(x: -800, y: 80, width: 800, height: 600),
+                in: [collapseLeft, collapseRight]
+            ) == nil,
+            "an unmatched off-screen window must not fall back to the primary/middle display"
+        )
+
+        let seamLeftWindow = CGRect(x: 640, y: 80, width: 800, height: 600)
+        let seamRightWindow = CGRect(x: 1440, y: 80, width: 800, height: 600)
+        expect(
+            StashGeometryPolicy.owningDisplay(
+                for: seamLeftWindow,
+                in: [collapseLeft, collapseRight]
+            )?.id == "L",
+            "a window sitting on the right side of the left display belongs to the left display"
+        )
+        expect(
+            StashGeometryPolicy.owningDisplay(
+                for: seamRightWindow,
+                in: [collapseLeft, collapseRight]
+            )?.id == "R",
+            "a window sitting on the left side of the right display belongs to the right display"
+        )
+
+        let flippedOntoNeighbor = CGRect(x: 1438, y: 80, width: 800, height: 600)
+        expect(
+            StashGeometryPolicy.owningDisplay(
+                for: flippedOntoNeighbor,
+                in: [collapseLeft, collapseRight],
+                preferredID: "L"
+            )?.id == "L",
+            "a window parked off the left display's right seam must keep the capture display"
+        )
+        expect(
+            StashGeometryPolicy.owningDisplay(
+                for: CGRect(x: 1600, y: 80, width: 800, height: 600),
+                in: [collapseLeft, collapseRight],
+                preferredID: "L"
+            )?.id == "R",
+            "moving a window fully onto another display must rebind ownership"
+        )
+
+        let parkedOffLeft = CGRect(
+            x: collapseLeft.frame.minX - 800 + StashGeometryPolicy.edgeLip,
+            y: 80,
+            width: 800,
+            height: 600
+        )
+        expect(
+            StashGeometryPolicy.isStillOnStashEdge(
+                frame: parkedOffLeft,
+                display: collapseLeft.frame,
+                edge: .left,
+                presentation: .slideOffscreen
+            ),
+            "a window parked off the exposed edge with only its lip inside is still stashed"
+        )
+        expect(
+            !StashGeometryPolicy.isStillOnStashEdge(
+                frame: CGRect(x: 200, y: 80, width: 800, height: 600),
+                display: collapseLeft.frame,
+                edge: .left,
+                presentation: .slideOffscreen
+            ),
+            "dragging the parked window inland is no longer parked"
+        )
+        expect(
+            StashGeometryPolicy.isStillOnStashEdge(
+                frame: CGRect(x: 200, y: 80, width: 800, height: 600),
+                display: collapseLeft.frame,
+                edge: .right,
+                presentation: .systemMinimize
+            ),
+            "a minimized seam stash has no parked frame to verify"
+        )
+        expect(
+            MultiWindowTipPolicy.shouldHideOnSpaceChange(),
+            "Mission Control / space changes must dismiss the floating multi-window tip"
+        )
+        expect(
+            MultiWindowTipPolicy.shouldDismiss(collapsedCount: 1),
+            "the tip must hide once the app no longer has multiple collapsed windows"
+        )
+        expect(
+            !MultiWindowTipPolicy.shouldDismiss(collapsedCount: 2),
+            "two collapsed windows may keep a visible tip until it times out"
+        )
 
         let pinWindow = CGRect(x: 100, y: 100, width: 400, height: 300)
         let leavePinFrames = PinControlPolicy.frames(
@@ -1813,6 +2139,366 @@ struct EdgeStashLogicTests {
                 display: CGRect(x: 0, y: 0, width: 1440, height: 900)
             ),
             "a parked off-screen window still needs rescue"
+        )
+        expect(
+            !PreferencePublicationPolicy.shouldPublishSideEffects(isHydrating: true),
+            "hydration must not post preference notifications that re-enter the singleton"
+        )
+        expect(
+            PreferencePublicationPolicy.shouldPublishSideEffects(isHydrating: false),
+            "after load, user-facing preference writes may persist and notify"
+        )
+        expect(
+            SpaceChangePolicy.shouldPresentSeamLimitationExplanation(alreadyAdvised: false),
+            "the first blocked seam reveal must explain why the window stays put"
+        )
+        expect(
+            !SpaceChangePolicy.shouldPresentSeamLimitationExplanation(alreadyAdvised: true),
+            "later blocked reveals stay silent; the disabled beacon is enough"
+        )
+
+        let approachLeft = DisplayGeometry(id: "AL", frame: CGRect(x: 0, y: 0, width: 1440, height: 900))
+        let approachRight = DisplayGeometry(id: "AR", frame: CGRect(x: 1440, y: 0, width: 1440, height: 900))
+        let approachDisplays = [approachLeft, approachRight]
+        let leftSeamStash = SeamApproachSegment(
+            id: "left-stash",
+            displayID: "AL",
+            edge: .right,
+            minY: 100,
+            maxY: 700
+        )
+        expect(
+            SeamApproachPolicy.target(
+                pointer: CGPoint(x: 1440 - SeamApproachPolicy.bandWidth, y: 400),
+                segments: [leftSeamStash],
+                displays: approachDisplays
+            ) == "left-stash",
+            "a gentle approach at the inner edge of the band reaches the seam beacon"
+        )
+        expect(
+            SeamApproachPolicy.target(
+                pointer: CGPoint(x: 1440 - 1, y: 400),
+                segments: [leftSeamStash],
+                displays: approachDisplays
+            ) == "left-stash",
+            "a pointer hugging the seam reaches the beacon"
+        )
+        expect(
+            SeamApproachPolicy.target(
+                pointer: CGPoint(x: 1440 + SeamApproachPolicy.overshoot, y: 400),
+                segments: [leftSeamStash],
+                displays: approachDisplays
+            ) == "left-stash",
+            "a slight overshoot past the seam still reaches the beacon"
+        )
+        expect(
+            SeamApproachPolicy.target(
+                pointer: CGPoint(x: 1440 + SeamApproachPolicy.overshoot + 1, y: 400),
+                segments: [leftSeamStash],
+                displays: approachDisplays
+            ) == nil,
+            "a pointer deep on the neighbor display is not an approach"
+        )
+        expect(
+            SeamApproachPolicy.target(
+                pointer: CGPoint(x: 1440 - SeamApproachPolicy.bandWidth - 1, y: 400),
+                segments: [leftSeamStash],
+                displays: approachDisplays
+            ) == nil,
+            "a pointer inland of the band does not reach the beacon"
+        )
+        expect(
+            SeamApproachPolicy.target(
+                pointer: CGPoint(x: 1440 - 1, y: 701),
+                segments: [leftSeamStash],
+                displays: approachDisplays
+            ) == nil,
+            "a pointer beyond the beacon's vertical span does not reach it"
+        )
+        let rightSeamStash = SeamApproachSegment(
+            id: "right-stash",
+            displayID: "AR",
+            edge: .left,
+            minY: 100,
+            maxY: 700
+        )
+        expect(
+            SeamApproachPolicy.target(
+                pointer: CGPoint(x: 1440 + 6, y: 400),
+                segments: [leftSeamStash, rightSeamStash],
+                displays: approachDisplays
+            ) == "right-stash",
+            "when both sides of a seam host stashes, the display holding the pointer wins"
+        )
+        expect(
+            SeamApproachPolicy.target(
+                pointer: CGPoint(x: 1440 - 6, y: 400),
+                segments: [leftSeamStash, rightSeamStash],
+                displays: approachDisplays
+            ) == "left-stash",
+            "the owning side of the seam wins on its own display"
+        )
+        expect(
+            SeamApproachPolicy.target(
+                pointer: CGPoint(x: 1440, y: 400),
+                segments: [leftSeamStash, rightSeamStash],
+                displays: approachDisplays
+            ) == "right-stash",
+            "on the exact seam line the right display contains the pointer (maxX is exclusive)"
+        )
+        expect(
+            SeamApproachPolicy.target(
+                pointer: CGPoint(x: 1440 - 1, y: 400),
+                segments: [leftSeamStash],
+                displays: []
+            ) == nil,
+            "a segment whose display vanished has no band"
+        )
+
+        let leaveNow = Date()
+        expect(
+            LeaveCollapsePolicy.countsAsInside(
+                geometricallyOutside: false,
+                pointerInSibling: false,
+                siblingFocused: false,
+                lastSiblingInteractionAt: nil,
+                now: leaveNow
+            ),
+            "inside the geometric buffer always counts as inside"
+        )
+        expect(
+            LeaveCollapsePolicy.countsAsInside(
+                geometricallyOutside: true,
+                pointerInSibling: true,
+                siblingFocused: false,
+                lastSiblingInteractionAt: nil,
+                now: leaveNow
+            ),
+            "the pointer over a sibling window of the same app is not leaving"
+        )
+        expect(
+            LeaveCollapsePolicy.countsAsInside(
+                geometricallyOutside: true,
+                pointerInSibling: false,
+                siblingFocused: true,
+                lastSiblingInteractionAt: nil,
+                now: leaveNow
+            ),
+            "a focused sibling window means the app is still in use"
+        )
+        expect(
+            LeaveCollapsePolicy.countsAsInside(
+                geometricallyOutside: true,
+                pointerInSibling: false,
+                siblingFocused: false,
+                lastSiblingInteractionAt: leaveNow.addingTimeInterval(-1.0),
+                now: leaveNow
+            ),
+            "the post-interaction grace still counts as inside"
+        )
+        expect(
+            !LeaveCollapsePolicy.countsAsInside(
+                geometricallyOutside: true,
+                pointerInSibling: false,
+                siblingFocused: false,
+                lastSiblingInteractionAt: leaveNow.addingTimeInterval(-2.0),
+                now: leaveNow
+            ),
+            "an expired sibling grace no longer blocks the leave"
+        )
+        expect(
+            !LeaveCollapsePolicy.shouldCollapse(outsideSince: nil, now: leaveNow),
+            "no outside sample means no collapse"
+        )
+        expect(
+            !LeaveCollapsePolicy.shouldCollapse(
+                outsideSince: leaveNow.addingTimeInterval(-0.1),
+                now: leaveNow
+            ),
+            "a brief excursion outside the buffer must not collapse the window"
+        )
+        expect(
+            LeaveCollapsePolicy.shouldCollapse(
+                outsideSince: leaveNow.addingTimeInterval(-0.3),
+                now: leaveNow
+            ),
+            "collapse only after the pointer stays outside for the whole dwell"
+        )
+
+        expect(
+            !SpaceChangePolicy.shouldHideMarkerDuringSpaceTransition(
+                presentation: .systemMinimize,
+                isCollapsed: true
+            ),
+            "a collapsed seam beacon must not be dismissed for the 0.7s Space settle"
+        )
+        expect(
+            SpaceChangePolicy.shouldHideMarkerDuringSpaceTransition(
+                presentation: .slideOffscreen,
+                isCollapsed: true
+            ),
+            "a slide-stash marker still hides during Space transition geometry"
+        )
+        expect(
+            SpaceChangePolicy.shouldHideMarkerDuringSpaceTransition(
+                presentation: .systemMinimize,
+                isCollapsed: false
+            ),
+            "an expanded seam marker still rebuilds after a Space switch"
+        )
+        expect(
+            SpaceChangePolicy.shouldShowMarker(
+                presentation: .systemMinimize,
+                windowOnActiveSpace: false,
+                isCollapsed: true
+            ),
+            "a display-anchored seam beacon stays visible across Spaces"
+        )
+        expect(
+            !SpaceChangePolicy.shouldShowMarker(
+                presentation: .systemMinimize,
+                windowOnActiveSpace: false,
+                isCollapsed: false
+            ),
+            "an expanded seam window does not leave a foreign-Space beacon behind"
+        )
+        expect(
+            SpaceChangePolicy.shouldShowMarker(
+                presentation: .slideOffscreen,
+                windowOnActiveSpace: true
+            ),
+            "a slide stash shows its marker on the Space that owns the parked window"
+        )
+        expect(
+            !SpaceChangePolicy.shouldShowMarker(
+                presentation: .slideOffscreen,
+                windowOnActiveSpace: false
+            ),
+            "a slide stash's marker must not follow onto a foreign Space"
+        )
+        expect(
+            SpaceChangePolicy.seamAvailability(
+                transportAvailable: true,
+                currentSpaceID: 42,
+                currentSpaceType: 0
+            ) == .ready(spaceID: 42),
+            "an ordinary user Space is an enabled display-anchored destination"
+        )
+        expect(
+            SpaceChangePolicy.seamAvailability(
+                transportAvailable: true,
+                currentSpaceID: 42,
+                currentSpaceType: 4
+            ) == .disabledFullScreen,
+            "native full-screen keeps the beacon visible but disabled"
+        )
+        expect(
+            SpaceChangePolicy.seamAvailability(
+                transportAvailable: false,
+                currentSpaceID: 42,
+                currentSpaceType: 0
+            ) == .unavailable,
+            "missing runtime transport fails closed"
+        )
+        expect(
+            !SpaceChangePolicy.shouldBeginSeamDwell(availability: .disabledFullScreen),
+            "a disabled full-screen beacon cannot start a hover dwell"
+        )
+        expect(
+            SpaceChangePolicy.seamRevealPreparation(
+                availability: .ready(spaceID: 42),
+                membershipQuerySucceeded: true,
+                windowOnTargetSpace: true
+            ) == .reveal,
+            "same-Space membership needs no migration"
+        )
+        expect(
+            SpaceChangePolicy.seamRevealPreparation(
+                availability: .ready(spaceID: 42),
+                membershipQuerySucceeded: true,
+                windowOnTargetSpace: false
+            ) == .migrate(to: 42),
+            "a different-Space window migrates before reveal"
+        )
+        expect(
+            SpaceChangePolicy.seamRevealPreparation(
+                availability: .ready(spaceID: 42),
+                membershipQuerySucceeded: false,
+                windowOnTargetSpace: false
+            ) == .refuse,
+            "an unreadable membership refuses reveal rather than activating first"
+        )
+        expect(
+            SpaceChangePolicy.seamRevealPreparation(
+                availability: .disabledFullScreen,
+                membershipQuerySucceeded: true,
+                windowOnTargetSpace: false
+            ) == .refuse,
+            "native full-screen is never a migration target"
+        )
+        expect(
+            SpaceChangePolicy.mayCommitSeamReveal(
+                targetSpaceID: 42,
+                currentDisplaySpaceID: 42,
+                membershipConfirmed: true
+            ),
+            "confirmed membership may commit only while the display still shows the target Space"
+        )
+        expect(
+            !SpaceChangePolicy.mayCommitSeamReveal(
+                targetSpaceID: 42,
+                currentDisplaySpaceID: 43,
+                membershipConfirmed: true
+            ),
+            "a concurrent Space switch cancels reveal even after membership was confirmed"
+        )
+        expect(
+            !SpaceChangePolicy.mayCommitSeamReveal(
+                targetSpaceID: 42,
+                currentDisplaySpaceID: 42,
+                membershipConfirmed: false
+            ),
+            "the current display Space alone can never authorize deminimize"
+        )
+        expect(
+            SpaceChangePolicy.pendingSeamRevealCancellation(
+                phase: .collapsed,
+                revealInFlight: false,
+                observedMinimized: false
+            ) == .none,
+            "a Space change with no reveal transaction has nothing to cancel"
+        )
+        expect(
+            SpaceChangePolicy.pendingSeamRevealCancellation(
+                phase: .collapsed,
+                revealInFlight: true,
+                observedMinimized: true
+            ) == .clearTransaction,
+            "a pre-deminimize cancellation keeps the owned minimize and clears the transaction"
+        )
+        expect(
+            SpaceChangePolicy.pendingSeamRevealCancellation(
+                phase: .collapsed,
+                revealInFlight: true,
+                observedMinimized: false
+            ) == .restoreCollapsedMinimizeThenClear,
+            "the exact post-deminimize/pre-commit race must re-minimize before clearing"
+        )
+        expect(
+            SpaceChangePolicy.pendingSeamRevealCancellation(
+                phase: .collapsed,
+                revealInFlight: true,
+                observedMinimized: nil
+            ) == .restoreCollapsedMinimizeThenClear,
+            "an unreadable collapsed window state must fail closed by re-applying minimize"
+        )
+        expect(
+            SpaceChangePolicy.pendingSeamRevealCancellation(
+                phase: .expanded,
+                revealInFlight: true,
+                observedMinimized: false
+            ) == .clearTransaction,
+            "a committed expansion clears stale bookkeeping without re-minimizing the window"
         )
 
         if failed > 0 {

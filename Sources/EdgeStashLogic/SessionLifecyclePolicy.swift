@@ -146,6 +146,113 @@ public enum SessionLifecyclePolicy {
             return false
         }
     }
+
+    /// Detach keeps the user's live frame but must undo the 2% hide, or
+    /// a Mission Control drag leaves a ghost window that will not capture.
+    public static func shouldRestoreAlpha(for event: Event) -> Bool {
+        switch event {
+        case .miniaturized, .appTerminated, .appDisabled, .appQuitting, .accessibilityLost, .detachedFromEdge:
+            return true
+        case .windowDestroyed:
+            return false
+        }
+    }
+
+    public static func shouldClearDisplayBinding(for event: Event) -> Bool {
+        switch event {
+        case .detachedFromEdge, .miniaturized:
+            return true
+        case .windowDestroyed, .appTerminated, .appDisabled, .appQuitting, .accessibilityLost:
+            return false
+        }
+    }
+}
+
+public enum ManagedMinimizeNotification: Equatable {
+    case miniaturized
+    case deminiaturized
+}
+
+public enum ManagedMinimizeNotificationAction: Equatable {
+    /// The notification describes an EdgeStash-owned transition, duplicates a
+    /// transition already committed, or disagrees with the window's current AX
+    /// value. It must not consume the managed session.
+    case ignore
+    /// The window is currently minimized outside EdgeStash's owned collapsed
+    /// state. Preserve the existing product rule that an external minimize
+    /// releases an expanded stash.
+    case releaseSession
+    /// The system (for example a Dock window thumbnail) has already restored a
+    /// collapsed seam window. Adopt that result without a second migration.
+    case adoptSystemReveal
+    /// An expanded seam window was minimized. Minimize is the seam hide, so
+    /// the session recollapses and keeps its beacon instead of going idle.
+    case recollapse
+}
+
+/// AX notifications are asynchronous observations, not ordered transaction
+/// completions. Classification therefore uses the window's current minimized
+/// value plus the durable session state; a lone mutable ownership flag cannot
+/// distinguish a delayed notification from a new external action.
+public enum ManagedMinimizeNotificationPolicy {
+    public static func action(
+        for notification: ManagedMinimizeNotification,
+        phase: StashSessionPhase,
+        ownsCollapsedMinimize: Bool,
+        revealInFlight: Bool,
+        observedMinimized: Bool?,
+        presentation: StashCollapsePresentation? = nil
+    ) -> ManagedMinimizeNotificationAction {
+        switch notification {
+        case .miniaturized:
+            // A miniaturized notification delivered after deminimization is
+            // stale. An unreadable AX value is also insufficient evidence for
+            // the destructive release path.
+            guard observedMinimized == true else { return .ignore }
+            // A collapsed or captured session is already parked. Clearing the
+            // ownership bit during reveal, or AX lag that still reports
+            // minimized, must not consume it.
+            if phase == .collapsed || phase == .captured || revealInFlight {
+                return .ignore
+            }
+            _ = ownsCollapsedMinimize
+            // Minimize is the seam hide. An expanded seam window that
+            // miniaturizes must recollapse, not go idle — otherwise the
+            // 0.5s poll can false-expand, a delayed owned notification
+            // looks "external", and the beacon vanishes after one appearance.
+            if presentation == .systemMinimize {
+                return .recollapse
+            }
+            return .releaseSession
+
+        case .deminiaturized:
+            guard observedMinimized == false else { return .ignore }
+            guard phase == .collapsed,
+                  ownsCollapsedMinimize,
+                  !revealInFlight else {
+                return .ignore
+            }
+            return .adoptSystemReveal
+        }
+    }
+}
+
+/// Two observers watch the same seam hide: the AX notification and a 0.5s
+/// poll. The poll used to treat "AX says not minimized" as a Dock reveal
+/// during settle, flip the session to expanded, and let the delayed
+/// miniaturized notification release it. One policy now owns both.
+public enum SeamSessionDurabilityPolicy {
+    /// AX and WindowServer often lag the owned `setMinimized(true)` write.
+    public static let ownedMinimizeSettle: TimeInterval = 1.5
+
+    public static func shouldAdoptUnminimizedPoll(
+        ownsCollapsedMinimize: Bool,
+        elapsedSinceOwnedMinimize: TimeInterval,
+        observedMinimized: Bool?
+    ) -> Bool {
+        guard ownsCollapsedMinimize, observedMinimized == false else { return false }
+        return elapsedSinceOwnedMinimize >= ownedMinimizeSettle
+    }
 }
 
 /// Listen-only session taps are disabled by macOS after a timeout or when

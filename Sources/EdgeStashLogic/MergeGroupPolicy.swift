@@ -49,13 +49,13 @@ public struct MergeStripLayout: Equatable {
 
 /// Overlapping markers on one edge of one logical display merge into one
 /// strip. Geometry derives from platform metrics instead of bespoke pixels:
-/// the track is 10pt wide (two comfortable 20pt half-targets deep), the
+/// the track is 5pt wide to match the glass rail; hitPad keeps the target, the
 /// panel overhangs the screen edge by 6pt so the track sits within two grid
 /// units of the physical edge, the panel width keeps every label column
 /// inside 384pt so it still reads as a strip, and the vertical bleed is one
 /// 28pt title-bar height plus the track's own width per end.
 public enum MergeGroupPolicy {
-    public static let trackWidth: CGFloat = 10
+    public static let trackWidth: CGFloat = 5
     public static let trackInset: CGFloat = 4
     public static let edgeOverhang: CGFloat = 6
     public static let minimumPanelWidth: CGFloat = 240

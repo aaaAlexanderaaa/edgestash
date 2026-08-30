@@ -22,17 +22,14 @@ public enum DisplayArrangementPolicy {
         at edge: DisplayEdge,
         of display: DisplayGeometry,
         in displays: [DisplayGeometry],
-        selection: DisplayEdgeSelection,
-        screensHaveSeparateSpaces: Bool = false
+        selection: DisplayEdgeSelection
     ) -> DisplayEdgePreviewKind {
         guard selection.isEnabled(edge) else { return .disabled }
         // The map paints shared intervals on top of this base preview. A
         // partially shared edge therefore needs a slide base for its exposed
         // intervals; only a fully shared edge has one strategy end-to-end.
         let adjacency = DisplayEdgePolicy.adjacency(at: edge, of: display, in: displays)
-        return adjacency == .fullyShared && !screensHaveSeparateSpaces
-            ? .systemMinimize
-            : .slideOffscreen
+        return adjacency == .fullyShared ? .systemMinimize : .slideOffscreen
     }
 
     public static func fittedSlots(

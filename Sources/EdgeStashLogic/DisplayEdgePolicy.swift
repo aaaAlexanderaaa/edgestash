@@ -46,7 +46,6 @@ public struct DisplayGeometry: Equatable {
 
 public enum DisplayEdgeCollapseStrategy: Equatable {
     case slideOffscreen
-    case displayClippedSlideOffscreen
     case systemMinimize
 }
 
@@ -134,11 +133,14 @@ public enum DisplayEdgePolicy {
         )
     }
 
+    /// Shared segments always minimize: a clipped slide-through is not a true
+    /// hide (the window stays on the owning display, ghost-visible and
+    /// hit-testable), and sliding fully through the seam would flip
+    /// WindowServer ownership to the neighbor.
     public static func collapseStrategy(
         at edge: DisplayEdge,
         of display: DisplayGeometry,
         in displays: [DisplayGeometry],
-        screensHaveSeparateSpaces: Bool = false,
         tolerance: CGFloat = adjacencyTolerance
     ) -> DisplayEdgeCollapseStrategy {
         let isShared = hasAdjacentDisplay(
@@ -147,8 +149,7 @@ public enum DisplayEdgePolicy {
             in: displays,
             tolerance: tolerance
         )
-        guard isShared else { return .slideOffscreen }
-        return screensHaveSeparateSpaces ? .displayClippedSlideOffscreen : .systemMinimize
+        return isShared ? .systemMinimize : .slideOffscreen
     }
 
     /// Chooses a strategy for the vertical segment occupied by this window. A
@@ -159,7 +160,6 @@ public enum DisplayEdgePolicy {
         of display: DisplayGeometry,
         windowFrame: CGRect,
         in displays: [DisplayGeometry],
-        screensHaveSeparateSpaces: Bool = false,
         tolerance: CGFloat = adjacencyTolerance
     ) -> DisplayEdgeCollapseStrategy {
         let windowLowerBound = max(display.frame.minY, windowFrame.minY)
@@ -177,7 +177,7 @@ public enum DisplayEdgePolicy {
                 - max(windowLowerBound, sharedLowerBound) > 0
         }
         guard overlapsSharedSegment else { return .slideOffscreen }
-        return screensHaveSeparateSpaces ? .displayClippedSlideOffscreen : .systemMinimize
+        return .systemMinimize
     }
 
     public static func resolvedSelection(

@@ -17,7 +17,6 @@ public enum StashSessionEvent: Equatable {
 
 public enum StashCollapsePresentation: Equatable {
     case slideOffscreen
-    case displayClippedSlideOffscreen
     case systemMinimize
 }
 
@@ -86,15 +85,13 @@ public enum StashSessionPolicy {
         return true
     }
 
-    /// Separate per-display Spaces let WindowServer clip a shared-edge window
-    /// to its owning display. A shared desktop cannot provide that boundary,
-    /// so the safe fallback remains system minimization.
+    /// Shared segments always minimize (see `DisplayEdgePolicy`); exposed
+    /// segments slide offscreen.
     public static func collapsePresentation(
         at edge: DisplayEdge,
         of display: DisplayGeometry,
         windowFrame: CGRect?,
-        in displays: [DisplayGeometry],
-        screensHaveSeparateSpaces: Bool = false
+        in displays: [DisplayGeometry]
     ) -> StashCollapsePresentation {
         let strategy: DisplayEdgeCollapseStrategy
         if let windowFrame {
@@ -102,22 +99,18 @@ public enum StashSessionPolicy {
                 at: edge,
                 of: display,
                 windowFrame: windowFrame,
-                in: displays,
-                screensHaveSeparateSpaces: screensHaveSeparateSpaces
+                in: displays
             )
         } else {
             strategy = DisplayEdgePolicy.collapseStrategy(
                 at: edge,
                 of: display,
-                in: displays,
-                screensHaveSeparateSpaces: screensHaveSeparateSpaces
+                in: displays
             )
         }
         switch strategy {
         case .slideOffscreen:
             return .slideOffscreen
-        case .displayClippedSlideOffscreen:
-            return .displayClippedSlideOffscreen
         case .systemMinimize:
             return .systemMinimize
         }
@@ -149,13 +142,7 @@ public enum StashSessionPolicy {
         if let intersectionDisplayID, let match = displays.first(where: { $0.id == intersectionDisplayID }) {
             return match
         }
-        return displays.first
-    }
-
-    public static func shouldSnapToExpandedBeforeSlide(
-        _ presentation: StashCollapsePresentation
-    ) -> Bool {
-        presentation == .displayClippedSlideOffscreen
+        return nil
     }
 
     public static func captureRecheckDelays() -> [TimeInterval] {
@@ -209,6 +196,17 @@ public enum StashSessionPolicy {
     ) -> Bool {
         !isPinned && !stillOnEdge
     }
+
+    /// Mission Control (and other space exposés) can drag a collapsed
+    /// window off its parked edge. The session must release so the
+    /// window becomes idle and capturable on its new display.
+    public static func shouldReleaseCollapsedAfterExternalMove(
+        isCollapsed: Bool,
+        isBusy: Bool,
+        stillParkedOnOwningEdge: Bool
+    ) -> Bool {
+        isCollapsed && !isBusy && !stillParkedOnOwningEdge
+    }
 }
 
 public enum MultiWindowTipPolicy {
@@ -232,5 +230,13 @@ public enum MultiWindowTipPolicy {
 
     public static func shouldMuteUntilRelaunch(after dismissal: Dismissal) -> Bool {
         dismissal == .remindLater || dismissal == .timedOut
+    }
+
+    public static func shouldHideOnSpaceChange() -> Bool {
+        true
+    }
+
+    public static func shouldDismiss(collapsedCount: Int) -> Bool {
+        collapsedCount < 2
     }
 }
