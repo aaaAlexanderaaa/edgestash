@@ -2,9 +2,9 @@
 doc_type: contract
 status: current
 authority: normative
-implementation: in_progress
+implementation: implemented
 verification_status: partial
-last_reconciled: 2026-08-29
+last_reconciled: 2026-08-30
 ---
 
 # Local-first operation
@@ -69,3 +69,7 @@ None.
   `StashSession` only after trust is already present. Settings still does
   not start observers. Launch does not prompt. Halo is an overlay, not a
   screenshot.
+- **2026-08-30 — lifecycle corrected:** capability bans were already in
+  force; `implementation` is `implemented`. Verification stays `partial`
+  because the forbidden-API search is a dated manual check, not a
+  continuous enforced gate.

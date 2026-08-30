@@ -1,8 +1,8 @@
 ---
 doc_type: plan
-status: complete
+status: historical
 authority: planning
-last_reconciled: 2026-08-29
+last_reconciled: 2026-08-30
 ---
 
 # EdgeStash Implementation Plan
@@ -108,5 +108,7 @@ and an Xcode macOS app target.
 
 - `swift run EdgeStashLogicTests`
 - Debug build of `EdgeStash.xcodeproj`
-- Owner review still required on a multi-display Mac for the arrangement map,
-  halo, outer marker, seam beacon, rescue, merged strips, and pin interactions
+- Owner review on a multi-display Mac was still required when this plan's
+  tasks were checked off. Remaining presentation acceptance is the owner
+  re-review row in `docs/contracts/edgestash.md`. This document is the
+  first-version task record, not current execution authority.
