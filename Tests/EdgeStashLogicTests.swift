@@ -1574,6 +1574,31 @@ struct EdgeStashLogicTests {
             "the merged panel stays on the owning display"
         )
         expect(
+            strip != nil
+                && strip!.mouseOpaqueFrame.width == MergeGroupPolicy.mouseOpaqueWidth
+                && strip!.panelFrame.width >= MergeGroupPolicy.minimumPanelWidth,
+            "mouse-opaque merge geometry is the 21pt hit band; 240pt is label reservation only"
+        )
+        expect(
+            strip.flatMap { MergeGroupPolicy.hitSegment(at: CGPoint(x: $0.hitRect.maxX + 40, y: $0.hitRect.midY), layout: $0) } == nil,
+            "a point in the reserved label column is not a merge hit"
+        )
+        let compact = strip.map { MergeGroupPolicy.presentation(layout: $0, showingLabels: false) }
+        expect(
+            compact != nil
+                && compact!.windowFrame == strip!.mouseOpaqueFrame
+                && compact!.windowFrame.width == MergeGroupPolicy.mouseOpaqueWidth
+                && abs(compact!.hitRect.minX) < 0.01,
+            "without labels the window collapses to the hit band"
+        )
+        let labeled = strip.map { MergeGroupPolicy.presentation(layout: $0, showingLabels: true) }
+        expect(
+            labeled != nil
+                && labeled!.windowFrame == strip!.panelFrame
+                && labeled!.hitRect == strip!.hitRect,
+            "hover labels keep the reserved panel; hit rect stays panel-local"
+        )
+        expect(
             strip.map { MergeGroupPolicy.hitSegment(at: $0.segments[0].slotRect.origin, layout: $0) } == "a"
                 || strip.map { MergeGroupPolicy.hitSegment(at: CGPoint(x: $0.segments[0].slotRect.midX, y: $0.segments[0].slotRect.midY), layout: $0) } != nil,
             "a point inside a segment slot selects that session"

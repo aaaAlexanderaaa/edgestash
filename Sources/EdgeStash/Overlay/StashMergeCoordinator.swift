@@ -71,12 +71,14 @@ final class StashMergeCoordinator {
                     lookup[member.id]?.mergeHide()
                 }
             }
+            let showingLabels = hovered[key] != nil
+            let presented = MergeGroupPolicy.presentation(layout: layout, showingLabels: showingLabels)
             let model = StashMergeStripModel(
-                panelFrame: layout.panelFrame,
+                windowFrame: presented.windowFrame,
                 edge: group.edge,
-                trackRect: layout.trackRect,
-                hitRect: layout.hitRect,
-                segments: layout.segments.compactMap { slot in
+                trackRect: presented.trackRect,
+                hitRect: presented.hitRect,
+                segments: presented.segments.compactMap { slot in
                     guard let session = lookup[slot.id],
                           let member = group.members.first(where: { $0.id == slot.id }) else {
                         return nil
@@ -91,7 +93,7 @@ final class StashMergeCoordinator {
                 },
                 activeID: activeID.flatMap { lookup[$0] }.map { ObjectIdentifier($0) },
                 hoveredID: hovered[key],
-                showsLabels: hovered[key] != nil
+                showsLabels: showingLabels
             )
             overlay.onHoverSegment = { [weak self] id in
                 self?.handleHover(id, key: key, lookup: lookup)

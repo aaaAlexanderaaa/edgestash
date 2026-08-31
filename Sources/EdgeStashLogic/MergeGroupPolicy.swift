@@ -38,13 +38,39 @@ public struct MergeGroup: Equatable {
 public struct MergeSegmentLayout: Equatable {
     public let id: String
     public let slotRect: CGRect
+
+    public init(id: String, slotRect: CGRect) {
+        self.id = id
+        self.slotRect = slotRect
+    }
 }
 
 public struct MergeStripLayout: Equatable {
     public let panelFrame: CGRect
+    /// Screen frame of the only region that may consume pointer events: the
+    /// track plus hit slop. The label column lives on `panelFrame` and is
+    /// paint-only.
+    public let mouseOpaqueFrame: CGRect
     public let trackRect: CGRect
     public let hitRect: CGRect
     public let segments: [MergeSegmentLayout]
+}
+
+/// Window geometry after shifting panel-local rects so they match
+/// `windowFrame`. Resting (no labels) uses `mouseOpaqueFrame`; hover labels
+/// use the reserved `panelFrame`.
+public struct MergeStripPresentation: Equatable {
+    public let windowFrame: CGRect
+    public let trackRect: CGRect
+    public let hitRect: CGRect
+    public let segments: [MergeSegmentLayout]
+
+    public init(windowFrame: CGRect, trackRect: CGRect, hitRect: CGRect, segments: [MergeSegmentLayout]) {
+        self.windowFrame = windowFrame
+        self.trackRect = trackRect
+        self.hitRect = hitRect
+        self.segments = segments
+    }
 }
 
 /// Overlapping markers on one edge of one logical display merge into one
@@ -54,6 +80,10 @@ public struct MergeStripLayout: Equatable {
 /// units of the physical edge, the panel width keeps every label column
 /// inside 384pt so it still reads as a strip, and the vertical bleed is one
 /// 28pt title-bar height plus the track's own width per end.
+///
+/// `panelFrame` is only the label reservation. Pointer events belong to
+/// `mouseOpaqueFrame` / `hitRect` (`trackInset + trackWidth + hitPad`). A
+/// 240pt window that eats clicks is a defect, not the hit contract.
 public enum MergeGroupPolicy {
     public static let trackWidth: CGFloat = 5
     public static let trackInset: CGFloat = 4
@@ -63,6 +93,9 @@ public enum MergeGroupPolicy {
     public static let labelGutter: CGFloat = 16
     public static let heightBleed: CGFloat = 38
     public static let hitPad: CGFloat = 12
+    /// Width of the only mouse-consuming band. Labels sit past this and
+    /// must not own a window.
+    public static let mouseOpaqueWidth: CGFloat = trackInset + trackWidth + hitPad
     /// Comfortable hit-target span for one fused segment (HIG minimum for a
     /// row-like target). A strip is overloaded when its members no longer fit
     /// that target, so the warning follows the strip's own span instead of a
@@ -185,13 +218,14 @@ public enum MergeGroupPolicy {
             : panelWidth - trackInset - trackWidth
         let trackRect = CGRect(x: trackX, y: unionMinY - panelY, width: trackWidth, height: unionHeight)
 
-        let hitWidth = trackInset + trackWidth + hitPad
+        let hitWidth = mouseOpaqueWidth
         let hitRect = CGRect(
             x: group.edge == .left ? 0 : panelWidth - hitWidth,
             y: max(0, trackRect.minY - hitPad),
             width: hitWidth,
             height: min(panelHeight, trackRect.height + hitPad * 2)
         )
+        let mouseOpaque = mouseOpaqueFrame(panelFrame: panelFrame, hitRect: hitRect)
 
         let weights = members.map { max($0.windowHeight, minimumSegmentSpan) }
         let totalWeight = weights.reduce(0, +)
@@ -209,9 +243,33 @@ public enum MergeGroupPolicy {
         }
         return MergeStripLayout(
             panelFrame: panelFrame,
+            mouseOpaqueFrame: mouseOpaque,
             trackRect: trackRect,
             hitRect: hitRect,
             segments: segments
+        )
+    }
+
+    public static func mouseOpaqueFrame(panelFrame: CGRect, hitRect: CGRect) -> CGRect {
+        CGRect(
+            x: panelFrame.minX + hitRect.minX,
+            y: panelFrame.minY + hitRect.minY,
+            width: hitRect.width,
+            height: hitRect.height
+        )
+    }
+
+    public static func presentation(layout: MergeStripLayout, showingLabels: Bool) -> MergeStripPresentation {
+        let windowFrame = showingLabels ? layout.panelFrame : layout.mouseOpaqueFrame
+        let dx = layout.panelFrame.minX - windowFrame.minX
+        let dy = layout.panelFrame.minY - windowFrame.minY
+        return MergeStripPresentation(
+            windowFrame: windowFrame,
+            trackRect: layout.trackRect.offsetBy(dx: dx, dy: dy),
+            hitRect: layout.hitRect.offsetBy(dx: dx, dy: dy),
+            segments: layout.segments.map { segment in
+                MergeSegmentLayout(id: segment.id, slotRect: segment.slotRect.offsetBy(dx: dx, dy: dy))
+            }
         )
     }
 

@@ -5,7 +5,7 @@ status: target
 authority: normative
 implementation: in_progress
 verification_status: pending
-last_reconciled: 2026-08-30
+last_reconciled: 2026-08-31
 supersedes_visual_clauses_of: docs/design/logical-display-and-seam-beacon.md
 ---
 
@@ -115,15 +115,19 @@ chrome states only:
 | `seam-panel` | 9pt, flush inside the owning display | rail height | none | seam; glass starts 2pt inside the seam |
 | `seam-inner-gap` | 1pt clear along the long axis | most of the capsule height | none | seam and minimize halo only |
 | `merge-track` | 5pt (`MergeGroupPolicy.trackWidth`) | union of member spans | none | `merge-rail` |
+| `merge-hit` | 21pt (`trackInset + trackWidth + hitPad`) | track span plus hitPad | none | `merge-rail`; the only mouse-opaque merge region |
+| `merge-label-column` | remainder of the 240–384pt reserved panel | same | none | paint-only on hover; must not consume pointer events |
 | `pin-disc` | 28pt (HIG small control) | 28pt | none | `pin-glass` |
 | `edge-halo` | 5pt | selected logical edge length | none | `halo-preview-glass` |
 | `approach-band` | unchanged: 28pt inside + 12pt overshoot | window span plus panel bleed | none | collapsed seam only |
 
 - from: raw[3]
 
-The approach band and full-panel hit testing do not shrink to the 5pt
-capsule. The capsule is the visible affordance; the panel and band remain
-the hit geometry.
+The approach band and outer/seam marker panels do not shrink to the 5pt
+capsule. Those panels (11pt / 9pt) and the approach band remain the hit
+geometry. The merge label column is not hit geometry: only `merge-hit`
+consumes pointer events. A 240pt merge window that eats clicks is a
+defect.
 
 ### Interaction map
 
@@ -212,6 +216,14 @@ leave a visible `seam-rail` in `glass-painted` (or `glass-system` on the pin).
   pin, halo, and sheen match; system minimization still hides the window.
 
 ## Reconciliation log
+
+- **2026-08-31 — merge label column was eating the desktop:** the reserved
+  240pt merge panel (sized for hover labels) was the live `NSPanel`
+  frame, so a collapsed pair of stashes blocked about a browser-sidebar
+  of desktop. `panelFrame` stays the label reservation; the resting
+  window and hit-testing use `mouseOpaqueFrame` / `merge-hit` (21pt).
+  Thin merge chips paint; they do not host a full-panel
+  `NSGlassEffectContainerView`.
 
 - **2026-08-30 — owner rejected 10pt gray-box glass:** after running the
   first glass build, the owner found the seam rail still vanished after
