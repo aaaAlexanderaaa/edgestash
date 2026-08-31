@@ -184,6 +184,60 @@ struct EdgeStashLogicTests {
             "disabling an app must remove its manager session"
         )
         expect(
+            SessionLifecyclePolicy.syncEndEvent(
+                stashActive: false,
+                isTemporary: false,
+                processStillRunning: true,
+                windowRoleInvalid: false
+            ) == .appDisabled,
+            "periodic sync must drop a disabled non-temporary session"
+        )
+        expect(
+            SessionLifecyclePolicy.syncEndEvent(
+                stashActive: false,
+                isTemporary: true,
+                processStillRunning: true,
+                windowRoleInvalid: false
+            ) == nil,
+            "periodic sync must keep a temporary session of a disabled app"
+        )
+        expect(
+            SessionLifecyclePolicy.syncEndEvent(
+                stashActive: true,
+                isTemporary: false,
+                processStillRunning: false,
+                windowRoleInvalid: false
+            ) == .appTerminated,
+            "periodic sync must drop a session whose process is gone"
+        )
+        expect(
+            SessionLifecyclePolicy.syncEndEvent(
+                stashActive: true,
+                isTemporary: false,
+                processStillRunning: true,
+                windowRoleInvalid: true
+            ) == .windowDestroyed,
+            "periodic sync must drop a session whose AX window is gone"
+        )
+        expect(
+            SessionLifecyclePolicy.syncEndEvent(
+                stashActive: true,
+                isTemporary: false,
+                processStillRunning: true,
+                windowRoleInvalid: false
+            ) == nil,
+            "periodic sync must keep a live, enabled, still-valid session"
+        )
+        expect(
+            SessionLifecyclePolicy.syncEndEvent(
+                stashActive: false,
+                isTemporary: false,
+                processStillRunning: false,
+                windowRoleInvalid: true
+            ) == .appDisabled,
+            "periodic sync classifies before it ends, so disable wins over gone-process"
+        )
+        expect(
             SessionLifecyclePolicy.shouldClearRescueRecords(
                 for: .windowDestroyed,
                 restorePositionSucceeded: false,

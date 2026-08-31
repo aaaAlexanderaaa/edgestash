@@ -133,6 +133,38 @@ struct InterfaceLanguagePicker: View {
     }
 }
 
+struct SettingsFlagRow: View {
+    let title: String
+    let subtitle: String
+    let symbol: String
+    @Binding var isOn: Bool
+    var help: String? = nil
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 14) {
+            Image(systemName: symbol)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(SettingsTheme.ColorToken.rail)
+                .frame(width: 28)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text(title).font(.headline)
+                    if let help {
+                        NoteBadge(note: help)
+                    }
+                }
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 12)
+            Toggle("", isOn: $isOn)
+                .labelsHidden()
+                .toggleStyle(.switch)
+        }
+    }
+}
+
 func languageDisplay(_ value: Int) -> String {
     switch value {
     case 1:

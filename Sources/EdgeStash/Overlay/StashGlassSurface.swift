@@ -183,8 +183,9 @@ enum StashGlassPainter {
         NSColor.white.withAlphaComponent(0.10 + 0.06 * strength).setFill()
         path.fill()
 
-        // App-color wash, not a solid slab.
-        rgb.withAlphaComponent((0.16 + 0.22 * strength) * max(0.35, tint.alphaComponent)).setFill()
+        // Color after the glass lens: strong enough that a picked yellow
+        // still reads as yellow, not a washed pastel. Still a wash, not a slab.
+        rgb.withAlphaComponent((0.42 + 0.38 * strength) * max(0.72, tint.alphaComponent)).setFill()
         path.fill()
 
         // Specular sheen along the long axis so the plate reads as glass.

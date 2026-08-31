@@ -59,9 +59,7 @@ final class StashEngine {
 
     func suspendTrustLost() {
         guard isRunning else { return }
-        for session in sessions {
-            session.shutdown(event: .accessibilityLost)
-        }
+        endSessions(sessions.map { ($0, .accessibilityLost) })
         merged.tearDown()
         teardownObservers()
         isRunning = false
@@ -69,9 +67,7 @@ final class StashEngine {
 
     func shutdown() {
         guard isRunning || !sessions.isEmpty else { return }
-        for session in sessions {
-            session.shutdown(event: .appQuitting)
-        }
+        endSessions(sessions.map { ($0, .appQuitting) })
         sessions.removeAll()
         temporarySession = nil
         merged.tearDown()
@@ -391,23 +387,26 @@ final class StashEngine {
         }
         let runningApps = NSWorkspace.shared.runningApplications
         let pids = Set(runningApps.map(\.processIdentifier))
-        sessions.removeAll { session in
-            if !Preferences.shared.stashActive(bundleID: session.bundleID) && !session.isTemporary {
-                session.shutdown(event: .appDisabled)
-                return true
+        var doomed: [(StashSession, SessionLifecyclePolicy.Event)] = []
+        for session in sessions {
+            let stashActive = Preferences.shared.stashActive(bundleID: session.bundleID)
+            let processStillRunning = pids.contains(session.pid)
+            let roleInvalid: Bool
+            if (stashActive || session.isTemporary), processStillRunning {
+                roleInvalid = StashAX.roleAlive(session.windowElement) == .invalidUIElement
+            } else {
+                roleInvalid = false
             }
-            if !pids.contains(session.pid) {
-                session.shutdown(event: .appTerminated)
-                return true
+            if let event = SessionLifecyclePolicy.syncEndEvent(
+                stashActive: stashActive,
+                isTemporary: session.isTemporary,
+                processStillRunning: processStillRunning,
+                windowRoleInvalid: roleInvalid
+            ) {
+                doomed.append((session, event))
             }
-            let role = StashAX.roleAlive(session.windowElement)
-            if role == .success { return false }
-            if role == .invalidUIElement {
-                session.shutdown(event: .windowDestroyed)
-                return true
-            }
-            return false
         }
+        endSessions(doomed)
         for app in runningApps {
             guard let bundleID = app.bundleIdentifier,
                   app.activationPolicy == .regular,
@@ -448,6 +447,15 @@ final class StashEngine {
             )
             attach(session)
             sessions.append(session)
+        }
+    }
+
+    /// `shutdown` may invoke `onEnded`, which writes `sessions`. Callers must
+    /// not hold exclusive access to that array — in particular, do not end a
+    /// session from inside `sessions.removeAll(where:)`.
+    private func endSessions(_ doomed: [(StashSession, SessionLifecyclePolicy.Event)]) {
+        for (session, event) in doomed {
+            session.shutdown(event: event)
         }
     }
 

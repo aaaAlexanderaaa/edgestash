@@ -7,19 +7,18 @@ import ServiceManagement
 final class Preferences: ObservableObject {
     static let shared = Preferences()
 
-    /// Hover gate defaults derive from platform conventions: 32pt of exit
-    /// hysteresis (two 16pt spacing units) on each axis, a 150ms reveal delay
-    /// in the fast hover-intent band, and a 500pt ceiling that stays well
-    /// inside a third of a common display width.
-    static let defaultGateSpanX: CGFloat = 32
+    /// Hover gate defaults: 60pt of exit hysteresis on each axis, a 150ms
+    /// reveal delay in the fast hover-intent band, and a 500pt ceiling that
+    /// stays well inside a third of a common display width.
+    static let defaultGateSpanX: CGFloat = 60
+    static let defaultGateSpanY: CGFloat = 60
     static let maxGateSpanX: CGFloat = 500
     static let maxGateSpanY: CGFloat = 500
     static let defaultRevealDelayMS: Int = 150
 
-    /// Strip pastels are generated, not picked: one hue per token on a shared
-    /// wheel with fixed saturation and brightness, so every entry has the same
-    /// weight and new tokens need no bespoke RGB. Hue spacing keeps neighbours
-    /// on the wheel well apart.
+    /// Chromatic tokens share one saturation and brightness so a new hue is
+    /// just a token. Saturation is high enough that the color still reads as
+    /// itself after the glass plate and wash.
     private static let stripColorWheel: [String: CGFloat] = [
         "azure": 207,
         "moss": 140,
@@ -29,7 +28,7 @@ final class Preferences: ObservableObject {
         "rose": 334,
         "gold": 48
     ]
-    private static let stripSaturation: CGFloat = 0.42
+    private static let stripSaturation: CGFloat = 0.78
     private static let stripBrightness: CGFloat = 0.96
 
     @Published var appProfiles: [String: AppStashProfile] {
@@ -47,7 +46,7 @@ final class Preferences: ObservableObject {
         }
     }
 
-    @Published var gateSpanY: CGFloat = defaultGateSpanX {
+    @Published var gateSpanY: CGFloat = defaultGateSpanY {
         didSet {
             let clamped = Self.bounded(gateSpanY, ceiling: Self.maxGateSpanY)
             if gateSpanY != clamped {

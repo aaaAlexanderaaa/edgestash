@@ -18,7 +18,7 @@ enum SnapshotColorPalette {
         ("rose", 0.928),
         ("crimson", 0.989)
     ]
-    private static let sharedSaturation: Double = 0.42
+    private static let sharedSaturation: Double = 0.78
     private static let sharedBrightness: Double = 0.96
 
     static let tokens: [(key: String, color: Color)] = [
@@ -156,52 +156,69 @@ struct FieldMenu: View {
     }
 }
 
-/// Pull-down field specialized for a per-app strip tint; the glyph previews
-/// the effective tint at the app's opacity.
-struct StashColorField: View {
-    @Environment(\.colorScheme) var colorScheme
+/// A row of glass-rail chips. Each chip is painted with the same plate +
+/// wash + specular as the desktop rail, so the color you tap is the color
+/// you get after the glass lens.
+struct GlassTintPicker: View {
+    @Environment(\.colorScheme) private var colorScheme
     let colorName: String
-    let opacity: Double
-    let title: String
-    let choices: [MenuChoice]
+    let onColorChange: (String) -> Void
 
     var body: some View {
-        Menu {
-            ForEach(choices) { choice in
-                Button {
-                    choice.action()
-                } label: {
-                    fieldLabel(title: choice.title, image: choice.image)
+        HStack(spacing: 6) {
+            ForEach(SnapshotColorPalette.tokens, id: \.key) { entry in
+                glassChipButton(
+                    key: entry.key,
+                    tint: resolvedTint(for: entry.key),
+                    selected: colorName == entry.key
+                ) {
+                    onColorChange(entry.key)
                 }
             }
-        } label: {
-            HStack(spacing: 7) {
-                Image(nsImage: swatchGlyph)
-                Text(title)
-                    .font(.callout)
-                    .lineLimit(1)
+            glassChipButton(
+                key: "custom",
+                tint: customTint,
+                selected: colorName.hasPrefix("#"),
+                customMark: true
+            ) {
+                CustomTintPicker().present(startingFrom: customTint) { code in
+                    onColorChange(code)
+                }
             }
-            .padding(.horizontal, 9)
-            .padding(.vertical, 5)
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(width: colorFieldWidth, alignment: .leading)
     }
 
-    private var swatchGlyph: NSImage {
-        let edge = colorScheme == .dark
-            ? NSColor.white.withAlphaComponent(0.38)
-            : NSColor.gray.withAlphaComponent(0.32)
-        if colorName == "adaptive" {
-            return autoModeSwatchImage(size: 14, alpha: opacity, edge: edge)
+    private var customTint: NSColor {
+        if colorName.hasPrefix("#"), let stored = NSColor(decodingColorCode: colorName) {
+            return stored
         }
-        let base: NSColor
-        if colorName.hasPrefix("#"), let tint = NSColor(decodingColorCode: colorName) {
-            base = tint
-        } else {
-            base = NSColor(SnapshotColorPalette.color(named: colorName))
+        return NSColor(srgbRed: 1, green: 0.78, blue: 0.16, alpha: 1)
+    }
+
+    private func resolvedTint(for key: String) -> NSColor {
+        if key == "adaptive" {
+            return colorScheme == .dark ? .white : .black
         }
-        return tintedSwatchImage(size: 14, tint: base, alpha: opacity, edge: edge)
+        return NSColor(SnapshotColorPalette.color(named: key))
+    }
+
+    private func glassChipButton(
+        key: String,
+        tint: NSColor,
+        selected: Bool,
+        customMark: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(nsImage: glassRailChipImage(
+                tint: tint,
+                selected: selected,
+                colorScheme: colorScheme,
+                customMark: customMark
+            ))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(key == "custom" ? L10n.tintCustom : SnapshotColorPalette.title(for: key))
     }
 }
 
@@ -231,25 +248,6 @@ extension View {
     }
 }
 
-/// Horizontal light/dark bands standing in for "see-through".
-private func drawTransparencyStripes(in rect: NSRect, bandHeight: CGFloat = 3.2) {
-    let faint = NSColor(white: 0.93, alpha: 1)
-    let deep = NSColor(white: 0.78, alpha: 1)
-    var y = rect.minY
-    var index = 0
-    while y < rect.maxY {
-        (index.isMultiple(of: 2) ? faint : deep).setFill()
-        NSBezierPath(rect: NSRect(
-            x: rect.minX,
-            y: y,
-            width: rect.width,
-            height: min(bandHeight, rect.maxY - y)
-        )).fill()
-        y += bandHeight
-        index += 1
-    }
-}
-
 private func glyphCanvas(size: CGFloat, draw: (NSRect) -> Void) -> NSImage {
     let image = NSImage(size: NSSize(width: size, height: size))
     image.lockFocus()
@@ -259,90 +257,50 @@ private func glyphCanvas(size: CGFloat, draw: (NSRect) -> Void) -> NSImage {
     return image
 }
 
-private func strokeGlyphEdge(rect: NSRect, edge: NSColor, radius: CGFloat) {
-    edge.setStroke()
-    let outline = NSBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), xRadius: radius, yRadius: radius)
-    outline.lineWidth = 1
-    outline.stroke()
-}
+/// Mini glass rail painted with the live desktop recipe, on a mid-tone
+/// desktop stand-in so the wash is readable.
+func glassRailChipImage(
+    tint: NSColor,
+    selected: Bool,
+    colorScheme: ColorScheme,
+    customMark: Bool
+) -> NSImage {
+    let size = NSSize(width: 22, height: 36)
+    let image = NSImage(size: size)
+    image.lockFocus()
+    let bounds = NSRect(origin: .zero, size: size)
+    let desktop = colorScheme == .dark
+        ? NSColor(srgbRed: 0.16, green: 0.18, blue: 0.22, alpha: 1)
+        : NSColor(srgbRed: 0.42, green: 0.52, blue: 0.64, alpha: 1)
+    let clip = NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6)
+    clip.addClip()
+    desktop.setFill()
+    NSBezierPath(rect: bounds).fill()
 
-private func glyphRadius(for size: CGFloat) -> CGFloat {
-    size * 0.3
-}
+    let rail = bounds.insetBy(dx: 7, dy: 4)
+    StashGlassPainter.paintCapsule(rail, tint: tint, strength: 1)
 
-/// Solid tint at the app's opacity over transparency stripes, clipped to a
-/// rounded square.
-func tintedSwatchImage(size: CGFloat, tint: NSColor, alpha: Double, edge: NSColor) -> NSImage {
-    glyphCanvas(size: size) { rect in
-        let radius = glyphRadius(for: size)
-        NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius).addClip()
-        drawTransparencyStripes(in: rect)
-        tint.withAlphaComponent(alpha).setFill()
-        NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius).fill()
-        strokeGlyphEdge(rect: rect, edge: edge, radius: radius)
+    if customMark {
+        let mark = NSBezierPath()
+        mark.move(to: NSPoint(x: bounds.midX - 3.2, y: 7))
+        mark.line(to: NSPoint(x: bounds.midX + 3.2, y: 7))
+        NSColor.white.withAlphaComponent(0.85).setStroke()
+        mark.lineWidth = 1.2
+        mark.lineCapStyle = .round
+        mark.stroke()
     }
-}
 
-/// The "follow appearance" glyph: dark on the left half, light on the right.
-func autoModeSwatchImage(size: CGFloat, alpha: Double, edge: NSColor) -> NSImage {
-    glyphCanvas(size: size) { rect in
-        let radius = glyphRadius(for: size)
-        NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius).addClip()
-        drawTransparencyStripes(in: rect)
-        let halves = rect.divided(atDistance: rect.width / 2, from: .minXEdge)
-        NSColor.black.withAlphaComponent(alpha).setFill()
-        NSBezierPath(rect: halves.slice).fill()
-        NSColor.white.withAlphaComponent(alpha).setFill()
-        NSBezierPath(rect: halves.remainder).fill()
-        strokeGlyphEdge(rect: rect, edge: edge, radius: radius)
+    let ring = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.6, dy: 0.6), xRadius: 5.4, yRadius: 5.4)
+    ring.lineWidth = selected ? 2 : 1
+    if selected {
+        NSColor.controlAccentColor.setStroke()
+    } else {
+        NSColor.white.withAlphaComponent(colorScheme == .dark ? 0.22 : 0.28).setStroke()
     }
-}
-
-/// Neutral glyph showing just an opacity level.
-func opacityGlyphImage(size: CGFloat = 14, alpha: Double, colorScheme: ColorScheme) -> NSImage {
-    let edge = colorScheme == .dark
-        ? NSColor.white.withAlphaComponent(0.34)
-        : NSColor.gray.withAlphaComponent(0.32)
-    let ink = (colorScheme == .dark ? NSColor.white : NSColor.black)
-    return glyphCanvas(size: size) { rect in
-        let radius = glyphRadius(for: size)
-        NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius).addClip()
-        drawTransparencyStripes(in: rect)
-        ink.withAlphaComponent(alpha).setFill()
-        NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius).fill()
-        strokeGlyphEdge(rect: rect, edge: edge, radius: radius)
-    }
-}
-
-/// Six-hue ring marking the custom tint entry.
-func spectrumWheelIcon(size: CGFloat = 14, colorScheme: ColorScheme) -> NSImage {
-    glyphCanvas(size: size) { rect in
-        let center = NSPoint(x: rect.midX, y: rect.midY)
-        let radius = max(rect.width, rect.height)
-        let sliceCount = 24
-        for slice in 0..<sliceCount {
-            NSColor(
-                hue: Double(slice) / Double(sliceCount),
-                saturation: 0.72,
-                brightness: 1,
-                alpha: 1
-            ).setFill()
-            let wedge = NSBezierPath()
-            wedge.move(to: center)
-            wedge.appendArc(
-                withCenter: center,
-                radius: radius,
-                startAngle: CGFloat(slice) / CGFloat(sliceCount) * 360,
-                endAngle: CGFloat(slice + 1) / CGFloat(sliceCount) * 360
-            )
-            wedge.close()
-            wedge.fill()
-        }
-        let outlineEdge = colorScheme == .dark
-            ? NSColor.white.withAlphaComponent(0.38)
-            : NSColor.gray.withAlphaComponent(0.32)
-        strokeGlyphEdge(rect: rect, edge: outlineEdge, radius: size / 2)
-    }
+    ring.stroke()
+    image.unlockFocus()
+    image.isTemplate = false
+    return image
 }
 
 /// Mini window with accent-filled bars marking the edges a stash may use.

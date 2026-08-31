@@ -24,13 +24,20 @@ struct SettingsView: View {
     }
 
     var body: some View {
-        Group {
-            if #available(macOS 13.0, *) {
-                modernLayout
-            } else {
-                legacyLayout
-            }
+        HStack(spacing: 0) {
+            SettingsRail(
+                tabs: railTabs,
+                selectedTab: $selectedTab,
+                showsEmbeddedTitle: true
+            )
+            .frame(width: SettingsTheme.Space.railWidth)
+
+            Divider()
+
+            pageHost
         }
+        .frame(minHeight: 580, idealHeight: 640)
+        .id(preferences.language)
         .onAppear {
             HaloController.shared.settingsVisibilityChanged(isVisible: true)
             HaloController.shared.settingsTabChanged(selectedTab)
@@ -42,44 +49,6 @@ struct SettingsView: View {
             appCatalog.promoteEnabledApps()
             HaloController.shared.settingsVisibilityChanged(isVisible: false)
         }
-    }
-
-    @available(macOS 13.0, *)
-    private var modernLayout: some View {
-        NavigationSplitView {
-            SettingsRail(
-                tabs: railTabs,
-                selectedTab: $selectedTab,
-                showsEmbeddedTitle: false
-            )
-            .navigationTitle("EdgeStash")
-            .navigationSplitViewColumnWidth(
-                min: SettingsTheme.Space.railWidth,
-                ideal: SettingsTheme.Space.railWidth,
-                max: SettingsTheme.Space.railWidth
-            )
-        } detail: {
-            pageHost
-        }
-        .frame(minHeight: 580, idealHeight: 640)
-        .id(preferences.language)
-    }
-
-    private var legacyLayout: some View {
-        HStack(spacing: 0) {
-            SettingsRail(
-                tabs: railTabs,
-                selectedTab: $selectedTab,
-                showsEmbeddedTitle: false
-            )
-            .frame(width: SettingsTheme.Space.railWidth)
-
-            Divider()
-
-            pageHost
-        }
-        .frame(minHeight: 580, idealHeight: 640)
-        .id(preferences.language)
     }
 
     private var pageHost: some View {

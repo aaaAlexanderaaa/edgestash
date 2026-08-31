@@ -1,16 +1,9 @@
 import SwiftUI
 
-let opacityStops: [Double] = stride(from: 0.0, through: 1.0, by: 0.1).map { ($0 * 10).rounded() / 10 }
 let snapSideChoices: [String] = ["left", "right", "both"]
 
-let colorFieldWidth: CGFloat = 118
-let opacityFieldWidth: CGFloat = 90
 let defaultsFieldWidth: CGFloat = 176
 let snapFieldWidth: CGFloat = 172
-
-func opacityLabel(_ value: Double) -> String {
-    "\(Int((value * 100).rounded()))%"
-}
 
 func snapSideLabel(_ key: String) -> String {
     switch key {

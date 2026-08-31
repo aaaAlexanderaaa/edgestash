@@ -6,6 +6,16 @@ struct AppsPage: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showsAdaptiveTintNotice = false
     @State private var noticeDismissJob: DispatchWorkItem?
+    @State private var searchText = ""
+
+    private var visibleApps: [AppEntry] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let apps = appCatalog.apps
+        guard !query.isEmpty else { return apps }
+        return apps.filter {
+            $0.name.localizedStandardContains(query) || $0.id.localizedCaseInsensitiveContains(query)
+        }
+    }
 
     var body: some View {
         SettingsPageScaffold(tab: .apps) {
@@ -22,53 +32,75 @@ struct AppsPage: View {
             StripDefaultsCard(appCatalog: appCatalog, preferences: preferences)
 
             SettingsCard {
-                if appCatalog.apps.isEmpty {
-                    SettingsEmptyState(
-                        symbol: "square.grid.2x2",
-                        message: L10n.appsEmptyHint
-                    )
-                } else {
-                    VStack(spacing: 0) {
-                        ForEach(Array(appCatalog.apps.enumerated()), id: \.element.id) { index, app in
-                            let isEnabled = preferences.stashActive(bundleID: app.id)
-                            let tintToken = preferences.tintKey(for: app.id)
-                            let opacity = preferences.tintAlpha(for: app.id)
-                            let snapSide = preferences.snapPreference(for: app.id)
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(L10n.appsListNote)
+                        .font(SettingsTheme.TypeRole.job)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
 
-                            HStack(alignment: .top, spacing: 12) {
-                                TickBox(
-                                    isOn: Binding(
-                                        get: { isEnabled },
-                                        set: { preferences.applyAppStash(bundleID: app.id, stashOn: $0, tint: tintToken) }
+                    if !appCatalog.apps.isEmpty {
+                        HStack(spacing: 8) {
+                            Image(systemName: "magnifyingglass")
+                                .foregroundStyle(.secondary)
+                            TextField(L10n.appsSearch, text: $searchText)
+                                .textFieldStyle(.plain)
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 7)
+                        .background(
+                            RoundedRectangle(cornerRadius: SettingsTheme.Radius.row, style: .continuous)
+                                .fill(Color.primary.opacity(0.05))
+                        )
+                    }
+
+                    if appCatalog.apps.isEmpty {
+                        SettingsEmptyState(
+                            symbol: "square.grid.2x2",
+                            message: L10n.appsEmptyHint
+                        )
+                    } else if visibleApps.isEmpty {
+                        SettingsEmptyState(
+                            symbol: "magnifyingglass",
+                            message: L10n.appsSearchEmpty
+                        )
+                    } else {
+                        VStack(spacing: 0) {
+                            ForEach(Array(visibleApps.enumerated()), id: \.element.id) { index, app in
+                                let isEnabled = preferences.stashActive(bundleID: app.id)
+                                let tintToken = preferences.tintKey(for: app.id)
+                                let snapSide = preferences.snapPreference(for: app.id)
+
+                                HStack(alignment: .top, spacing: 12) {
+                                    TickBox(
+                                        isOn: Binding(
+                                            get: { isEnabled },
+                                            set: { preferences.applyAppStash(bundleID: app.id, stashOn: $0, tint: tintToken) }
+                                        )
                                     )
-                                )
-                                .padding(.top, 8)
+                                    .padding(.top, 8)
 
-                                StashAppRow(
-                                    app: app,
-                                    colorName: tintToken,
-                                    opacity: opacity,
-                                    snapSide: snapSide,
-                                    blockedDockSide: preferences.resolvedDockSide(),
-                                    onColorChange: { newColor in
-                                        preferences.applyAppStash(bundleID: app.id, stashOn: isEnabled, tint: newColor)
-                                        if newColor == "adaptive" {
-                                            raiseAdaptiveTintNotice()
+                                    StashAppRow(
+                                        app: app,
+                                        colorName: tintToken,
+                                        snapSide: snapSide,
+                                        blockedDockSide: preferences.resolvedDockSide(),
+                                        onColorChange: { newColor in
+                                            preferences.applyAppStash(bundleID: app.id, stashOn: isEnabled, tint: newColor)
+                                            if newColor == "adaptive" {
+                                                raiseAdaptiveTintNotice()
+                                            }
+                                        },
+                                        onSnapSideChange: { newSnapSide in
+                                            preferences.applySnapSide(bundleID: app.id, snapSide: newSnapSide)
                                         }
-                                    },
-                                    onOpacityChange: { newOpacity in
-                                        preferences.applyOpacity(bundleID: app.id, opacity: newOpacity)
-                                    },
-                                    onSnapSideChange: { newSnapSide in
-                                        preferences.applySnapSide(bundleID: app.id, snapSide: newSnapSide)
-                                    }
-                                )
-                                .opacity(isEnabled ? 1 : 0.72)
-                            }
-                            .padding(.vertical, 8)
+                                    )
+                                    .opacity(isEnabled ? 1 : 0.72)
+                                }
+                                .padding(.vertical, 8)
 
-                            if index != appCatalog.apps.count - 1 {
-                                Divider()
+                                if index != visibleApps.count - 1 {
+                                    Divider()
+                                }
                             }
                         }
                     }
@@ -99,13 +131,11 @@ struct AppsPage: View {
 }
 
 private struct StripDefaultsCard: View {
-    @Environment(\.colorScheme) private var colorScheme
     @ObservedObject var appCatalog: AppCatalog
     @ObservedObject var preferences: Preferences
 
     var body: some View {
         let enabledApps = appCatalog.apps.filter { preferences.stashActive(bundleID: $0.id) }
-        let sharedAlpha = uniformAlpha(among: enabledApps)
         let edgeState = uniformEdgeChoice(among: enabledApps)
         let sharedEdgeChoice = edgeState.choice
         let dockSide = preferences.resolvedDockSide()
@@ -113,32 +143,6 @@ private struct StripDefaultsCard: View {
 
         SettingsCard(L10n.appsDefaultsCard) {
             VStack(alignment: .leading, spacing: 16) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(L10n.appsUniformAlpha)
-                            .font(.headline)
-                        Text(L10n.appsUniformAlphaNote)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    FieldMenu(
-                        title: opacityLabel(sharedAlpha),
-                        minWidth: defaultsFieldWidth,
-                        leadingImage: opacityGlyphImage(alpha: sharedAlpha, colorScheme: colorScheme),
-                        alignment: .trailing,
-                        choices: opacityStops.map { value in
-                            MenuChoice(
-                                title: opacityLabel(value),
-                                image: opacityGlyphImage(alpha: value, colorScheme: colorScheme),
-                                isSelected: value == sharedAlpha
-                            ) {
-                                preferences.applyGlobalOpacity(value)
-                            }
-                        }
-                    )
-                }
-
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 6) {
@@ -207,12 +211,7 @@ private struct StripDefaultsCard: View {
         }
     }
 
-    /// One value only when every enabled app agrees; disagreement falls back
-    /// to full opacity rather than inventing a middle ground.
-    private func uniformAlpha(among apps: [AppEntry]) -> Double {
-        let values = Set(apps.map { preferences.tintAlpha(for: $0.id) })
-        return values.count == 1 ? values.first ?? 1.0 : 1.0
-    }
+    @Environment(\.colorScheme) private var colorScheme
 
     private struct UniformEdgeState {
         let choice: String

@@ -8,6 +8,7 @@ struct BehaviorSettingsView: View {
     var body: some View {
         SettingsPageScaffold(tab: .behavior) {
             HoverCard(preferences: preferences)
+            AppearanceCard(preferences: preferences)
             ShortcutsCard(appCatalog: appCatalog, preferences: preferences)
             SettingsCard(L10n.mapCard) {
                 ArrangementMapView(preferences: preferences)
@@ -65,7 +66,7 @@ private struct HoverCard: View {
                 description: L10n.behaviorBufferYNote,
                 range: 0...Preferences.maxGateSpanY,
                 step: 20,
-                resetValue: Preferences.defaultGateSpanX
+                resetValue: Preferences.defaultGateSpanY
             )
         }
     }
@@ -73,6 +74,34 @@ private struct HoverCard: View {
     private var visualizer: some View {
         BufferPreview(xTol: preferences.gateSpanX, yTol: preferences.gateSpanY)
             .frame(minWidth: 220, minHeight: 220)
+    }
+}
+
+private struct AppearanceCard: View {
+    @ObservedObject var preferences: Preferences
+
+    var body: some View {
+        SettingsCard {
+            VStack(alignment: .leading, spacing: 16) {
+                SettingsFlagRow(
+                    title: L10n.systemEffects,
+                    subtitle: L10n.systemEffectsNote,
+                    symbol: "sparkles",
+                    isOn: $preferences.decoratesSlides
+                )
+                SettingsFlagRow(
+                    title: L10n.systemMergedStrip,
+                    subtitle: L10n.systemMergedStripNote,
+                    symbol: "rectangle.split.3x1.fill",
+                    isOn: $preferences.mergesStrips,
+                    help: [
+                        L10n.stripNoteTint,
+                        L10n.stripNoteFlourish,
+                        L10n.stripNoteSpeed
+                    ].map { "· \($0)" }.joined(separator: "\n")
+                )
+            }
+        }
     }
 }
 

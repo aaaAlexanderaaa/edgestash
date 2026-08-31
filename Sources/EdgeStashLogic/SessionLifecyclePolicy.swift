@@ -66,6 +66,28 @@ public enum SessionLifecyclePolicy {
         }
     }
 
+    /// Periodic sync classifies a live session without mutating the manager
+    /// list. The engine must apply the event after it releases exclusive
+    /// access to that list: `onEnded` also removes from it, and a nested
+    /// exclusive write aborts the process.
+    public static func syncEndEvent(
+        stashActive: Bool,
+        isTemporary: Bool,
+        processStillRunning: Bool,
+        windowRoleInvalid: Bool
+    ) -> Event? {
+        if !stashActive, !isTemporary {
+            return .appDisabled
+        }
+        if !processStillRunning {
+            return .appTerminated
+        }
+        if windowRoleInvalid {
+            return .windowDestroyed
+        }
+        return nil
+    }
+
     public static func shouldClearRescueRecords(
         for event: Event,
         restorePositionSucceeded: Bool,

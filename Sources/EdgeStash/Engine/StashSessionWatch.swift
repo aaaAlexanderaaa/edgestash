@@ -93,10 +93,9 @@ extension StashSession {
             displayAppKit: screen.frame,
             primaryHeight: primaryHeight
         )
-        // Glass owns translucency. Pre-multiplying tint alpha here produced
-        // a muddy gray slab on the adaptive white/black default.
+        // Glass owns translucency. The stored per-app alpha is unused: the
+        // rail is a tinted plate, not a percentage-opacity slab.
         let color = Preferences.shared.stripColor(for: bundleID)
-            .withAlphaComponent(max(0.35, CGFloat(Preferences.shared.tintAlpha(for: bundleID))))
         let name = NSRunningApplication(processIdentifier: pid)?.localizedName ?? bundleID
         let markerEnabled = kind != .seamBeacon || canBeginSeamReveal
         let explanation = seamSpaceAvailability == .disabledFullScreen
