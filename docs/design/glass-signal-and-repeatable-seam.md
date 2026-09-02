@@ -97,7 +97,7 @@ chrome states only:
 |---|---|---|---|---|
 | `glass-system` | pin disc on macOS 26 when `NSGlassEffectView` resolves | live Liquid Glass on the 28pt disc | same pin actions | if the class is missing, paint the disc |
 | `glass-painted` | rails, halo, merge chips; or any surface without the class | layered tinted plate of the same size | same | never fall back to `NSVisualEffectView` or to the 2pt beacon |
-| `outer-rail` | exposed-edge stash | 5pt full-wash capsule; 1pt on-screen clearance | hover / click / shortcut / Dock | unchanged collapse/reveal |
+| `outer-rail` | exposed-edge stash | 5pt full-wash capsule; 1pt on-screen clearance | hover / click / shortcut / named-stash activation | Dock app-icon is not a reveal when the app has on-desktop windows; see `docs/contracts/screen-set-and-window-life.md` |
 | `seam-rail` | shared-edge stash, session managed | 5pt half-wash capsule + 1pt inner gap; 2pt inset from the seam | approach band / hover / click | session drop is a defect, not a chrome state |
 | `merge-rail` | two or more overlapping same-edge markers | 5pt tinted-glass segments | segment hover / click | suppressed individual rails stay hidden |
 | `pin-glass` | expanded unpinned or pinned stash | 28pt tinted-glass disc | toggle pin | existing pin policy |

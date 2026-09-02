@@ -338,6 +338,7 @@ extension StashSession {
             shutdown(event: .windowDestroyed)
             return
         }
+        if ignoringGeometryNotifications { return }
         let minimizeNotification: ManagedMinimizeNotification?
         switch name {
         case kAXWindowMiniaturizedNotification as String:
@@ -369,42 +370,127 @@ extension StashSession {
             return
         }
         if name == kAXMovedNotification as String, !busy, let edge {
+            guard !ignoringGeometryNotifications else { return }
             guard let frame = StashAX.frame(of: windowElement) else { return }
             let screens = NSScreen.screens
             let primaryHeight = DisplayCatalog.primaryHeight(screens: screens)
             let geometries = DisplayCatalog.adjacencyGeometries(screens: screens)
-            let display = displayID.flatMap { id in geometries.first { $0.id == id } }
-                ?? owningDisplay(for: frame, screens: screens, primaryHeight: primaryHeight)?.0
-            guard let display else { return }
-            if phase == .expanded {
+            let owningDisplayConnected = displayID.map { id in geometries.contains { $0.id == id } } ?? false
+            let screenSetQuiet = ScreenSetCoordinator.blocksUserGeometry
+            if StashSessionPolicy.shouldIgnoreGeometryMove(
+                screenSetQuiet: screenSetQuiet,
+                owningDisplayConnected: owningDisplayConnected
+            ) {
+                return
+            }
+            if let owned = owningDisplay(for: frame, screens: screens, primaryHeight: primaryHeight),
+               owned.0.id != displayID {
                 let stillOnEdge: Bool
                 switch edge {
                 case .left:
-                    stillOnEdge = abs(frame.minX - display.frame.minX) <= 20
+                    stillOnEdge = abs(frame.minX - owned.0.frame.minX) <= 20
                 case .right:
-                    stillOnEdge = abs(frame.maxX - display.frame.maxX) <= 20
+                    stillOnEdge = abs(frame.maxX - owned.0.frame.maxX) <= 20
                 }
-                if StashSessionPolicy.shouldDetachAfterOffEdgeMove(
-                    isPinned: isPinned,
-                    stillOnEdge: stillOnEdge
-                ) {
-                    shutdown(event: .detachedFromEdge)
-                }
-            } else if phase == .collapsed, let presentation {
-                let stillParked = StashGeometryPolicy.isStillOnStashEdge(
-                    frame: frame,
-                    display: display.frame,
-                    edge: edge,
-                    presentation: presentation
-                )
-                if StashSessionPolicy.shouldReleaseCollapsedAfterExternalMove(
-                    isCollapsed: true,
-                    isBusy: busy,
-                    stillParkedOnOwningEdge: stillParked
-                ) {
-                    shutdown(event: .detachedFromEdge)
+                if stillOnEdge {
+                    pendingGeometryDetach?.cancel()
+                    pendingGeometryDetach = nil
+                    displayID = owned.0.id
+                    refreshCollapsePresentation()
+                    return
                 }
             }
+            if shouldLeaveStashAfterExternalMove(
+                frame: frame,
+                geometries: geometries,
+                owningDisplayConnected: owningDisplayConnected,
+                screenSetQuiet: screenSetQuiet
+            ) {
+                scheduleDeferredGeometryDetach()
+            } else {
+                pendingGeometryDetach?.cancel()
+                pendingGeometryDetach = nil
+            }
         }
+    }
+
+    private func shouldLeaveStashAfterExternalMove(
+        frame: CGRect,
+        geometries: [DisplayGeometry],
+        owningDisplayConnected: Bool,
+        screenSetQuiet: Bool
+    ) -> Bool {
+        guard let edge else { return false }
+        let display = displayID.flatMap { id in geometries.first { $0.id == id } }
+            ?? owningDisplay(
+                for: frame,
+                screens: NSScreen.screens,
+                primaryHeight: DisplayCatalog.primaryHeight()
+            )?.0
+        guard let display else { return false }
+        if phase == .expanded {
+            let stillOnEdge: Bool
+            switch edge {
+            case .left:
+                stillOnEdge = abs(frame.minX - display.frame.minX) <= 20
+            case .right:
+                stillOnEdge = abs(frame.maxX - display.frame.maxX) <= 20
+            }
+            return StashSessionPolicy.shouldDetachAfterOffEdgeMove(
+                isPinned: isPinned,
+                stillOnEdge: stillOnEdge,
+                owningDisplayConnected: owningDisplayConnected,
+                screenSetQuiet: screenSetQuiet
+            )
+        }
+        if phase == .collapsed, let presentation {
+            let stillParked = StashGeometryPolicy.isStillOnStashEdge(
+                frame: frame,
+                display: display.frame,
+                edge: edge,
+                presentation: presentation
+            )
+            return StashSessionPolicy.shouldReleaseCollapsedAfterExternalMove(
+                isCollapsed: true,
+                isBusy: busy,
+                stillParkedOnOwningEdge: stillParked,
+                owningDisplayConnected: owningDisplayConnected,
+                screenSetQuiet: screenSetQuiet
+            )
+        }
+        return false
+    }
+
+    /// AX moved can beat `didChangeScreenParameters`. Wait a beat so a
+    /// topology change can claim the move instead of forgetting every
+    /// screen-set slot as a user drag.
+    private func scheduleDeferredGeometryDetach() {
+        pendingGeometryDetach?.cancel()
+        let generation = lifecycleGeneration
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.lifecycleGeneration == generation else { return }
+            self.pendingGeometryDetach = nil
+            guard self.stillWantsGeometryDetach() else { return }
+            self.shutdown(event: .detachedFromEdge)
+        }
+        pendingGeometryDetach = work
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + ScreenSetSettlePolicy.geometryDetachDeferral,
+            execute: work
+        )
+    }
+
+    private func stillWantsGeometryDetach() -> Bool {
+        if ScreenSetCoordinator.blocksUserGeometry { return false }
+        guard !busy, let frame = StashAX.frame(of: windowElement) else { return false }
+        let screens = NSScreen.screens
+        let geometries = DisplayCatalog.adjacencyGeometries(screens: screens)
+        let owningDisplayConnected = displayID.map { id in geometries.contains { $0.id == id } } ?? false
+        return shouldLeaveStashAfterExternalMove(
+            frame: frame,
+            geometries: geometries,
+            owningDisplayConnected: owningDisplayConnected,
+            screenSetQuiet: ScreenSetCoordinator.blocksUserGeometry
+        )
     }
 }

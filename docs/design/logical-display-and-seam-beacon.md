@@ -5,7 +5,7 @@ status: current
 authority: normative
 implementation: implemented
 verification_status: partial
-last_reconciled: 2026-08-30
+last_reconciled: 2026-09-02
 supersedes: []
 ---
 
@@ -138,8 +138,8 @@ it did not prove the original seam session survived.
 | `map-empty` | no displays | existing “no display” copy | wait | n/a |
 | `map-idle` | Behavior page, displays present | logical rectangles, shared segments marked | select a display or edge | n/a |
 | `halo-preview` | an edge is selected in the map | halo on that real edge; map shows the same strategy | change selection; close Settings | halo ends when Settings closes or selection clears |
-| `outer-strip` | window stashed on an exposed segment | current slide-off strip | hover / shortcut / Dock | unchanged current behavior |
-| `seam-beacon-ready` | seam stash; owning display currently shows an ordinary user Space and the runtime transport is available | enabled beacon on the owning display; target stays minimized until migration is confirmed | approach band / hover / click / shortcut / interpreted Dock activation starts one reveal transaction | successful reveal followed by re-collapse returns here with the same managed session; migration failure keeps the window minimized and disables the attempted reveal; beacon is gone only when the session genuinely ends |
+| `outer-strip` | window stashed on an exposed segment | current slide-off strip | hover / shortcut / named-stash activation in `docs/contracts/screen-set-and-window-life.md` | Dock app-icon click is not a reveal when the app has on-desktop windows |
+| `seam-beacon-ready` | seam stash; owning display currently shows an ordinary user Space and the runtime transport is available | enabled beacon on the owning display; target stays minimized until migration is confirmed | approach band / hover / click / shortcut / named-stash activation in `docs/contracts/screen-set-and-window-life.md` starts one reveal transaction | successful reveal followed by re-collapse returns here with the same managed session; migration failure keeps the window minimized and disables the attempted reveal; beacon is gone only when the session genuinely ends |
 | `seam-beacon-fullscreen-disabled` | owning display currently shows a native full-screen or split-full-screen Space | beacon remains visible with disabled treatment; target stays minimized | first encounter explains once; later clicks stay silent; hover does not dwell | returning to an ordinary user Space restores `seam-beacon-ready` after reconciliation |
 | `seam-unavailable` | OS is older than macOS 26.4 or required runtime capabilities are absent | shared-seam capture is unavailable; no Space-anchored fallback is created | use an exposed outer edge | capability is re-evaluated at launch; existing recovery records remain recoverable |
 | `reduce-motion` | system reduce motion | halo and beacon fade only; no slide decoration | same | n/a |
@@ -246,6 +246,11 @@ This is not a web surface.
 | `reduce-motion` | system setting on | pending | pending | pending | pending | pending | owner look |
 
 ## Reconciliation log
+
+- **2026-09-02 — Dock app-icon is no longer an unconditional reveal:**
+  named-stash activation is owned by
+  `docs/contracts/screen-set-and-window-life.md`. Rail, beacon, approach,
+  and INV-6/9/10 are unchanged.
 
 - **2026-08-30 — glass chrome accepted as target, not current:** the owner
   rejected the 2pt quiet beacon as unfindable and asked every desktop

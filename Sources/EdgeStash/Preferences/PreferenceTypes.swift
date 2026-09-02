@@ -17,13 +17,17 @@ struct AppStashProfile: Codable, Equatable {
     var chord: AppChord?
     var chordScope: AppShortcutWindowScope?
 
+    /// Raw value of `AllStashedDockAction`. Nil decodes as leave-closed.
+    var allStashedDock: String?
+
     init(
         stashOn: Bool,
         tint: String,
         alpha: Double? = nil,
         sides: String? = nil,
         chord: AppChord? = nil,
-        chordScope: AppShortcutWindowScope? = nil
+        chordScope: AppShortcutWindowScope? = nil,
+        allStashedDock: String? = nil
     ) {
         self.stashOn = stashOn
         self.tint = tint
@@ -31,7 +35,23 @@ struct AppStashProfile: Codable, Equatable {
         self.sides = sides
         self.chord = chord
         self.chordScope = chordScope
+        self.allStashedDock = allStashedDock
     }
+}
+
+/// One stashed standard window inside a remembered screen set.
+struct StoredScreenSetSlot: Codable, Equatable {
+    var windowNumber: UInt32
+    var bundleID: String
+    var displayID: String
+    var edge: Int
+}
+
+/// Stash placement for one configured screen set. Optional on disk so earlier
+/// documents still decode.
+struct StoredScreenSet: Codable, Equatable {
+    var fingerprint: ScreenSetFingerprint
+    var slots: [StoredScreenSetSlot]
 }
 
 enum DockClearanceMode: String, CaseIterable {

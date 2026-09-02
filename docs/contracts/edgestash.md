@@ -4,7 +4,7 @@ status: current
 authority: normative
 implementation: implemented
 verification_status: partial
-last_reconciled: 2026-08-30
+last_reconciled: 2026-09-02
 supersedes: []
 ---
 
@@ -30,7 +30,9 @@ logical display map, edge halo, and seam beacon, and defer later product ideas.
 ### In scope
 
 - A macOS menu-bar app that stashes selected application windows at display
-  edges and restores them through markers, hover, shortcuts, or Dock activity
+  edges and restores them through markers, hover, shortcuts, and the
+  named-stash activation paths in
+  `docs/contracts/screen-set-and-window-life.md`
 - Per-application enablement, appearance, edge selection, and shortcuts
 - Exposed-edge slide-off presentation; shared-edge segments use system
   minimization so a stashed window truly leaves the screen
@@ -67,9 +69,9 @@ logical display map, edge halo, and seam beacon, and defer later product ideas.
 | `untrusted` | Accessibility is unavailable | Settings remains usable; no window control | permission becomes available | do not start observers |
 | `idle` | trusted engine sees an eligible window | window remains unmanaged | edge capture | no mutation |
 | `collapsed-outer` | window reaches an exposed edge segment | window slides offscreen; outer marker remains | reveal action | restore the saved frame |
-| `collapsed-seam` | window reaches a shared edge segment | macOS minimizes the window so it truly leaves the screen; the seam beacon remains | reveal action | restore rather than retain a stale strategy after display changes |
+| `collapsed-seam` | window reaches a shared edge segment | macOS minimizes the window so it truly leaves the screen; the seam beacon remains | reveal action | display-set events follow `docs/contracts/screen-set-and-window-life.md`; do not write a stale off-set frame |
 | `collapsed-seam-disabled` | a seam stash's owning display is currently showing a native full-screen or split-full-screen Space | the minimized window stays hidden; its beacon remains visible but disabled | the first encounter explains once; later clicks stay silent; switch the display back to an ordinary user Space | never activate the subject app or pull the user to the stash's former Space |
-| `expanded` | marker, shortcut, or Dock reveals a stash | window sits on its owning edge | pointer leaves or user collapses | pinning suppresses automatic collapse |
+| `expanded` | a named-stash action opens a stash (rail, beacon, shortcut, thumbnail, show-all, or the per-app all-stashed setting) | window sits on its owning edge | pointer leaves or user collapses | pinning suppresses automatic collapse |
 
 ## Normative invariants
 
@@ -93,7 +95,8 @@ logical display map, edge halo, and seam beacon, and defer later product ideas.
   uses immediate positioning or fades.
 - **INV-8 — recovery.** Rescue records are cleared only after the corresponding
   visibility and frame restoration succeeds, or after the window is known to
-  be gone.
+  be gone. Restart, quit, and crash do not restore stash membership; see
+  INV-L9 in `docs/contracts/screen-set-and-window-life.md`.
 - **INV-9 — display-anchored seam reveal.** A seam stash is anchored to its
   owning display, not to the Space on which it was captured. Before EdgeStash
   deminimizes or activates the subject app, it must resolve that display's
@@ -115,8 +118,10 @@ logical display map, edge halo, and seam beacon, and defer later product ideas.
 
 - Settings opens on launch only when Accessibility is unavailable; otherwise
   it is opened from the menu bar item or by reopening the app.
-- Display topology changes release stashes whose presentation strategy is no
-  longer valid.
+- Display-set events (increment, drop, return, cancel, scale, sleep, fresh)
+  follow `docs/contracts/screen-set-and-window-life.md`. The former rule that
+  a topology change releases a stash and writes the old frame back is
+  superseded.
 - The Behavior map and live engine use the same display-adjacency policy.
 - The halo ignores mouse events and clears when Settings leaves Behavior or
   closes.
@@ -133,9 +138,11 @@ logical display map, edge halo, and seam beacon, and defer later product ideas.
   cannot be slammed into a seam the way it is slammed into a bezel.
 - On macOS versions where the tested display-Space transport is available,
   every EdgeStash-controlled seam reveal path (approach, beacon hover/click,
-  shortcut, merged strip, and interpreted Dock app activation) follows INV-9.
-  The ordinary macOS Dock window thumbnail is system-owned and may retain its
-  own Space-switching behavior outside EdgeStash's control.
+  shortcut, merged strip, that window's Dock thumbnail, show-all, and a
+  per-app setting that opens stashes when every window is stashed) follows
+  INV-9. A Dock app-icon click or Cmd-Tab that does not open a stash is not
+  a reveal path. The ordinary macOS Dock window thumbnail remains
+  system-owned for Space switching.
 - The transport is enabled only on macOS 26.4 or later and only when all
   required runtime capabilities are present. Without it, shared-seam capture
   is disabled rather than silently reverting to Space-anchored minimization;
@@ -165,13 +172,14 @@ logical display map, edge halo, and seam beacon, and defer later product ideas.
   re-minimization itself is rejected, take the visibility-restoring release
   path rather than retain a false collapsed or permanently busy state, and
   preserve the rescue record if visibility restoration also fails.
-- If display topology changes the presentation kind (exposed slide versus
-  shared minimize), release the stash instead of reusing stale hidden
-  geometry.
-- If a topology change invalidates a stash, restore it instead of preserving a
-  stale offscreen state.
+- If a display-set event changes whether an edge is exposed or shared,
+  keep the window stashed on that display and that side when the event
+  says to keep it, and choose slide versus minimize from the current
+  adjacency. Do not write a stale off-set frame.
 - If work expands past the first-version scope, stop and record a new owner
-  request before implementation.
+  request before implementation. Screen-set memory and activation-versus-
+  stash are in first-version scope; their target is
+  `docs/contracts/screen-set-and-window-life.md`.
 
 ## Acceptance evidence
 
@@ -194,8 +202,17 @@ logical display map, edge halo, and seam beacon, and defer later product ideas.
   seam approach reveals the beacon; additionally verify cross-Space reveal
   stays on the current display Space and native full-screen shows a disabled
   beacon with click explanation.
+- promise[owner-screen-set-review]: due=2026-09-26; status=open;
+  owner=product-owner; description=See
+  `docs/contracts/screen-set-and-window-life.md`.
 
 ## Reconciliation log
+
+- **2026-09-02 — screen-set life accepted as target:** everyday plug,
+  unplug, sleep, and app activation are first-version acceptance, not
+  later product. Topology-release and unconditional Dock reveal are
+  superseded by `docs/contracts/screen-set-and-window-life.md`. Live
+  code follows that target; owner multi-display review is still open.
 
 - **2026-08-30 — seam durability and 5pt painted chrome:** the owner
   reproduced the vanished seam beacon again after several notification-

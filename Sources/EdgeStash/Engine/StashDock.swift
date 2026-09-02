@@ -4,12 +4,16 @@ import CoreGraphics
 import EdgeStashLogic
 
 enum StashDock {
-    private static var lastDown: (at: Date, inDock: Bool, bundleID: String?)?
+    private static var lastDown: (at: Date, inDock: Bool, bundleID: String?, windowTitle: String?)?
     private static let intentWindow: TimeInterval = 0.8
 
     static func noteMouseDown(at point: CGPoint) {
         let inDock = isDockPoint(point)
-        lastDown = (Date(), inDock, inDock ? bundleID(at: point) : nil)
+        if inDock, let hit = hit(at: point) {
+            lastDown = (Date(), true, hit.bundleID, hit.windowTitle)
+        } else {
+            lastDown = (Date(), inDock, nil, nil)
+        }
     }
 
     static func hasRecentClick(now: Date = Date()) -> Bool {
@@ -21,13 +25,17 @@ enum StashDock {
         lastDown?.bundleID
     }
 
+    static func clickedWindowTitle() -> String? {
+        lastDown?.windowTitle
+    }
+
     static func consumeRecentClick() {
         lastDown = nil
     }
 
-    /// Best-effort Dock icon identity: the Dock AX title usually matches the
-    /// running app's localized name.
-    private static func bundleID(at point: CGPoint) -> String? {
+    /// Best-effort Dock identity: an app icon title matches the running name;
+    /// a minimized tile or peek thumbnail uses the window title.
+    private static func hit(at point: CGPoint) -> (bundleID: String?, windowTitle: String?)? {
         guard let dock = NSWorkspace.shared.runningApplications.first(where: {
             $0.bundleIdentifier == dockProcessBundleID
         }) else {
@@ -45,13 +53,30 @@ enum StashDock {
               let element else {
             return nil
         }
-        var title: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, kAXTitleAttribute as CFString, &title) == .success,
-              let name = title as? String,
-              !name.isEmpty else {
-            return nil
+        let running = NSWorkspace.shared.runningApplications
+        var current: AXUIElement? = element
+        for _ in 0..<8 {
+            guard let node = current else { break }
+            let subrole = StashAX.string(node, kAXSubroleAttribute as String)
+            let title = StashAX.string(node, kAXTitleAttribute as String)
+            let matchedApp = title.flatMap { name in
+                running.first { $0.localizedName == name }
+            }
+            switch DockItemPolicy.kind(
+                subrole: subrole,
+                title: title,
+                appLocalizedName: matchedApp?.localizedName
+            ) {
+            case .applicationIcon:
+                return (matchedApp?.bundleIdentifier, nil)
+            case .windowThumbnail:
+                return (matchedApp?.bundleIdentifier, title)
+            case .other:
+                break
+            }
+            current = StashAX.parent(of: node)
         }
-        return NSWorkspace.shared.runningApplications.first { $0.localizedName == name }?.bundleIdentifier
+        return nil
     }
 
     static func isDockPoint(_ point: CGPoint) -> Bool {

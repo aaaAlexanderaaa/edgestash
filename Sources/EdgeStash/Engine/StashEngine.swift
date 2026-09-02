@@ -11,6 +11,9 @@ final class StashEngine {
     private var localMouseDown: Any?
     private var localMouseUp: Any?
     private var mouseMoveMonitor: Any?
+    private var showAllKeyMonitor: Any?
+    private var localShowAllKeyMonitor: Any?
+    private var pendingThumbnailTitle: String?
     private var approachTargetID: String?
     private var spaceRebuildGeneration = 0
     /// Sessions whose collapse completed under a parked pointer. A parked
@@ -29,6 +32,10 @@ final class StashEngine {
     private let merged = StashMergeCoordinator()
     private var lastPreferredSession: [String: ObjectIdentifier] = [:]
     private var temporarySession: StashSession?
+    private let screenSets = ScreenSetCoordinator()
+    private var lastTopologyRevision: UInt = 0
+    private var recentlyUnhidden = Set<String>()
+    private var hiddenBundles = Set<String>()
     private(set) var isRunning = false
 
     func start() {
@@ -36,6 +43,13 @@ final class StashEngine {
         guard AccessibilityGrant.isTrusted(prompt: false) else { return }
         isRunning = true
         StashRescue.recoverPending(reason: "engine-start")
+        screenSets.captureBaseline()
+        screenSets.onSettled = { [weak self] in
+            guard let self else { return }
+            self.merged.reconcile(sessions: self.sessions)
+            self.reevaluateSeamApproach()
+        }
+        lastTopologyRevision = Preferences.shared.displayTopologyRevision
         StashMultiWindowTip.shared.resetForLaunch()
         observeWorkspace()
         observeMice()
@@ -79,25 +93,46 @@ final class StashEngine {
         if let app = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == bundleID }) {
             StashFocusReturn.noteActivation(app)
         }
-        guard isRunning, StashDock.hasRecentClick() else { return }
-        guard DockHitPolicy.shouldExpandActivatedApp(
-            clickedBundleID: StashDock.clickedBundleID(),
-            activatedBundleID: bundleID,
-            pointerStillInDock: StashDock.isDockPoint(NSEvent.mouseLocation)
-        ) else {
-            return
+        guard isRunning else { return }
+
+        let group = sessions.filter { $0.bundleID == bundleID }
+        let hasOnDesktopWindow = group.contains(where: \.isOnDesktop)
+        let allStandardWindowsStashed = !group.isEmpty && group.allSatisfy(\.isManaged)
+        let kind: AppActivationKind
+        if StashOwnedActivation.consume(bundleID) {
+            kind = .ownedReveal
+        } else {
+            kind = activationKind(for: bundleID)
         }
-        StashDock.consumeRecentClick()
-        let managed = sessions.filter { $0.bundleID == bundleID && $0.isManaged && !$0.isPinned }
-        guard let session = preferred(in: managed, bundleID: bundleID) else { return }
-        session.expandFromDock()
-        lastPreferredSession[bundleID] = ObjectIdentifier(session)
+        let decision = StashActivationPolicy.decision(
+            kind: kind,
+            hasOnDesktopWindow: hasOnDesktopWindow,
+            allStandardWindowsStashed: allStandardWindowsStashed,
+            allStashedDock: Preferences.shared.allStashedDockAction(for: bundleID)
+        )
+        applyActivation(decision, bundleID: bundleID, group: group)
+    }
+
+    func noteMacWillSleep() {
+        screenSets.noteWillSleep()
+    }
+
+    func noteMacDidWake() {
+        screenSets.noteDidWake { [weak self] in self?.sessions ?? [] }
+    }
+
+    func noteMacScreensDidWake() {
+        screenSets.noteScreensDidWake { [weak self] in self?.sessions ?? [] }
     }
 
     @objc private func preferencesChanged() {
         guard isRunning else { return }
         hotkeys.reload()
-        sessions.forEach { $0.detachIfTopologyChanged() }
+        let revision = Preferences.shared.displayTopologyRevision
+        if revision != lastTopologyRevision {
+            lastTopologyRevision = revision
+            screenSets.noteTopologyChanged { [weak self] in self?.sessions ?? [] }
+        }
         if SessionLifecyclePolicy.shouldRecoverOnPreferenceChange() {
             StashRescue.recoverPending(reason: "topology")
         }
@@ -113,6 +148,7 @@ final class StashEngine {
         sessions.forEach { $0.cancelHoverReveal() }
         sessions.forEach { $0.cancelPendingSpaceReveal() }
         approachTargetID = nil
+        sessions.forEach { $0.leaveStashIfFullScreened() }
         for session in sessions {
             if SpaceChangePolicy.shouldHideMarkerDuringSpaceTransition(
                 presentation: session.presentation,
@@ -132,6 +168,7 @@ final class StashEngine {
         let generation = spaceRebuildGeneration
         DispatchQueue.main.asyncAfter(deadline: .now() + SpaceChangePolicy.rebuildDelay) { [weak self] in
             guard let self, self.spaceRebuildGeneration == generation else { return }
+            self.sessions.forEach { $0.leaveStashIfFullScreened() }
             self.sessions.forEach { $0.refreshMarkerAfterSpaceChange() }
             self.merged.reconcile(sessions: self.sessions)
             self.reevaluateSeamApproach()
@@ -142,6 +179,8 @@ final class StashEngine {
         let center = NSWorkspace.shared.notificationCenter
         center.addObserver(self, selector: #selector(appDidLaunch(_:)), name: NSWorkspace.didLaunchApplicationNotification, object: nil)
         center.addObserver(self, selector: #selector(appDidActivate(_:)), name: NSWorkspace.didActivateApplicationNotification, object: nil)
+        center.addObserver(self, selector: #selector(appDidUnhide(_:)), name: NSWorkspace.didUnhideApplicationNotification, object: nil)
+        center.addObserver(self, selector: #selector(appDidHide(_:)), name: NSWorkspace.didHideApplicationNotification, object: nil)
         center.addObserver(self, selector: #selector(spaceDidChange), name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
     }
 
@@ -164,6 +203,52 @@ final class StashEngine {
         }
         mouseMoveMonitor = NSEvent.addGlobalMonitorForEvents(matching: .mouseMoved) { [weak self] _ in
             self?.reevaluateSeamApproach()
+        }
+        observeShowAllKeys()
+    }
+
+    private func observeShowAllKeys() {
+        let handler: (NSEvent) -> Void = { [weak self] event in
+            self?.handleShowAllKey(event)
+        }
+        showAllKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { event in
+            handler(event)
+        }
+        localShowAllKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            handler(event)
+            return event
+        }
+    }
+
+    private func handleShowAllKey(_ event: NSEvent) {
+        guard isRunning else { return }
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        guard ShowAllWindowsKeyPolicy.matchesShowAll(
+            keyCode: event.keyCode,
+            control: flags.contains(.control),
+            command: flags.contains(.command),
+            option: flags.contains(.option)
+        ) else {
+            return
+        }
+        if ShowAllWindowsKeyPolicy.frontmostAppOnly(keyCode: event.keyCode) {
+            guard let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier else { return }
+            applyShowAll(bundleIDs: [bundleID])
+        } else {
+            applyShowAll(bundleIDs: Array(Set(sessions.filter(\.isCollapsed).map(\.bundleID))))
+        }
+    }
+
+    private func applyShowAll(bundleIDs: [String]) {
+        for bundleID in bundleIDs {
+            let group = sessions.filter { $0.bundleID == bundleID }
+            let decision = StashActivationPolicy.decision(
+                kind: .showAllWindows,
+                hasOnDesktopWindow: group.contains(where: \.isOnDesktop),
+                allStandardWindowsStashed: !group.isEmpty && group.allSatisfy(\.isManaged),
+                allStashedDock: Preferences.shared.allStashedDockAction(for: bundleID)
+            )
+            applyActivation(decision, bundleID: bundleID, group: group)
         }
     }
 
@@ -380,6 +465,26 @@ final class StashEngine {
         handleAppActivated(bundleID: bundleID)
     }
 
+    @objc private func appDidHide(_ notification: Notification) {
+        guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+              let bundleID = app.bundleIdentifier else {
+            return
+        }
+        hiddenBundles.insert(bundleID)
+    }
+
+    @objc private func appDidUnhide(_ notification: Notification) {
+        guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+              let bundleID = app.bundleIdentifier else {
+            return
+        }
+        hiddenBundles.remove(bundleID)
+        recentlyUnhidden.insert(bundleID)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+            self?.recentlyUnhidden.remove(bundleID)
+        }
+    }
+
     private func syncSessions() {
         guard AccessibilityGrant.isTrusted(prompt: false) else {
             suspendTrustLost()
@@ -469,12 +574,16 @@ final class StashEngine {
             self?.merged.reconcile(sessions: self?.sessions ?? [])
             self?.reevaluateSeamApproach()
         }
-        session.onChanged = { [weak self] _ in
+        session.onChanged = { [weak self] changed in
             self?.merged.reconcile(sessions: self?.sessions ?? [])
             self?.reevaluateSeamApproach()
+            if changed.isManaged {
+                self?.recordLiveScreenSetPlacements()
+            }
         }
         session.onCollapsed = { [weak self] collapsed in
             self?.approachSuppressedIDs.insert(collapsed.mergeID)
+            self?.recordLiveScreenSetPlacements()
             self?.reevaluateSeamApproach()
         }
         session.onSeamMarkerActivity = { [weak self] _ in
@@ -625,6 +734,13 @@ final class StashEngine {
         if let localMouseDown { NSEvent.removeMonitor(localMouseDown) }
         if let localMouseUp { NSEvent.removeMonitor(localMouseUp) }
         if let mouseMoveMonitor { NSEvent.removeMonitor(mouseMoveMonitor) }
+        if let showAllKeyMonitor { NSEvent.removeMonitor(showAllKeyMonitor) }
+        if let localShowAllKeyMonitor { NSEvent.removeMonitor(localShowAllKeyMonitor) }
+        showAllKeyMonitor = nil
+        localShowAllKeyMonitor = nil
+        pendingThumbnailTitle = nil
+        hiddenBundles.removeAll()
+        recentlyUnhidden.removeAll()
         mouseMoveMonitor = nil
         approachTargetID = nil
         approachSuppressedIDs.removeAll()
@@ -655,6 +771,104 @@ final class StashEngine {
         hotkeys.stop()
         NotificationCenter.default.removeObserver(self)
         NSWorkspace.shared.notificationCenter.removeObserver(self)
+        screenSets.invalidate()
+    }
+
+    private func recordLiveScreenSetPlacements() {
+        guard !ScreenSetCoordinator.blocksUserGeometry else { return }
+        let present = Set(Preferences.shared.currentFingerprint().displayIDs)
+        let slots = sessions.compactMap(\.screenSetSlot).filter { present.contains($0.displayID) }
+        guard !slots.isEmpty else { return }
+        Preferences.shared.rememberCurrentPlacement(slots: slots)
+    }
+
+    private func activationKind(for bundleID: String) -> AppActivationKind {
+        guard StashDock.hasRecentClick() else {
+            if recentlyUnhidden.contains(bundleID) || hiddenBundles.remove(bundleID) != nil {
+                return .hideApp
+            }
+            return .commandTab
+        }
+        let clicked = StashDock.clickedBundleID()
+        let windowTitle = StashDock.clickedWindowTitle()
+        let inDock = StashDock.isDockPoint(NSEvent.mouseLocation)
+        if let windowTitle, !windowTitle.isEmpty {
+            StashDock.consumeRecentClick()
+            pendingThumbnailTitle = windowTitle
+            return .dockWindowThumbnail
+        }
+        if recentlyUnhidden.contains(bundleID) || hiddenBundles.remove(bundleID) != nil {
+            StashDock.consumeRecentClick()
+            return .hideApp
+        }
+        if clicked == bundleID {
+            StashDock.consumeRecentClick()
+            return .dockAppIcon
+        }
+        if clicked == nil, inDock {
+            StashDock.consumeRecentClick()
+            return .fileDropOrNotification
+        }
+        return .commandTab
+    }
+
+    private func applyActivation(
+        _ decision: StashActivationDecision,
+        bundleID: String,
+        group: [StashSession]
+    ) {
+        switch decision {
+        case .raiseOnDesktopOnly, .doNotOpenStash, .followSystem:
+            return
+        case .openMostRecent:
+            let collapsed = group.filter(\.isCollapsed)
+            guard let session = preferred(in: collapsed, bundleID: bundleID) else { return }
+            session.expandFromDock()
+            lastPreferredSession[bundleID] = ObjectIdentifier(session)
+        case .openOnPointerDisplay:
+            guard let displayID = pointerDisplayID() else { return }
+            let matches = group.filter { $0.isCollapsed && $0.displayID == displayID }
+            guard !matches.isEmpty else { return }
+            matches.forEach { $0.expandFromDock() }
+        case .openAllStashes:
+            group.filter(\.isCollapsed).forEach { $0.expandFromDock() }
+        case .openThumbnail:
+            let title = pendingThumbnailTitle
+            pendingThumbnailTitle = nil
+            guard let title else { return }
+            let match = group.first {
+                $0.isCollapsed && StashAX.string($0.windowElement, kAXTitleAttribute as String) == title
+            }
+            match?.expandFromDock()
+        }
+    }
+
+    private func pointerDisplayID() -> String? {
+        let mouse = NSEvent.mouseLocation
+        let screens = NSScreen.screens
+        let screen = screens.first { $0.frame.contains(mouse) } ?? NSScreen.main
+        guard let screen else { return nil }
+        return DisplayCatalog.identifier(for: screen, screens: screens)
+    }
+}
+
+/// A rail, beacon, or shortcut reveal activates the subject app. That
+/// activate must not run the Dock / Cmd-Tab all-stashed policy.
+enum StashOwnedActivation {
+    private static var latest: (bundleID: String, at: Date)?
+    static let window: TimeInterval = 1.2
+
+    static func note(bundleID: String) {
+        latest = (bundleID, Date())
+    }
+
+    static func consume(_ bundleID: String, now: Date = Date()) -> Bool {
+        guard let latest, latest.bundleID == bundleID,
+              now.timeIntervalSince(latest.at) <= window else {
+            return false
+        }
+        self.latest = nil
+        return true
     }
 }
 

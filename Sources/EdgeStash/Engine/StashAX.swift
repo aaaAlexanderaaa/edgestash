@@ -89,6 +89,10 @@ enum StashAX {
         copy(app, kAXFocusedWindowAttribute as String).map { $0 as! AXUIElement }
     }
 
+    static func parent(of element: AXUIElement) -> AXUIElement? {
+        copy(element, kAXParentAttribute as String).map { $0 as! AXUIElement }
+    }
+
     static func windowID(of element: AXUIElement) -> UInt32? {
         var identifier: CGWindowID = 0
         guard _AXUIElementGetWindow(element, &identifier) == .success, identifier != 0 else {
@@ -99,6 +103,10 @@ enum StashAX {
 
     static func isMinimized(_ element: AXUIElement) -> Bool? {
         bool(element, kAXMinimizedAttribute as String)
+    }
+
+    static func isFullScreen(_ element: AXUIElement) -> Bool? {
+        bool(element, "AXFullScreen")
     }
 
     static func canSetMinimized(_ element: AXUIElement) -> Bool {

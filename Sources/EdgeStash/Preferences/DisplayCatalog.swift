@@ -87,6 +87,12 @@ enum DisplayCatalog {
         screens.first { identifier(for: $0, screens: screens) == id }
     }
 
+    static func builtinIdentifier(screens: [NSScreen] = NSScreen.screens) -> String? {
+        screens.first { screen in
+            displayID(for: screen).map { CGDisplayIsBuiltin($0) != 0 } ?? false
+        }.map { identifier(for: $0, screens: screens) }
+    }
+
     static func primaryHeight(screens: [NSScreen] = NSScreen.screens) -> CGFloat {
         screens.first?.frame.height ?? 900
     }

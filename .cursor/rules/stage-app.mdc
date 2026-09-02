@@ -1,0 +1,15 @@
+---
+description: Always stage the owner-runnable app to the same dist paths
+alwaysApply: true
+---
+
+# Owner-runnable app
+
+After an app-target change the owner should run, stage with
+`./scripts/stage-app.sh` (Release) or `./scripts/stage-app.sh Debug`.
+
+Always tell the owner to quit the running EdgeStash and open
+`dist/EdgeStash.app`. The zip is always `dist/EdgeStash.zip`.
+
+Do not point at DerivedData. Do not invent dated or feature-named zips,
+`dist/build`, or a new folder layout.

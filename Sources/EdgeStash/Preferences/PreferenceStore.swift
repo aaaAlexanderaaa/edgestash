@@ -37,6 +37,7 @@ struct StoredDocument: Codable {
     var edgeMap: [String: DisplayEdgeSelection]?
     var ghosts: [String]?
     var rescues: [RescueDossier]?
+    var screenSets: [StoredScreenSet]?
 }
 
 enum PreferenceStore {

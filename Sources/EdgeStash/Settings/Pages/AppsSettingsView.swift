@@ -84,6 +84,9 @@ struct AppsPage: View {
                                         colorName: tintToken,
                                         snapSide: snapSide,
                                         blockedDockSide: preferences.resolvedDockSide(),
+                                        allStashedDock: isEnabled
+                                            ? preferences.allStashedDockAction(for: app.id)
+                                            : nil,
                                         onColorChange: { newColor in
                                             preferences.applyAppStash(bundleID: app.id, stashOn: isEnabled, tint: newColor)
                                             if newColor == "adaptive" {
@@ -92,6 +95,9 @@ struct AppsPage: View {
                                         },
                                         onSnapSideChange: { newSnapSide in
                                             preferences.applySnapSide(bundleID: app.id, snapSide: newSnapSide)
+                                        },
+                                        onAllStashedDockChange: { action in
+                                            preferences.setAllStashedDockAction(action, bundleID: app.id)
                                         }
                                     )
                                     .opacity(isEnabled ? 1 : 0.72)

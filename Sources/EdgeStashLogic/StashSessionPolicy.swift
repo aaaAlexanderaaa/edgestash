@@ -190,22 +190,46 @@ public enum StashSessionPolicy {
     /// An expanded window dragged off the stash edge is released. A pin
     /// keeps the session so leave-collapse still works after the window
     /// is put back.
+    public static func shouldIgnoreGeometryMove(
+        screenSetQuiet: Bool,
+        owningDisplayConnected: Bool
+    ) -> Bool {
+        screenSetQuiet || !owningDisplayConnected
+    }
+
     public static func shouldDetachAfterOffEdgeMove(
         isPinned: Bool,
-        stillOnEdge: Bool
+        stillOnEdge: Bool,
+        owningDisplayConnected: Bool = true,
+        screenSetQuiet: Bool = false
     ) -> Bool {
-        !isPinned && !stillOnEdge
+        if shouldIgnoreGeometryMove(
+            screenSetQuiet: screenSetQuiet,
+            owningDisplayConnected: owningDisplayConnected
+        ) {
+            return false
+        }
+        return !isPinned && !stillOnEdge
     }
 
     /// Mission Control (and other space exposés) can drag a collapsed
     /// window off its parked edge. The session must release so the
-    /// window becomes idle and capturable on its new display.
+    /// window becomes idle and capturable on its new display. A vanished
+    /// display or a screen-set quiet period is not that drag.
     public static func shouldReleaseCollapsedAfterExternalMove(
         isCollapsed: Bool,
         isBusy: Bool,
-        stillParkedOnOwningEdge: Bool
+        stillParkedOnOwningEdge: Bool,
+        owningDisplayConnected: Bool = true,
+        screenSetQuiet: Bool = false
     ) -> Bool {
-        isCollapsed && !isBusy && !stillParkedOnOwningEdge
+        if shouldIgnoreGeometryMove(
+            screenSetQuiet: screenSetQuiet,
+            owningDisplayConnected: owningDisplayConnected
+        ) {
+            return false
+        }
+        return isCollapsed && !isBusy && !stillParkedOnOwningEdge
     }
 }
 

@@ -30,6 +30,11 @@ enum L10n {
         "apps.uniformEdges.apply": "下面已勾选的应用都改成这个方向。",
         "apps.avoidDock": "避开程序坞",
         "apps.avoidDock.note": "程序坞在哪一侧，那一侧就不收。",
+        "apps.allStashedDock": "窗口全收着时点程序坞",
+        "apps.allStashedDock.leaveClosed": "只带到前台",
+        "apps.allStashedDock.openMostRecent": "打开最近一个",
+        "apps.allStashedDock.openOnPointerDisplay": "打开当前这块屏上的",
+        "apps.allStashedDock.openAll": "全部打开",
 
         // Sides
         "side.leftOnly": "仅左侧收纳",
@@ -212,6 +217,11 @@ enum L10n {
         "apps.uniformEdges.apply": "Enabled apps below all use this side.",
         "apps.avoidDock": "Keep off the Dock",
         "apps.avoidDock.note": "Whichever side the Dock is on will not stash.",
+        "apps.allStashedDock": "When every window is stashed, a Dock click",
+        "apps.allStashedDock.leaveClosed": "Bring the app forward",
+        "apps.allStashedDock.openMostRecent": "Open the most recent stash",
+        "apps.allStashedDock.openOnPointerDisplay": "Open stashes on this display",
+        "apps.allStashedDock.openAll": "Open all stashes",
 
         // Sides
         "side.leftOnly": "Left side only",
@@ -412,6 +422,11 @@ extension L10n {
     static var appsUniformEdgesApply: String { text("apps.uniformEdges.apply") }
     static var appsAvoidDock: String { text("apps.avoidDock") }
     static var appsAvoidDockNote: String { text("apps.avoidDock.note") }
+    static var appsAllStashedDock: String { text("apps.allStashedDock") }
+    static var appsAllStashedDockLeaveClosed: String { text("apps.allStashedDock.leaveClosed") }
+    static var appsAllStashedDockOpenMostRecent: String { text("apps.allStashedDock.openMostRecent") }
+    static var appsAllStashedDockOpenOnPointerDisplay: String { text("apps.allStashedDock.openOnPointerDisplay") }
+    static var appsAllStashedDockOpenAll: String { text("apps.allStashedDock.openAll") }
 
     static var sideLeftOnly: String { text("side.leftOnly") }
     static var sideRightOnly: String { text("side.rightOnly") }

@@ -59,6 +59,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         trustTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             self?.reconcileEngineTrust()
         }
+        let workspace = NSWorkspace.shared.notificationCenter
+        workspace.addObserver(
+            self,
+            selector: #selector(macWillSleep),
+            name: NSWorkspace.willSleepNotification,
+            object: nil
+        )
+        workspace.addObserver(
+            self,
+            selector: #selector(macDidWake),
+            name: NSWorkspace.didWakeNotification,
+            object: nil
+        )
+        workspace.addObserver(
+            self,
+            selector: #selector(macScreensDidWake),
+            name: NSWorkspace.screensDidWakeNotification,
+            object: nil
+        )
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -133,6 +152,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if choice == .alertFirstButtonReturn {
             AccessibilityGrant.openSystemSettings()
         }
+    }
+
+    @objc private func macWillSleep() {
+        engine?.noteMacWillSleep()
+    }
+
+    @objc private func macDidWake() {
+        engine?.noteMacDidWake()
+    }
+
+    @objc private func macScreensDidWake() {
+        engine?.noteMacScreensDidWake()
     }
 
     @objc private func quitApp() {

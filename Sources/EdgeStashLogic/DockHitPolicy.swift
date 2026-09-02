@@ -122,6 +122,35 @@ public enum DockHitPolicy {
     }
 }
 
+public enum DockItemKind: Equatable {
+    case applicationIcon
+    case windowThumbnail
+    case other
+}
+
+/// Dock AX items: the app icon title matches the running name; a minimized
+/// window tile and a peek thumbnail use the window title instead.
+public enum DockItemPolicy {
+    public static let applicationSubrole = "AXApplicationDockItem"
+    public static let minimizedWindowSubrole = "AXMinimizedWindowDockItem"
+
+    public static func kind(
+        subrole: String?,
+        title: String?,
+        appLocalizedName: String?
+    ) -> DockItemKind {
+        if subrole == minimizedWindowSubrole { return .windowThumbnail }
+        if subrole == applicationSubrole { return .applicationIcon }
+        if let title, let appLocalizedName, !appLocalizedName.isEmpty, title == appLocalizedName {
+            return .applicationIcon
+        }
+        if let title, !title.isEmpty, title != appLocalizedName {
+            return .windowThumbnail
+        }
+        return .other
+    }
+}
+
 private extension DockHitPolicy {
     enum Rail {
         case bottom

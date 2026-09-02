@@ -1,4 +1,5 @@
 import AppKit
+import EdgeStashLogic
 import SwiftUI
 
 /// One managed application inside the Apps page: identity on the first line,
@@ -10,8 +11,10 @@ struct StashAppRow: View {
     let colorName: String
     let snapSide: String
     let blockedDockSide: String?
+    let allStashedDock: AllStashedDockAction?
     let onColorChange: (String) -> Void
     let onSnapSideChange: (String) -> Void
+    let onAllStashedDockChange: (AllStashedDockAction) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -52,6 +55,29 @@ struct StashAppRow: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 GlassTintPicker(colorName: colorName, onColorChange: onColorChange)
+
+                if let allStashedDock {
+                    HStack(alignment: .center, spacing: 12) {
+                        Text(L10n.appsAllStashedDock)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 8)
+                        FieldMenu(
+                            title: allStashedDockLabel(allStashedDock),
+                            minWidth: allStashedDockFieldWidth,
+                            alignment: .trailing,
+                            choices: AllStashedDockAction.allCases.map { action in
+                                MenuChoice(
+                                    title: allStashedDockLabel(action),
+                                    isSelected: action == allStashedDock
+                                ) {
+                                    onAllStashedDockChange(action)
+                                }
+                            }
+                        )
+                    }
+                }
 
                 if let note = dockConflictNote(for: snapSide, dockSide: blockedDockSide) {
                     Label {

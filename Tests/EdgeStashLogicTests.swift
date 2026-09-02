@@ -1193,6 +1193,37 @@ struct EdgeStashLogicTests {
             "a collapsed window that is still parked stays managed"
         )
         expect(
+            StashSessionPolicy.shouldIgnoreGeometryMove(
+                screenSetQuiet: true,
+                owningDisplayConnected: true
+            ),
+            "a screen-set quiet period must not treat a system move as a user drag"
+        )
+        expect(
+            StashSessionPolicy.shouldIgnoreGeometryMove(
+                screenSetQuiet: false,
+                owningDisplayConnected: false
+            ),
+            "a vanished owning display must not treat the system move as a user drag"
+        )
+        expect(
+            !StashSessionPolicy.shouldDetachAfterOffEdgeMove(
+                isPinned: false,
+                stillOnEdge: false,
+                owningDisplayConnected: false
+            ),
+            "an expanded stash whose display vanished stays managed until screen-set policy runs"
+        )
+        expect(
+            !StashSessionPolicy.shouldReleaseCollapsedAfterExternalMove(
+                isCollapsed: true,
+                isBusy: false,
+                stillParkedOnOwningEdge: false,
+                screenSetQuiet: true
+            ),
+            "a collapsed stash must not release while the screen set is settling or sleeping"
+        )
+        expect(
             !FocusReturnPolicy.shouldReleaseAfterLeaveCollapse(didCollapse: false),
             "failed auto-collapse must not return focus to another app"
         )
@@ -2578,6 +2609,518 @@ struct EdgeStashLogicTests {
                 observedMinimized: false
             ) == .clearTransaction,
             "a committed expansion clears stale bookkeeping without re-minimizing the window"
+        )
+
+        let setLaptop = DisplayGeometry(
+            id: "laptop",
+            frame: CGRect(x: 0, y: 0, width: 1440, height: 900)
+        )
+        let setLeft = DisplayGeometry(
+            id: "left",
+            frame: CGRect(x: 0, y: 0, width: 1920, height: 1080)
+        )
+        let setMiddle = DisplayGeometry(
+            id: "middle",
+            frame: CGRect(x: 1920, y: 0, width: 1920, height: 1080)
+        )
+        let setRight = DisplayGeometry(
+            id: "right",
+            frame: CGRect(x: 3840, y: 0, width: 1920, height: 1080)
+        )
+        let setAdded = DisplayGeometry(
+            id: "added",
+            frame: CGRect(x: 5760, y: 0, width: 1920, height: 1080)
+        )
+        let setLeftShifted = DisplayGeometry(
+            id: "left",
+            frame: CGRect(x: 80, y: 40, width: 1920, height: 1080)
+        )
+        let setMiddleShifted = DisplayGeometry(
+            id: "middle",
+            frame: CGRect(x: 2000, y: 40, width: 1920, height: 1080)
+        )
+        let setLeftSwapped = DisplayGeometry(
+            id: "left",
+            frame: CGRect(x: 1920, y: 0, width: 1920, height: 1080)
+        )
+        let setMiddleSwapped = DisplayGeometry(
+            id: "middle",
+            frame: CGRect(x: 0, y: 0, width: 1920, height: 1080)
+        )
+        let setLeftScaled = DisplayGeometry(
+            id: "left",
+            frame: CGRect(x: 0, y: 0, width: 2560, height: 1440)
+        )
+        let setMiddleScaled = DisplayGeometry(
+            id: "middle",
+            frame: CGRect(x: 1920, y: 0, width: 1920, height: 1080)
+        )
+
+        let pairFingerprint = ScreenSetPolicy.fingerprint(displays: [setLeft, setMiddle])
+        let shiftedPairFingerprint = ScreenSetPolicy.fingerprint(
+            displays: [setLeftShifted, setMiddleShifted]
+        )
+        let swappedPairFingerprint = ScreenSetPolicy.fingerprint(
+            displays: [setLeftSwapped, setMiddleSwapped]
+        )
+        let scaledPairFingerprint = ScreenSetPolicy.fingerprint(
+            displays: [setLeftScaled, setMiddleScaled]
+        )
+        let threeFingerprint = ScreenSetPolicy.fingerprint(
+            displays: [setLeft, setMiddle, setRight]
+        )
+        let fourFingerprint = ScreenSetPolicy.fingerprint(
+            displays: [setLeft, setMiddle, setRight, setAdded]
+        )
+        let twoFingerprint = ScreenSetPolicy.fingerprint(displays: [setLeft, setMiddle])
+        let laptopFingerprint = ScreenSetPolicy.fingerprint(displays: [setLaptop])
+        let officeThreeFingerprint = ScreenSetPolicy.fingerprint(
+            displays: [
+                DisplayGeometry(id: "laptop", frame: CGRect(x: 0, y: 0, width: 1440, height: 900)),
+                DisplayGeometry(id: "ext-a", frame: CGRect(x: 1440, y: 0, width: 1920, height: 1080)),
+                DisplayGeometry(id: "ext-b", frame: CGRect(x: 3360, y: 0, width: 1920, height: 1080))
+            ]
+        )
+
+        expect(
+            pairFingerprint == shiftedPairFingerprint,
+            "an origin-shifted copy of the same two displays is the same screen set"
+        )
+        expect(
+            pairFingerprint != swappedPairFingerprint,
+            "swapping left and right of two displays is a different screen set"
+        )
+        expect(
+            pairFingerprint == scaledPairFingerprint,
+            "a resolution change that keeps who-is-left-of-whom must keep the fingerprint"
+        )
+        expect(
+            ScreenSetPolicy.classify(
+                previous: threeFingerprint,
+                current: fourFingerprint,
+                configured: [],
+                flags: ScreenSetClassifyFlags(isSleepingOrWaking: true)
+            ) == .sleep,
+            "a sleep or wake flag is sleep even when the topology also changed"
+        )
+        expect(
+            ScreenSetPolicy.classify(
+                previous: threeFingerprint,
+                current: fourFingerprint,
+                configured: [],
+                flags: ScreenSetClassifyFlags()
+            ) == .increment,
+            "adding a display without moving the existing three is increment when the four-set is not configured"
+        )
+        let returnEvent = ScreenSetPolicy.classify(
+            previous: laptopFingerprint,
+            current: officeThreeFingerprint,
+            configured: [officeThreeFingerprint],
+            flags: ScreenSetClassifyFlags()
+        )
+        expect(
+            returnEvent == .returnConfigured,
+            "laptop back to a remembered three-display set is returnConfigured"
+        )
+        expect(
+            returnEvent != .increment,
+            "laptop back to a remembered three-display set must not be increment"
+        )
+        expect(
+            ScreenSetPolicy.classify(
+                previous: threeFingerprint,
+                current: twoFingerprint,
+                configured: [threeFingerprint, twoFingerprint],
+                flags: ScreenSetClassifyFlags()
+            ) == .dropConfigured,
+            "three configured displays down to a configured two-set is dropConfigured"
+        )
+        expect(
+            ScreenSetPolicy.classify(
+                previous: threeFingerprint,
+                current: twoFingerprint,
+                configured: [threeFingerprint],
+                flags: ScreenSetClassifyFlags()
+            ) == .dropUnconfigured,
+            "three displays down to an unconfigured two-set is dropUnconfigured"
+        )
+        let scrambledTwo = ScreenSetPolicy.fingerprint(
+            displays: [
+                DisplayGeometry(id: "left", frame: CGRect(x: 0, y: 0, width: 1920, height: 1080)),
+                DisplayGeometry(id: "middle", frame: CGRect(x: 0, y: 0, width: 1920, height: 1080))
+            ]
+        )
+        expect(
+            ScreenSetPolicy.classify(
+                previous: threeFingerprint,
+                current: scrambledTwo,
+                configured: [threeFingerprint],
+                flags: ScreenSetClassifyFlags()
+            ) == .dropUnconfigured,
+            "a 3→2 unplug whose remaining frames overlap must drop, not cancel"
+        )
+        expect(
+            ScreenSetPolicy.classify(
+                previous: threeFingerprint,
+                current: laptopFingerprint,
+                configured: [threeFingerprint],
+                flags: ScreenSetClassifyFlags()
+            ) == .recover,
+            "replacing three office displays with a different laptop identity keeps those memories"
+        )
+        expect(
+            ScreenSetPolicy.classify(
+                previous: twoFingerprint,
+                current: threeFingerprint,
+                configured: [],
+                flags: ScreenSetClassifyFlags(mirrorChanged: true)
+            ) == .cancel,
+            "a hardware mirror change is cancel even when the ID count also changed"
+        )
+        expect(
+            ScreenSetPolicy.classify(
+                previous: threeFingerprint,
+                current: ScreenSetPolicy.fingerprint(
+                    displays: [
+                        DisplayGeometry(id: "left", frame: CGRect(x: 3840, y: 0, width: 1920, height: 1080)),
+                        DisplayGeometry(id: "middle", frame: CGRect(x: 1920, y: 0, width: 1920, height: 1080)),
+                        DisplayGeometry(id: "right", frame: CGRect(x: 0, y: 0, width: 1920, height: 1080))
+                    ]
+                ),
+                configured: [threeFingerprint],
+                flags: ScreenSetClassifyFlags()
+            ) == .cancel,
+            "the same three IDs with swapped left and right must cancel"
+        )
+        expect(
+            ScreenSetPolicy.classify(
+                previous: threeFingerprint,
+                current: ScreenSetPolicy.fingerprint(
+                    displays: [
+                        DisplayGeometry(id: "left", frame: CGRect(x: 3840, y: 0, width: 1920, height: 1080)),
+                        DisplayGeometry(id: "middle", frame: CGRect(x: 1920, y: 0, width: 1920, height: 1080)),
+                        DisplayGeometry(id: "right", frame: CGRect(x: 0, y: 0, width: 1920, height: 1080))
+                    ]
+                ),
+                configured: [threeFingerprint],
+                flags: ScreenSetClassifyFlags(userRearrangeLikely: false)
+            ) == .none,
+            "a same-ID relation scramble without System Settings is not cancel"
+        )
+        expect(
+            ScreenSetPolicy.classify(
+                previous: pairFingerprint,
+                current: pairFingerprint,
+                configured: [],
+                flags: ScreenSetClassifyFlags(scaleChanged: true)
+            ) == .scale,
+            "the same fingerprint with a scale flag is scale"
+        )
+        expect(
+            ScreenSetPolicy.classify(
+                previous: threeFingerprint,
+                current: threeFingerprint,
+                configured: [threeFingerprint],
+                flags: ScreenSetClassifyFlags()
+            ) == .none,
+            "identical previous and current with no flags is none"
+        )
+        expect(
+            ScreenSetPolicy.classify(
+                previous: nil,
+                current: threeFingerprint,
+                configured: [threeFingerprint],
+                flags: ScreenSetClassifyFlags()
+            ) == .none,
+            "the first observation only establishes a baseline"
+        )
+        expect(
+            ScreenSetPolicy.departedDisplayIDs(
+                previous: threeFingerprint,
+                current: twoFingerprint
+            ) == ["right"],
+            "the display that left the three-set is the departed ID"
+        )
+        expect(
+            ScreenSetPolicy.addedDisplayIDs(
+                previous: threeFingerprint,
+                current: fourFingerprint
+            ) == ["added"],
+            "the display that joined the three-set is the added ID"
+        )
+
+        let scatterDisplay = CGRect(x: 0, y: 0, width: 1440, height: 900)
+        let scatterSize = CGSize(width: 400, height: 300)
+        let scatterOrigins = ScreenSetPolicy.scatterOrigins(
+            count: 5,
+            on: scatterDisplay,
+            windowSize: scatterSize
+        )
+        expect(
+            scatterOrigins.count == 5,
+            "scatter must return one origin per window"
+        )
+        let scatterOriginsAreUnique = scatterOrigins.indices.allSatisfy { index in
+            !scatterOrigins[(index + 1)...].contains(scatterOrigins[index])
+        }
+        expect(
+            scatterOriginsAreUnique,
+            "scatter origins must all be distinct"
+        )
+        expect(
+            scatterOrigins.allSatisfy { origin in
+                origin.x >= scatterDisplay.minX
+                    && origin.y >= scatterDisplay.minY
+                    && origin.x + scatterSize.width <= scatterDisplay.maxX
+                    && origin.y + scatterSize.height <= scatterDisplay.maxY
+            },
+            "every scattered window must sit fully inside the display"
+        )
+        expect(
+            ScreenSetPolicy.scatterOrigins(
+                count: 0,
+                on: scatterDisplay,
+                windowSize: scatterSize
+            ).isEmpty,
+            "scatter of zero windows is empty"
+        )
+        let singleScatter = ScreenSetPolicy.scatterOrigins(
+            count: 1,
+            on: scatterDisplay,
+            windowSize: scatterSize
+        )
+        expect(
+            singleScatter.count == 1 && singleScatter[0] != .zero,
+            "a single scatter origin is a comfortable on-desktop point, not the display corner"
+        )
+
+        expect(
+            StashActivationPolicy.decision(
+                kind: .dockAppIcon,
+                hasOnDesktopWindow: true,
+                allStandardWindowsStashed: false,
+                allStashedDock: .openAll
+            ) == .raiseOnDesktopOnly,
+            "a Dock icon click with mixed on-desktop and stashed windows raises only the on-desktop windows"
+        )
+        expect(
+            StashActivationPolicy.decision(
+                kind: .dockAppIcon,
+                hasOnDesktopWindow: false,
+                allStandardWindowsStashed: true,
+                allStashedDock: StashActivationPolicy.resolvedDockAction(nil)
+            ) == .doNotOpenStash,
+            "all stashed plus the default Dock action must leave stashes closed"
+        )
+        expect(
+            StashActivationPolicy.decision(
+                kind: .showAllWindows,
+                hasOnDesktopWindow: true,
+                allStandardWindowsStashed: false,
+                allStashedDock: .leaveClosed
+            ) == .openAllStashes,
+            "show all windows opens every stash of that app"
+        )
+        expect(
+            StashActivationPolicy.decision(
+                kind: .dockWindowThumbnail,
+                hasOnDesktopWindow: true,
+                allStandardWindowsStashed: false,
+                allStashedDock: .leaveClosed
+            ) == .openThumbnail,
+            "a Dock window thumbnail opens that one stash"
+        )
+        expect(
+            StashActivationPolicy.resolvedDockAction(nil) == .leaveClosed,
+            "a missing per-app Dock action defaults to leaveClosed"
+        )
+        expect(
+            StashActivationPolicy.decision(
+                kind: .commandTab,
+                hasOnDesktopWindow: true,
+                allStandardWindowsStashed: false,
+                allStashedDock: .openAll
+            ) == .raiseOnDesktopOnly,
+            "Cmd-Tab with an on-desktop window must not open a stash"
+        )
+        expect(
+            StashActivationPolicy.decision(
+                kind: .dockAppIcon,
+                hasOnDesktopWindow: false,
+                allStandardWindowsStashed: true,
+                allStashedDock: .openAll
+            ) == .openAllStashes,
+            "all stashed plus openAll opens every stash"
+        )
+        expect(
+            StashActivationPolicy.decision(
+                kind: .ownedReveal,
+                hasOnDesktopWindow: false,
+                allStandardWindowsStashed: true,
+                allStashedDock: .openAll
+            ) == .doNotOpenStash,
+            "a rail, beacon, or shortcut reveal must not open sibling stashes"
+        )
+        expect(
+            ShowAllWindowsKeyPolicy.matchesShowAll(
+                keyCode: ShowAllWindowsKeyPolicy.downArrow,
+                control: true,
+                command: false,
+                option: false
+            ),
+            "Control-Down is show-all for the frontmost app"
+        )
+        expect(
+            ShowAllWindowsKeyPolicy.frontmostAppOnly(keyCode: ShowAllWindowsKeyPolicy.downArrow),
+            "Control-Down addresses only the frontmost app"
+        )
+        expect(
+            !ShowAllWindowsKeyPolicy.frontmostAppOnly(keyCode: ShowAllWindowsKeyPolicy.upArrow),
+            "Control-Up is Mission Control and addresses every app with a stash"
+        )
+        expect(
+            !ShowAllWindowsKeyPolicy.matchesShowAll(
+                keyCode: ShowAllWindowsKeyPolicy.downArrow,
+                control: true,
+                command: true,
+                option: false
+            ),
+            "Command-Control-Down is not show-all"
+        )
+        expect(
+            DockItemPolicy.kind(
+                subrole: DockItemPolicy.applicationSubrole,
+                title: "Terminal",
+                appLocalizedName: "Terminal"
+            ) == .applicationIcon,
+            "an application Dock item is the app icon"
+        )
+        expect(
+            DockItemPolicy.kind(
+                subrole: DockItemPolicy.minimizedWindowSubrole,
+                title: "server.log",
+                appLocalizedName: "Terminal"
+            ) == .windowThumbnail,
+            "a minimized Dock tile is that window's thumbnail"
+        )
+        expect(
+            DockItemPolicy.kind(
+                subrole: nil,
+                title: "server.log",
+                appLocalizedName: "Terminal"
+            ) == .windowThumbnail,
+            "a Dock title that is not the app name is a window thumbnail"
+        )
+        expect(
+            ScreenSetSettlePolicy.decision(
+                sleepingAndNotWakePass: true,
+                currentMatchesLastObserved: true,
+                elapsedSinceScheduled: 3,
+                scheduledDelay: 3
+            ) == .ignoreSleepBlip,
+            "sleeping observations must not classify as unplug"
+        )
+        expect(
+            ScreenSetSettlePolicy.decision(
+                sleepingAndNotWakePass: false,
+                currentMatchesLastObserved: false,
+                elapsedSinceScheduled: 3,
+                scheduledDelay: 3
+            ) == .reschedule,
+            "a fingerprint that moved again must wait for another quiet interval"
+        )
+        expect(
+            ScreenSetSettlePolicy.decision(
+                sleepingAndNotWakePass: false,
+                currentMatchesLastObserved: true,
+                elapsedSinceScheduled: 30,
+                scheduledDelay: 3
+            ) == .sleptThrough,
+            "a settle timer that fires after a long jump is sleep, not drop"
+        )
+        expect(
+            ScreenSetSettlePolicy.decision(
+                sleepingAndNotWakePass: false,
+                currentMatchesLastObserved: true,
+                elapsedSinceScheduled: 3.1,
+                scheduledDelay: 3
+            ) == .apply,
+            "a stable fingerprint after the delay may classify"
+        )
+        expect(
+            ScreenSetSettlePolicy.delay(wakePass: false, isShrinkFromCommitted: true)
+                > ScreenSetSettlePolicy.delay(wakePass: false, isShrinkFromCommitted: false),
+            "a shrink waits longer so a late willSleep can still freeze the set"
+        )
+        expect(
+            ScreenSetSettlePolicy.wakeMatchesPreSleep(
+                preSleep: threeFingerprint,
+                current: threeFingerprint
+            ),
+            "wake onto the pre-sleep set is sleep, not unplug"
+        )
+        expect(
+            !ScreenSetSettlePolicy.wakeMatchesPreSleep(
+                preSleep: threeFingerprint,
+                current: laptopFingerprint
+            ),
+            "wake onto a different set is a real screen-set event"
+        )
+        expect(
+            ScreenSetSettlePolicy.onlyBuiltinMissing(
+                preSleepIDs: ["laptop", "ext-a", "ext-b"],
+                currentIDs: ["ext-a", "ext-b"],
+                builtinID: "laptop"
+            ),
+            "lid still closed after sleep is only the built-in missing"
+        )
+        expect(
+            !ScreenSetSettlePolicy.onlyBuiltinMissing(
+                preSleepIDs: ["laptop", "ext-a", "ext-b"],
+                currentIDs: ["laptop"],
+                builtinID: "laptop"
+            ),
+            "wake onto the laptop alone is not lid-still-closed"
+        )
+        expect(
+            ScreenSetSettlePolicy.wakeDecision(
+                preSleepIDs: ["laptop", "ext-a", "ext-b"],
+                currentIDs: ["laptop"],
+                currentIsConfigured: false,
+                onlyBuiltinMissing: false,
+                subsetHoldElapsed: 1
+            ) == .waitLonger,
+            "a smaller set right after wake must wait for enumeration"
+        )
+        expect(
+            ScreenSetSettlePolicy.wakeDecision(
+                preSleepIDs: ["laptop", "ext-a", "ext-b"],
+                currentIDs: ["ext-a", "ext-b"],
+                currentIsConfigured: false,
+                onlyBuiltinMissing: true,
+                subsetHoldElapsed: 5
+            ) == .keepPreSleep,
+            "wake with the lid still closed must not drop the pre-sleep placement"
+        )
+        expect(
+            ScreenSetSettlePolicy.wakeDecision(
+                preSleepIDs: ["laptop", "ext-a", "ext-b"],
+                currentIDs: ["laptop"],
+                currentIsConfigured: true,
+                onlyBuiltinMissing: false,
+                subsetHoldElapsed: 5
+            ) == .keepPreSleep,
+            "wake onto a remembered laptop-only set must not apply that layout"
+        )
+        expect(
+            ScreenSetSettlePolicy.wakeDecision(
+                preSleepIDs: ["laptop", "ext-a", "ext-b"],
+                currentIDs: ["laptop", "ext-a", "ext-b"],
+                currentIsConfigured: true,
+                onlyBuiltinMissing: false,
+                subsetHoldElapsed: 0
+            ) == .sameSet,
+            "wake onto the pre-sleep IDs is the same set"
         )
 
         if failed > 0 {

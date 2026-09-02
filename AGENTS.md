@@ -6,8 +6,11 @@ apply to human contributors and coding agents.
 ## Read order
 
 1. `docs/contracts/edgestash.md` and `docs/contracts/local-first.md`.
-2. `docs/design/logical-display-and-seam-beacon.md` — current surface.
-3. `docs/design/glass-signal-and-repeatable-seam.md` — accepted 5pt glass
+2. `docs/contracts/screen-set-and-window-life.md` — accepted target for
+   screen-set memory and which actions open a stash. Live code follows
+   that target; owner multi-display review is still open.
+3. `docs/design/logical-display-and-seam-beacon.md` — current surface.
+4. `docs/design/glass-signal-and-repeatable-seam.md` — accepted 5pt glass
    chrome. Owner perceptual review is still open.
 
 `docs/plans/2026-08-29-edgestash.md` is historical. It is not current

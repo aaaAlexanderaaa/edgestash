@@ -1,9 +1,11 @@
 import SwiftUI
+import EdgeStashLogic
 
 let snapSideChoices: [String] = ["left", "right", "both"]
 
 let defaultsFieldWidth: CGFloat = 176
 let snapFieldWidth: CGFloat = 172
+let allStashedDockFieldWidth: CGFloat = 196
 
 func snapSideLabel(_ key: String) -> String {
     switch key {
@@ -73,5 +75,18 @@ private func dockModeText(_ mode: DockClearanceMode, side: String?) -> String {
         return L10n.dockAtRight
     case .bottom:
         return L10n.dockAtBottom
+    }
+}
+
+func allStashedDockLabel(_ action: AllStashedDockAction) -> String {
+    switch action {
+    case .leaveClosed:
+        return L10n.appsAllStashedDockLeaveClosed
+    case .openMostRecent:
+        return L10n.appsAllStashedDockOpenMostRecent
+    case .openOnPointerDisplay:
+        return L10n.appsAllStashedDockOpenOnPointerDisplay
+    case .openAll:
+        return L10n.appsAllStashedDockOpenAll
     }
 }

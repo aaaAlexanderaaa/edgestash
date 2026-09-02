@@ -69,15 +69,52 @@ enum StashRescue {
         }
 
         let queue = preferences.rescueDossiers.sorted { $0.recordedAt < $1.recordedAt }
+        let geometries = DisplayCatalog.adjacencyGeometries()
+        var onSet: [RescueDossier] = []
+        var offSet: [RescueDossier] = []
         for dossier in queue {
+            if displayStillPresent(dossier.placement.display.rect, in: geometries) {
+                onSet.append(dossier)
+            } else {
+                offSet.append(dossier)
+            }
+        }
+        for dossier in onSet {
             _ = recover(dossier, liveHolds: liveHolds)
+        }
+        let scatterOrigins: [CGPoint]
+        if let host = geometries.max(by: {
+            $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height
+        }), !offSet.isEmpty {
+            let size = offSet.first.flatMap { $0.placement.frame.rect?.size } ?? CGSize(width: 640, height: 480)
+            scatterOrigins = ScreenSetPolicy.scatterOrigins(
+                count: offSet.count,
+                on: host.frame,
+                windowSize: size
+            )
+        } else {
+            scatterOrigins = []
+        }
+        for (index, dossier) in offSet.enumerated() {
+            let origin = index < scatterOrigins.count ? scatterOrigins[index] : scatterOrigins.last
+            _ = recover(dossier, liveHolds: liveHolds, scatterOrigin: origin)
+        }
+    }
+
+    private static func displayStillPresent(_ saved: CGRect?, in geometries: [DisplayGeometry]) -> Bool {
+        guard let saved else { return false }
+        let tolerance = DisplayEdgePolicy.adjacencyTolerance
+        return geometries.contains { geometry in
+            let visible = saved.intersection(geometry.frame)
+            return visible.width > tolerance && visible.height > tolerance
         }
     }
 
     @discardableResult
     static func recover(
         _ dossier: RescueDossier,
-        liveHolds: [SessionLifecyclePolicy.LiveRescueHold] = []
+        liveHolds: [SessionLifecyclePolicy.LiveRescueHold] = [],
+        scatterOrigin: CGPoint? = nil
     ) -> Bool {
         guard SessionLifecyclePolicy.shouldRestoreRescueRecord(
             processID: dossier.subject.processID,
@@ -92,8 +129,10 @@ enum StashRescue {
             guard let (element, windowID, frame) = locateRecordedWindow(in: appElement, dossier: dossier) else {
                 continue
             }
-            if let savedDisplay = dossier.placement.display.rect,
-               RescueMatching.shouldSkipRestoreBecauseAlreadyVisible(frame: frame, display: savedDisplay) {
+            if scatterOrigin == nil,
+               let savedDisplay = dossier.placement.display.rect,
+               RescueMatching.shouldSkipRestoreBecauseAlreadyVisible(frame: frame, display: savedDisplay),
+               displayStillPresent(savedDisplay, in: DisplayCatalog.adjacencyGeometries()) {
                 _ = StashSurface.setAlpha(windowID: windowID, alpha: 1)
                 Preferences.shared.removeRescueDossier(
                     processID: dossier.subject.processID,
@@ -101,7 +140,7 @@ enum StashRescue {
                 )
                 return true
             }
-            let placement = placementFrame(for: dossier, current: frame)
+            let placement = placementFrame(for: dossier, current: frame, scatterOrigin: scatterOrigin)
             let alphaRestored = StashSurface.setAlpha(windowID: windowID, alpha: 1)
             let unminimized: Bool
             if StashAX.isMinimized(element) == false {
@@ -196,10 +235,19 @@ enum StashRescue {
 
     private static let titleBarGuard: CGFloat = 28
 
-    private static func placementFrame(for dossier: RescueDossier, current: CGRect) -> CGRect {
+    private static func placementFrame(
+        for dossier: RescueDossier,
+        current: CGRect,
+        scatterOrigin: CGPoint? = nil
+    ) -> CGRect {
         guard let visible = dossier.placement.frame.rect,
               let display = dossier.placement.display.rect else {
             return current
+        }
+        let width = savedDimension(visible.width, or: current.width)
+        let height = savedDimension(visible.height, or: current.height)
+        if let scatterOrigin {
+            return CGRect(origin: scatterOrigin, size: CGSize(width: width, height: height))
         }
         let screens = NSScreen.screens
         let primaryHeight = DisplayCatalog.primaryHeight(screens: screens)
@@ -210,9 +258,19 @@ enum StashRescue {
             )
         }.map {
             StashGeometryPolicy.cgRect(fromAppKit: $0.frame, primaryHeight: primaryHeight)
-        } ?? display
-        let width = savedDimension(visible.width, or: current.width)
-        let height = savedDimension(visible.height, or: current.height)
+        }
+        guard let screenFrame else {
+            let geometries = DisplayCatalog.adjacencyGeometries(screens: screens)
+            if let host = geometries.first {
+                let origin = ScreenSetPolicy.scatterOrigins(
+                    count: 1,
+                    on: host.frame,
+                    windowSize: CGSize(width: width, height: height)
+                ).first ?? host.frame.origin
+                return CGRect(origin: origin, size: CGSize(width: width, height: height))
+            }
+            return current
+        }
         let restInset = edgeRestInset(for: screenFrame.width)
         let clampedY = min(
             max(dossier.landing.point.y, screenFrame.minY + titleBarGuard),

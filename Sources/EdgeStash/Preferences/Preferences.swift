@@ -117,6 +117,10 @@ final class Preferences: ObservableObject {
         didSet { persistUserChange() }
     }
 
+    @Published var storedScreenSets: [StoredScreenSet] = [] {
+        didSet { persistUserChange() }
+    }
+
     @Published private(set) var displayTopologyRevision: UInt = 0
 
     /// `didSet` on loaded fields must not notify while `shared` is still
@@ -192,6 +196,9 @@ final class Preferences: ObservableObject {
         if let rescues = stored.rescues {
             self.rescueDossiers = rescues
         }
+        if let screenSets = stored.screenSets {
+            self.storedScreenSets = screenSets
+        }
 
         loadLaunchAtLogin(storedLaunchFlag: stored.launchAtLogin)
 
@@ -223,6 +230,7 @@ final class Preferences: ObservableObject {
         stored.edgeMap = displayEdgePreferences
         stored.ghosts = ghostedWindowIDs
         stored.rescues = rescueDossiers
+        stored.screenSets = storedScreenSets
         return stored
     }
 
@@ -330,7 +338,8 @@ final class Preferences: ObservableObject {
             alpha: existing?.alpha,
             sides: Self.normalizeSnapSide(existing?.sides),
             chord: existing?.chord,
-            chordScope: existing?.chordScope
+            chordScope: existing?.chordScope,
+            allStashedDock: existing?.allStashedDock
         )
     }
 
@@ -455,6 +464,61 @@ final class Preferences: ObservableObject {
         appProfiles[bundleID] = setting
     }
 
+    func currentFingerprint() -> ScreenSetFingerprint {
+        ScreenSetPolicy.fingerprint(displays: DisplayCatalog.adjacencyGeometries())
+    }
+
+    func configuredFingerprints() -> Set<ScreenSetFingerprint> {
+        Set(storedScreenSets.map(\.fingerprint))
+    }
+
+    func rememberCurrentPlacement(slots: [StoredScreenSetSlot]) {
+        let fingerprint = currentFingerprint()
+        guard !slots.isEmpty else { return }
+        var next = storedScreenSets
+        if let index = next.firstIndex(where: { $0.fingerprint == fingerprint }) {
+            next[index].slots = slots
+        } else {
+            next.append(StoredScreenSet(fingerprint: fingerprint, slots: slots))
+        }
+        storedScreenSets = next
+    }
+
+    func slots(for fingerprint: ScreenSetFingerprint) -> [StoredScreenSetSlot] {
+        storedScreenSets.first { $0.fingerprint == fingerprint }?.slots ?? []
+    }
+
+    func discardScreenSet(fingerprint: ScreenSetFingerprint) {
+        let next = storedScreenSets.filter { $0.fingerprint != fingerprint }
+        if next != storedScreenSets {
+            storedScreenSets = next
+        }
+    }
+
+    func forgetScreenSetSlot(windowNumber: UInt32, bundleID: String) {
+        var next = storedScreenSets
+        for index in next.indices {
+            next[index].slots.removeAll {
+                $0.windowNumber == windowNumber && $0.bundleID == bundleID
+            }
+        }
+        next.removeAll { $0.slots.isEmpty }
+        if next != storedScreenSets {
+            storedScreenSets = next
+        }
+    }
+
+    func allStashedDockAction(for bundleID: String) -> AllStashedDockAction {
+        let stored = appProfiles[bundleID]?.allStashedDock.flatMap(AllStashedDockAction.init(rawValue:))
+        return StashActivationPolicy.resolvedDockAction(stored)
+    }
+
+    func setAllStashedDockAction(_ action: AllStashedDockAction, bundleID: String) {
+        guard var setting = appProfiles[bundleID] else { return }
+        setting.allStashedDock = action.rawValue
+        appProfiles[bundleID] = setting
+    }
+
     func setTransientChord(modifiers: UInt, keyCode: UInt16) {
         transientChordModifiers = AppShortcutPolicy.normalizedModifiers(modifiers)
         transientChordKeyCode = keyCode
@@ -512,6 +576,7 @@ final class Preferences: ObservableObject {
     }
 
     @objc private func handleScreenParametersChange() {
+        ScreenSetCoordinator.active?.beginQuiet()
         DisplayCatalog.invalidateIdentifierCache()
         let migrated = DisplayCatalog.migratingLegacyPreferences(displayEdgePreferences)
         if migrated != displayEdgePreferences {
