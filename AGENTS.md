@@ -12,6 +12,9 @@ apply to human contributors and coding agents.
 3. `docs/design/logical-display-and-seam-beacon.md` — current surface.
 4. `docs/design/glass-signal-and-repeatable-seam.md` — accepted 5pt glass
    chrome. Owner perceptual review is still open.
+5. `docs/contracts/behavior-grammar.md` — the declared grammar of runtime
+   effects (popups, overlays, alerts) and the expectation check that verifies
+   code against it. Deviations from declared cardinality are defects.
 
 `docs/plans/2026-08-29-edgestash.md` is historical. It is not current
 execution authority.
@@ -40,12 +43,23 @@ owner-accepted contract.
 
 ## Verification
 
+When code is considered ready to commit, run the expectation check — not just
+the tests. It verifies the live app against the declared behavior grammar
+(`docs/contracts/behavior-grammar.md`): every user-facing effect must be
+declared, and declared cardinalities are enforced by property tests.
+
 ```bash
-swift run EdgeStashLogicTests
+./scripts/check-expectations.sh   # structural conformance + swift run EdgeStashLogicTests
 ```
 
-A Debug build of `EdgeStash.xcodeproj` is required for app-target changes.
-Neither command is owner perceptual review.
+Passing tests alone is not sufficient: a green suite with an out-of-grammar
+popup, or an effect that fires more often than declared, is still a failure.
+When the check reports a deviation, resolve it deliberately — fix the code, or
+change the declared expectation in the grammar (and say which, and why).
+
+`swift run EdgeStashLogicTests` still runs the logic suite on its own. A Debug
+build of `EdgeStash.xcodeproj` is required for app-target changes. None of these
+commands is owner perceptual review.
 
 ## Owner-runnable app
 

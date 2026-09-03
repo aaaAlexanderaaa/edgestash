@@ -16,38 +16,27 @@ final class StashMultiWindowTip {
     private static let readSeconds = 20
 
     private var panel: NSPanel?
-    private var mutedUntilRelaunch = false
+    private var coordinator = MultiWindowTipCoordinator()
     private var expiry: Date?
     private var ticker: Timer?
     private var model = TipModel()
 
     func consider(appName: String, collapsedCount: Int) {
-        if MultiWindowTipPolicy.shouldDismiss(collapsedCount: collapsedCount) {
-            hide()
-            return
-        }
-        guard MultiWindowTipPolicy.shouldPresent(
-            collapsedCount: collapsedCount,
-            suppressedPermanently: Preferences.shared.mutedMultiWindowAdvice,
-            suppressedThisLaunch: mutedUntilRelaunch,
-            alreadyVisible: panel?.isVisible == true
-        ) else {
-            return
-        }
-        hide()
-        model.seconds = Self.readSeconds
-        expiry = Date().addingTimeInterval(TimeInterval(Self.readSeconds))
-        present(appName: appName)
+        apply(
+            coordinator.onSync(
+                collapsedCount: collapsedCount,
+                suppressedPermanently: Preferences.shared.mutedMultiWindowAdvice
+            ),
+            appName: appName
+        )
     }
 
     func resetForLaunch() {
-        mutedUntilRelaunch = false
-        hide()
+        apply(coordinator.onRelaunch(), appName: nil)
     }
 
     func hideForSpaceChange() {
-        guard MultiWindowTipPolicy.shouldHideOnSpaceChange() else { return }
-        hide()
+        apply(coordinator.onSpaceChange(), appName: nil)
     }
 
     private func present(appName: String) {
@@ -116,17 +105,33 @@ final class StashMultiWindowTip {
     }
 
     private func close(_ outcome: TipOutcome) {
+        let dismissal: MultiWindowTipCoordinator.Dismissal
         switch outcome {
-        case .neverAgain:
-            Preferences.shared.mutedMultiWindowAdvice = true
-        case .remindLater:
-            mutedUntilRelaunch = true
-        case .timedOut:
-            if MultiWindowTipPolicy.shouldMuteUntilRelaunch(after: .timedOut) {
-                mutedUntilRelaunch = true
-            }
+        case .neverAgain: dismissal = .neverAgain
+        case .remindLater: dismissal = .remindLater
+        case .timedOut: dismissal = .timedOut
         }
-        hide()
+        apply(coordinator.onDismiss(dismissal), appName: nil)
+    }
+
+    /// Translate a coordinator decision into live presentation. All present/hide
+    /// paths route through here so the tip's cardinality matches the grammar.
+    private func apply(_ action: MultiWindowTipCoordinator.Action, appName: String?) {
+        switch action {
+        case .none:
+            break
+        case .present:
+            guard let appName else { return }
+            hide()
+            model.seconds = Self.readSeconds
+            expiry = Date().addingTimeInterval(TimeInterval(Self.readSeconds))
+            present(appName: appName)
+        case .hide:
+            hide()
+        case .hideAndMutePermanently:
+            Preferences.shared.mutedMultiWindowAdvice = true
+            hide()
+        }
     }
 
     private func hide() {

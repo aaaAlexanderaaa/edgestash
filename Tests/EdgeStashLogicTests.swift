@@ -3123,6 +3123,82 @@ struct EdgeStashLogicTests {
             "wake onto the pre-sleep IDs is the same set"
         )
 
+        // MARK: Behavior grammar — multi_window_tip cardinality invariants.
+        // Declared production: sync(count>=2) x !mutedPermanently x !quietUntilRelaunch
+        //   -> present @ at-most-once-per-launch. Transient hides (Space change,
+        //   collapsed count dipping below two) must NOT re-present.
+        do {
+            // Happy path: present exactly once, then quiet on the next tick.
+            var c = MultiWindowTipCoordinator()
+            expect(
+                c.onSync(collapsedCount: 2, suppressedPermanently: false) == .present,
+                "two collapsed stashes present the tip once"
+            )
+            expect(
+                c.onSync(collapsedCount: 3, suppressedPermanently: false) == .none,
+                "a still-standing multi-window condition does not re-present on the next tick"
+            )
+
+            // The reported bug: a Space change hides the panel but must not let
+            // the repeating sync tick re-present it.
+            expect(c.onSpaceChange() == .hide, "a Space change hides the visible tip")
+            expect(
+                c.onSync(collapsedCount: 2, suppressedPermanently: false) == .none,
+                "a Space change must not cause the multi-window tip to re-present"
+            )
+
+            // The collapsed count dipping below two and returning must not
+            // re-present within the same launch.
+            expect(
+                c.onSync(collapsedCount: 1, suppressedPermanently: false) == .none,
+                "dropping below two collapsed stashes leaves nothing to hide"
+            )
+            expect(
+                c.onSync(collapsedCount: 2, suppressedPermanently: false) == .none,
+                "re-entering the two-collapsed condition must not re-present within a launch"
+            )
+        }
+        do {
+            // Permanent mute suppresses presentation entirely.
+            var c = MultiWindowTipCoordinator()
+            expect(
+                c.onSync(collapsedCount: 2, suppressedPermanently: true) == .none,
+                "a permanently muted multi-window tip never presents"
+            )
+        }
+        do {
+            // Relaunch clears the per-launch quiet so a new launch may advise again.
+            var c = MultiWindowTipCoordinator()
+            _ = c.onSync(collapsedCount: 2, suppressedPermanently: false)
+            _ = c.onRelaunch()
+            expect(
+                c.onSync(collapsedCount: 2, suppressedPermanently: false) == .present,
+                "a fresh launch may present the multi-window tip again"
+            )
+        }
+        do {
+            // "Never again" hides and asks the live layer to persist the mute.
+            var c = MultiWindowTipCoordinator()
+            _ = c.onSync(collapsedCount: 2, suppressedPermanently: false)
+            expect(
+                c.onDismiss(.neverAgain) == .hideAndMutePermanently,
+                "choosing never-again hides the tip and persists the permanent mute"
+            )
+        }
+        do {
+            // General invariant: across any adversarial timeline of ticks, Space
+            // changes, and count flaps within one launch, the tip presents at
+            // most once.
+            var c = MultiWindowTipCoordinator()
+            var presents = 0
+            let counts = [2, 2, 1, 2, 3, 0, 2, 2]
+            for (i, n) in counts.enumerated() {
+                if c.onSync(collapsedCount: n, suppressedPermanently: false) == .present { presents += 1 }
+                if i % 2 == 0 { _ = c.onSpaceChange() }
+            }
+            expect(presents <= 1, "the multi-window tip presents at most once per launch under any timeline")
+        }
+
         if failed > 0 {
             fputs("\(failed) test(s) failed\n", stderr)
             exit(1)
