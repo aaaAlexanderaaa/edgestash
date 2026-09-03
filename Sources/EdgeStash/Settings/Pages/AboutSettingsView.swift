@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 struct AboutPage: View {
-    private let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.3"
+    private let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.4"
 
     var body: some View {
         SettingsPageScaffold(tab: .about) {
