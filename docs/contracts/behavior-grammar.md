@@ -1,3 +1,12 @@
+---
+doc_type: contract
+status: current
+authority: normative
+implementation: implemented
+verification_status: partial
+last_reconciled: 2026-09-03
+---
+
 # Behavior grammar and the expectation check
 
 This contract exists so EdgeStash states its own runtime behavior explicitly,
@@ -31,7 +40,10 @@ Effect ::= Trigger × Guards → Action @ Cardinality   [Suppression]
   and *where it lives*.
 
 The set of declared productions **is** the product's expected behavior. Anything
-else is a deviation.
+else is a deviation. Verification is deliberately staged: every row is checked
+for a live presentation anchor, while only rows marked `executable=...` have
+their cardinality exercised by the headless suite. `structural-only` is an
+explicit coverage gap, not a claim that the row's cardinality has been proved.
 
 ## The four deviations (all are failures)
 
@@ -49,10 +61,11 @@ declared expectation (update this file):
    should.
 
 Classes 1–2 are checked structurally by the expectation checker against the
-manifest below. Classes 3–4 are checked by executable behavioral property tests
-in the AppKit-free layer (see `MultiWindowTipCoordinator` and its tests in
-`Tests/EdgeStashLogicTests.swift`), which drive scripted event timelines and
-assert the declared cardinality.
+manifest below. Classes 3–4 are checked for productions whose verification field
+names executable behavioral evidence in the AppKit-free layer. The first such
+production is `multi_window_tip`: `MultiWindowTipCoordinator` tests drive
+scripted event timelines and assert its declared cardinality. The remaining rows
+are currently `structural-only` and must not be described as cardinality-proved.
 
 ## The expectation check
 
@@ -62,9 +75,11 @@ assert the declared cardinality.
    (`orderFront`, `orderFrontRegardless`, `makeKeyAndOrderFront`, `EdgeAlert.run`,
    `runModal`) and requires each call site's enclosing `file:symbol` to be a
    declared anchor in the manifest — catching deviation classes 1 and 2.
-2. Runs `swift run EdgeStashLogicTests`, which includes the cardinality property
-   tests — catching deviation classes 3 and 4 for behavior whose decision logic
-   lives in `EdgeStashLogic`.
+2. Validates each row's verification status and confirms that every
+   `executable=FILE#MARKER` evidence anchor exists.
+3. Runs `swift run EdgeStashLogicTests`, which executes the marked cardinality
+   evidence — catching deviation classes 3 and 4 for covered behavior whose
+   decision logic lives in `EdgeStashLogic`.
 
 It runs on Linux with no macOS dependency. Perceptual sign-off (how a surface
 actually looks and animates on screen) is still an owner review on a Mac; the
@@ -79,30 +94,44 @@ Run it whenever code is considered ready to commit:
 ## Extending the grammar
 
 When you add or change a user-facing effect: add or edit its production in the
-manifest, and — if its decision logic is not already in `EdgeStashLogic` — move
-that logic into a headless coordinator/policy and cover its cardinality with a
-property test. The single knob for the multi-window advice re-entry decision is
-`MultiWindowTipCoordinator.renotifyOnReentryWithinLaunch` (currently `false`:
-the advice is once-per-launch).
+manifest. For a cardinality-bearing effect, move the decision into a headless
+coordinator/policy, add timeline evidence, and replace `structural-only` with an
+`executable=FILE#MARKER` anchor. Changing the multi-window advice from
+once-per-launch to re-entry notification is a behavior change: update this
+contract, the coordinator transitions, and their evidence together.
 
 ## Manifest (machine-readable)
 
 The checker parses the pipe-separated rows between the markers below. Columns:
-`effect_id | kind | anchor_file | anchor_symbol | cardinality | suppression | trigger`.
+`effect_id | kind | anchor_file | anchor_symbol | cardinality | suppression | trigger | verification`.
+
+`verification` is either `structural-only` or
+`executable=relative/test/file#stable marker text`. The checker verifies the
+file and marker before it runs the headless suite.
 
 <!-- BEGIN grammar-manifest -->
 ```text
-multi_window_tip | popup | Sources/EdgeStash/Overlay/StashMultiWindowTip.swift | present | once-per-launch | MultiWindowTipCoordinator.quietUntilRelaunch + Preferences.mutedMultiWindowAdvice | syncSessions 5s tick and post-capture
-seam_limitation_explanation | popup | Sources/EdgeStash/Overlay/StashMarkerWindow.swift | showDisabledExplanation | once-per-machine | Preferences.advisedSeamRevealLimitation | click a disabled seam beacon
-merge_overload_alert | alert | Sources/EdgeStash/Overlay/StashMergeCoordinator.swift | presentOverloadWarning | once-per-process | warnedOverload + Preferences.advisedStripOverload | reconcile when merge groups overload
-rescue_needs_accessibility_alert | alert | Sources/EdgeStash/AppDelegate.swift | notifyPendingRescueNeedsAccessibility | once-per-launch | pending-dossier presence | launch with pending rescue and no Accessibility trust
-modal_alert_engine | alert | Sources/EdgeStash/AppDelegate.swift | run | on-demand | caller-gated | EdgeAlert.run callers
-settings_window | window | Sources/EdgeStash/AppDelegate.swift | showSettings | on-demand | user-invoked | menu, dock reopen, or launch without trust
-settings_halo_preview | overlay | Sources/EdgeStash/Overlay/EdgeHaloWindow.swift | show | per-space-preview | HaloPreviewPolicy and settings visibility | Behavior tab edge selection
-slide_sheen | overlay | Sources/EdgeStash/Overlay/StashEffectOverlay.swift | present | per-animation | StashMotionPolicy.shouldEmitVisualEffects | slide collapse or expand
-stash_marker | overlay | Sources/EdgeStash/Overlay/StashMarkerWindow.swift | present | per-session | markerSuppressed and markerHiddenForSpace | session collapse or marker refresh
-merge_strip | overlay | Sources/EdgeStash/Overlay/StashMergeStrip.swift | present | per-group | Preferences.mergesStrips and MergeGroupPolicy | merge reconcile
-pin_control | overlay | Sources/EdgeStash/Overlay/StashPinWindow.swift | surface | hover-polled | PinControlPolicy.shouldShowControl | 0.1s leave timer while expanded
-color_tint_picker | popup | Sources/EdgeStash/Settings/Controls/ColorMenus.swift | present | on-demand | user-invoked | settings custom color selection
+multi_window_tip | popup | Sources/EdgeStash/Overlay/StashMultiWindowTip.swift | present | once-per-launch | MultiWindowTipCoordinator.quietUntilRelaunch + Preferences.mutedMultiWindowAdvice | syncSessions 5s tick and post-capture | executable=Tests/EdgeStashLogicTests.swift#multi_window_tip cardinality invariants
+seam_limitation_explanation | popup | Sources/EdgeStash/Overlay/StashMarkerWindow.swift | showDisabledExplanation | once-per-machine | Preferences.advisedSeamRevealLimitation | click a disabled seam beacon | structural-only
+merge_overload_alert | alert | Sources/EdgeStash/Overlay/StashMergeCoordinator.swift | presentOverloadWarning | once-per-process | warnedOverload + Preferences.advisedStripOverload | reconcile when merge groups overload | structural-only
+rescue_needs_accessibility_alert | alert | Sources/EdgeStash/AppDelegate.swift | notifyPendingRescueNeedsAccessibility | once-per-launch | pending-dossier presence | launch with pending rescue and no Accessibility trust | structural-only
+modal_alert_engine | alert | Sources/EdgeStash/AppDelegate.swift | run | on-demand | caller-gated | EdgeAlert.run callers | structural-only
+settings_window | window | Sources/EdgeStash/AppDelegate.swift | showSettings | on-demand | user-invoked | menu, dock reopen, or launch without trust | structural-only
+settings_halo_preview | overlay | Sources/EdgeStash/Overlay/EdgeHaloWindow.swift | show | per-space-preview | HaloPreviewPolicy and settings visibility | Behavior tab edge selection | structural-only
+slide_sheen | overlay | Sources/EdgeStash/Overlay/StashEffectOverlay.swift | present | per-animation | StashMotionPolicy.shouldEmitVisualEffects | slide collapse or expand | structural-only
+stash_marker | overlay | Sources/EdgeStash/Overlay/StashMarkerWindow.swift | present | per-session | markerSuppressed and markerHiddenForSpace | session collapse or marker refresh | structural-only
+merge_strip | overlay | Sources/EdgeStash/Overlay/StashMergeStrip.swift | present | per-group | Preferences.mergesStrips and MergeGroupPolicy | merge reconcile | structural-only
+pin_control | overlay | Sources/EdgeStash/Overlay/StashPinWindow.swift | surface | hover-polled | PinControlPolicy.shouldShowControl | 0.1s leave timer while expanded | structural-only
+color_tint_picker | popup | Sources/EdgeStash/Settings/Controls/ColorMenus.swift | present | on-demand | user-invoked | settings custom color selection | structural-only
 ```
 <!-- END grammar-manifest -->
+
+## Reconciliation log
+
+- **2026-09-03 — portable gate and honest coverage:** the structural scanner
+  now preserves its regular expression under both BSD awk and GNU awk, validates
+  manifest shape and uniqueness, and checks explicit evidence markers. The
+  manifest records one executable cardinality production and eleven
+  `structural-only` productions rather than implying all twelve have behavioral
+  proof. The multi-window launch boundary is process lifetime: Accessibility
+  engine suspension hides the tip but cannot rearm it.

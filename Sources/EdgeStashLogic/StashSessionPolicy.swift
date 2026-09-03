@@ -232,35 +232,3 @@ public enum StashSessionPolicy {
         return isCollapsed && !isBusy && !stillParkedOnOwningEdge
     }
 }
-
-public enum MultiWindowTipPolicy {
-    public static func shouldPresent(
-        collapsedCount: Int,
-        suppressedPermanently: Bool,
-        suppressedThisLaunch: Bool,
-        alreadyVisible: Bool
-    ) -> Bool {
-        collapsedCount >= 2
-            && !suppressedPermanently
-            && !suppressedThisLaunch
-            && !alreadyVisible
-    }
-
-    public enum Dismissal: Equatable {
-        case remindLater
-        case neverAgain
-        case timedOut
-    }
-
-    public static func shouldMuteUntilRelaunch(after dismissal: Dismissal) -> Bool {
-        dismissal == .remindLater || dismissal == .timedOut
-    }
-
-    public static func shouldHideOnSpaceChange() -> Bool {
-        true
-    }
-
-    public static func shouldDismiss(collapsedCount: Int) -> Bool {
-        collapsedCount < 2
-    }
-}

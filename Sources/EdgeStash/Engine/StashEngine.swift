@@ -50,7 +50,6 @@ final class StashEngine {
             self.reevaluateSeamApproach()
         }
         lastTopologyRevision = Preferences.shared.displayTopologyRevision
-        StashMultiWindowTip.shared.resetForLaunch()
         observeWorkspace()
         observeMice()
         hotkeys.onAppShortcut = { [weak self] bundleID in self?.handleAppShortcut(bundleID) }
@@ -73,6 +72,7 @@ final class StashEngine {
 
     func suspendTrustLost() {
         guard isRunning else { return }
+        StashMultiWindowTip.shared.hideForEngineSuspension()
         endSessions(sessions.map { ($0, .accessibilityLost) })
         merged.tearDown()
         teardownObservers()

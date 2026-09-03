@@ -1,5 +1,3 @@
-import Foundation
-
 /// AppKit-free state machine for the "this app has several windows stashed"
 /// advice. The live `StashMultiWindowTip` owns only presentation; every
 /// decision about *whether* to present, hide, or fall silent lives here so the
@@ -29,21 +27,10 @@ public struct MultiWindowTipCoordinator {
         case hideAndMutePermanently
     }
 
-    /// Whether re-entering the "two or more collapsed" condition after the tip
-    /// has already been shown once should present the advice again within the
-    /// same launch. Product decision: `false` (advice is once-per-launch). Flip
-    /// this single knob, and update the grammar, to make genuine re-entry
-    /// re-notify.
-    public static let renotifyOnReentryWithinLaunch = false
-
     private var visible = false
     private var quietUntilRelaunch = false
 
     public init() {}
-
-    /// Whether a tip is currently on screen (drives `alreadyVisible` guards and
-    /// tests).
-    public var isPresenting: Bool { visible }
 
     /// A periodic `syncSessions` tick or a post-capture check. `collapsedCount`
     /// is the number of collapsed stashes for one app; `suppressedPermanently`
@@ -59,7 +46,7 @@ public struct MultiWindowTipCoordinator {
         // The fix: fall silent for the rest of the launch at *present* time, not
         // only when the user dismisses or the countdown ends. This is what makes
         // the cardinality provably one-per-launch.
-        quietUntilRelaunch = !Self.renotifyOnReentryWithinLaunch
+        quietUntilRelaunch = true
         return .present
     }
 
@@ -83,11 +70,11 @@ public struct MultiWindowTipCoordinator {
         }
     }
 
-    /// Engine (re)start. Clears the per-launch quiet; the permanent mute lives in
-    /// preferences and is re-supplied through `onSync`.
-    public mutating func onRelaunch() -> Action {
-        quietUntilRelaunch = false
-        return hideIfVisible()
+    /// The Accessibility engine stopped inside the current app launch. Hide any
+    /// live panel, but keep the launch quiet: regaining trust is an engine resume,
+    /// not a process relaunch. A real relaunch constructs a new coordinator.
+    public mutating func onEngineSuspended() -> Action {
+        hideIfVisible()
     }
 
     private mutating func hideIfVisible() -> Action {

@@ -31,8 +31,8 @@ final class StashMultiWindowTip {
         )
     }
 
-    func resetForLaunch() {
-        apply(coordinator.onRelaunch(), appName: nil)
+    func hideForEngineSuspension() {
+        apply(coordinator.onEngineSuspended(), appName: nil)
     }
 
     func hideForSpaceChange() {

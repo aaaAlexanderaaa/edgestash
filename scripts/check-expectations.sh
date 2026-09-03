@@ -8,8 +8,8 @@
 #   1. Structural conformance (deviation classes 1 & 2): every user-facing
 #      presentation primitive in Sources/EdgeStash must map to a declared effect
 #      anchor, and every declared anchor must exist in the code.
-#   2. Behavioral conformance (deviation classes 3 & 4): runs the AppKit-free
-#      property tests, which assert declared cardinalities on scripted timelines.
+#   2. Behavioral conformance (deviation classes 3 & 4): validates executable
+#      evidence anchors, then runs the AppKit-free timeline tests.
 #
 # Runs on Linux; no macOS dependency. Perceptual review stays an owner step.
 
@@ -30,36 +30,61 @@ problem() { printf 'DEVIATION: %s\n' "$*" >&2; fail=1; }
 [ -f "$grammar" ] || { echo "missing grammar: $grammar" >&2; exit 2; }
 [ -d "$src" ] || { echo "missing source tree: $src" >&2; exit 2; }
 
-# --- Declared anchors: "file\tsymbol" from the manifest block ---------------
-declared=$(awk '
+# --- Parse and validate the machine-readable manifest -----------------------
+manifest=$(awk '
+  function trim(v) { gsub(/^[ \t]+|[ \t]+$/, "", v); return v }
   /<!-- BEGIN grammar-manifest -->/ { on=1; next }
   /<!-- END grammar-manifest -->/   { on=0 }
   on && index($0, "|") {
     n=split($0, c, "|")
-    if (n >= 4) {
-      f=c[3]; s=c[4]
-      gsub(/^[ \t]+|[ \t]+$/, "", f); gsub(/^[ \t]+|[ \t]+$/, "", s)
-      if (f != "" && s != "") print f "\t" s
+    if (n != 8) {
+      print "__INVALID__\t" NR "\texpected 8 columns, found " n
+      next
     }
+    for (i=1; i<=8; i++) c[i]=trim(c[i])
+    for (i=1; i<=8; i++) {
+      if (c[i] == "") {
+        print "__INVALID__\t" NR "\tcolumn " i " is empty"
+        next
+      }
+    }
+    print c[1] "\t" c[2] "\t" c[3] "\t" c[4] "\t" c[5] "\t" c[6] "\t" c[7] "\t" c[8]
   }
-' "$grammar" | sort -u)
+' "$grammar")
+
+invalid_rows=$(printf '%s\n' "$manifest" | awk -F '\t' '$1 == "__INVALID__" { print "line " $2 ": " $3 }')
+[ -z "$invalid_rows" ] || { printf 'invalid grammar manifest: %s\n' "$invalid_rows" >&2; exit 2; }
+
+effects=$(printf '%s\n' "$manifest" | awk -F '\t' 'NF == 8 { print $1 }')
+duplicate_effects=$(printf '%s\n' "$effects" | sort | uniq -d)
+[ -z "$duplicate_effects" ] || { printf 'duplicate effect id(s):\n%s\n' "$duplicate_effects" >&2; exit 2; }
+
+declared=$(printf '%s\n' "$manifest" | awk -F '\t' 'NF == 8 { print $3 "\t" $4 }' | sort -u)
+duplicate_anchors=$(printf '%s\n' "$manifest" | awk -F '\t' 'NF == 8 { print $3 "\t" $4 }' | sort | uniq -d)
+[ -z "$duplicate_anchors" ] || { printf 'duplicate implementation anchor(s):\n%s\n' "$duplicate_anchors" >&2; exit 2; }
 
 [ -n "$declared" ] || { echo "no declared anchors parsed from $grammar" >&2; exit 2; }
 
 # --- Observed anchors: enclosing file:symbol of each primitive call site -----
+matching_files=$(grep -rlE "$primitives" "$src" 2>/dev/null || true)
 observed=$(
   # shellcheck disable=SC2016
-  grep -rlE "$primitives" "$src" 2>/dev/null | while IFS= read -r f; do
-    awk -v FILE="$f" -v PRIM="$primitives" '
+  while IFS= read -r f; do
+    [ -z "$f" ] && continue
+    # Passing a backslash-bearing ERE through awk -v is not portable: BSD awk
+    # consumes the escapes before the dynamic match. ENVIRON preserves the ERE
+    # on both BSD awk (macOS) and GNU awk (Linux).
+    PRIM="$primitives" awk -v FILE="$f" '
+      BEGIN { primitive=ENVIRON["PRIM"] }
       { if (match($0, /func +[A-Za-z_][A-Za-z0-9_]*/)) fn=substr($0, RSTART+5, RLENGTH-5) }
       {
         line=$0
         sub(/\/\/.*$/, "", line)                     # drop trailing comments
         if (line ~ /func /) next                      # skip declarations
-        if (line ~ PRIM) print FILE "\t" (fn=="" ? "<file-scope>" : fn)
+        if (line ~ primitive) print FILE "\t" (fn=="" ? "<file-scope>" : fn)
       }
     ' "$f"
-  done | sort -u
+  done <<< "$matching_files" | sort -u
 )
 
 # --- Class 2: observed effect with no declared production -------------------
@@ -79,12 +104,50 @@ while IFS= read -r pair; do
 done <<< "$declared"
 
 if [ "$fail" -eq 0 ]; then
-  note "Structural conformance OK: $(printf '%s\n' "$observed" | grep -c . ) presentation sites, all declared."
+  note "Structural conformance OK: $(printf '%s\n' "$observed" | grep -c . ) presentation anchors, all declared."
 fi
 
-# --- Classes 3 & 4: behavioral cardinality property tests -------------------
+# --- Cardinality evidence is explicit rather than implied for every row -----
+executable_count=0
+structural_only_count=0
+coverage=$(printf '%s\n' "$manifest" | awk -F '\t' 'NF == 8 { print $1 "\t" $8 }')
+while IFS=$'\t' read -r effect verification; do
+  [ -z "$effect" ] && continue
+  case "$verification" in
+    executable=*)
+      reference=${verification#executable=}
+      proof_file=${reference%%#*}
+      proof_marker=${reference#*#}
+      if [ "$proof_file" = "$reference" ] || [ -z "$proof_file" ] || [ -z "$proof_marker" ]; then
+        problem "$effect has malformed executable evidence '$verification'"
+      elif [ ! -f "$proof_file" ]; then
+        problem "$effect evidence file is missing: $proof_file"
+      elif ! grep -qF "$proof_marker" "$proof_file"; then
+        problem "$effect evidence marker is missing from $proof_file: $proof_marker"
+      fi
+      executable_count=$((executable_count + 1))
+      ;;
+    structural-only)
+      structural_only_count=$((structural_only_count + 1))
+      ;;
+    *)
+      problem "$effect has unknown verification status '$verification'"
+      ;;
+  esac
+done <<< "$coverage"
+note "Cardinality coverage: $executable_count executable, $structural_only_count structural-only."
+
+# --- Classes 3 & 4: run the declared executable timeline evidence -----------
 note "Running behavioral property tests (swift run EdgeStashLogicTests)…"
-if swift run EdgeStashLogicTests; then
+run_logic_tests() {
+  if [ "$(uname -s)" = "Darwin" ] && [ -z "${DEVELOPER_DIR:-}" ] \
+      && [ -d /Applications/Xcode.app/Contents/Developer ]; then
+    DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift run EdgeStashLogicTests
+  else
+    swift run EdgeStashLogicTests
+  fi
+}
+if run_logic_tests; then
   note "Behavioral conformance OK."
 else
   problem "behavioral property tests failed (class 3/4 — cardinality violation)."

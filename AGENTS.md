@@ -45,8 +45,10 @@ owner-accepted contract.
 
 When code is considered ready to commit, run the expectation check — not just
 the tests. It verifies the live app against the declared behavior grammar
-(`docs/contracts/behavior-grammar.md`): every user-facing effect must be
-declared, and declared cardinalities are enforced by property tests.
+(`docs/contracts/behavior-grammar.md`): every in-scope presentation effect must
+be declared, and cardinalities marked with executable evidence are enforced by
+the headless suite. `structural-only` rows are explicit remaining coverage, not
+proof of their cardinality.
 
 ```bash
 ./scripts/check-expectations.sh   # structural conformance + swift run EdgeStashLogicTests

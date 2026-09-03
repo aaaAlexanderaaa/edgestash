@@ -1236,34 +1236,6 @@ struct EdgeStashLogicTests {
             "successful leave collapse may return focus after the slide finishes"
         )
         expect(
-            MultiWindowTipPolicy.shouldPresent(
-                collapsedCount: 2,
-                suppressedPermanently: false,
-                suppressedThisLaunch: false,
-                alreadyVisible: false
-            ),
-            "two collapsed windows of one app show the multi-window tip"
-        )
-        expect(
-            !MultiWindowTipPolicy.shouldPresent(
-                collapsedCount: 1,
-                suppressedPermanently: false,
-                suppressedThisLaunch: false,
-                alreadyVisible: false
-            ),
-            "a single collapsed window does not show the tip"
-        )
-        expect(
-            !MultiWindowTipPolicy.shouldPresent(
-                collapsedCount: 3,
-                suppressedPermanently: true,
-                suppressedThisLaunch: false,
-                alreadyVisible: false
-            ),
-            "don't show again after the user chooses never"
-        )
-
-        expect(
             HaloPreviewPolicy.shouldClear(settingsTabIsBehavior: true, settingsWindowVisible: true) == false,
             "halo stays while Behavior is open"
         )
@@ -2045,19 +2017,6 @@ struct EdgeStashLogicTests {
             ) == nil,
             "a missing window number on a different process is not a capture hit"
         )
-        expect(
-            MultiWindowTipPolicy.shouldMuteUntilRelaunch(after: .timedOut),
-            "a timed-out multi-window tip must stay quiet until relaunch"
-        )
-        expect(
-            MultiWindowTipPolicy.shouldMuteUntilRelaunch(after: .remindLater),
-            "remind-later must mute the multi-window tip until relaunch"
-        )
-        expect(
-            !MultiWindowTipPolicy.shouldMuteUntilRelaunch(after: .neverAgain),
-            "never-again is a permanent preference, not a launch mute"
-        )
-
         let pointerDisplay = CGRect(x: 0, y: 0, width: 1440, height: 900)
         let capturedWindow = CGRect(x: 0, y: 80, width: 800, height: 600)
         expect(
@@ -2171,19 +2130,6 @@ struct EdgeStashLogicTests {
             ),
             "a minimized seam stash has no parked frame to verify"
         )
-        expect(
-            MultiWindowTipPolicy.shouldHideOnSpaceChange(),
-            "Mission Control / space changes must dismiss the floating multi-window tip"
-        )
-        expect(
-            MultiWindowTipPolicy.shouldDismiss(collapsedCount: 1),
-            "the tip must hide once the app no longer has multiple collapsed windows"
-        )
-        expect(
-            !MultiWindowTipPolicy.shouldDismiss(collapsedCount: 2),
-            "two collapsed windows may keep a visible tip until it times out"
-        )
-
         let pinWindow = CGRect(x: 100, y: 100, width: 400, height: 300)
         let leavePinFrames = PinControlPolicy.frames(
             edge: .left,
@@ -3167,14 +3113,47 @@ struct EdgeStashLogicTests {
             )
         }
         do {
-            // Relaunch clears the per-launch quiet so a new launch may advise again.
+            // Losing and regaining Accessibility restarts the engine inside the
+            // same process. It hides the panel without rearming this launch.
             var c = MultiWindowTipCoordinator()
             _ = c.onSync(collapsedCount: 2, suppressedPermanently: false)
-            _ = c.onRelaunch()
+            expect(c.onEngineSuspended() == .hide, "engine suspension hides the visible tip")
+            expect(
+                c.onSync(collapsedCount: 2, suppressedPermanently: false) == .none,
+                "engine resume must not rearm a once-per-launch tip"
+            )
+
+            // A genuine relaunch creates fresh process state.
+            var relaunched = MultiWindowTipCoordinator()
+            expect(
+                relaunched.onSync(collapsedCount: 2, suppressedPermanently: false) == .present,
+                "a fresh process launch may present the multi-window tip again"
+            )
+        }
+        do {
+            // Suspension before the first qualifying condition does not consume
+            // the one presentation available to this launch.
+            var c = MultiWindowTipCoordinator()
+            expect(c.onEngineSuspended() == .none, "suspending a hidden tip has no presentation action")
             expect(
                 c.onSync(collapsedCount: 2, suppressedPermanently: false) == .present,
-                "a fresh launch may present the multi-window tip again"
+                "engine suspension before first presentation does not mute the launch"
             )
+        }
+        do {
+            // Both non-permanent dismissal paths keep the current process quiet.
+            for dismissal in [
+                MultiWindowTipCoordinator.Dismissal.remindLater,
+                .timedOut
+            ] {
+                var c = MultiWindowTipCoordinator()
+                _ = c.onSync(collapsedCount: 2, suppressedPermanently: false)
+                expect(c.onDismiss(dismissal) == .hide, "temporary dismissal hides the tip")
+                expect(
+                    c.onSync(collapsedCount: 2, suppressedPermanently: false) == .none,
+                    "temporary dismissal stays quiet for the rest of the launch"
+                )
+            }
         }
         do {
             // "Never again" hides and asks the live layer to persist the mute.
@@ -3186,17 +3165,42 @@ struct EdgeStashLogicTests {
             )
         }
         do {
-            // General invariant: across any adversarial timeline of ticks, Space
-            // changes, and count flaps within one launch, the tip presents at
-            // most once.
-            var c = MultiWindowTipCoordinator()
-            var presents = 0
-            let counts = [2, 2, 1, 2, 3, 0, 2, 2]
-            for (i, n) in counts.enumerated() {
-                if c.onSync(collapsedCount: n, suppressedPermanently: false) == .present { presents += 1 }
-                if i % 2 == 0 { _ = c.onSpaceChange() }
+            // Bounded exhaustive property: every six-event timeline composed of
+            // sync count changes, Space changes, and engine suspensions presents
+            // at most once in a process launch (6^6 = 46,656 timelines).
+            let eventKindCount = 6
+            let timelineLength = 6
+            let timelineCount = 46_656
+            var violatingTimeline: [Int]?
+            for encodedTimeline in 0..<timelineCount {
+                var remainder = encodedTimeline
+                var timeline: [Int] = []
+                var c = MultiWindowTipCoordinator()
+                var presents = 0
+                for _ in 0..<timelineLength {
+                    let event = remainder % eventKindCount
+                    remainder /= eventKindCount
+                    timeline.append(event)
+                    let action: MultiWindowTipCoordinator.Action
+                    switch event {
+                    case 0: action = c.onSync(collapsedCount: 0, suppressedPermanently: false)
+                    case 1: action = c.onSync(collapsedCount: 1, suppressedPermanently: false)
+                    case 2: action = c.onSync(collapsedCount: 2, suppressedPermanently: false)
+                    case 3: action = c.onSync(collapsedCount: 3, suppressedPermanently: false)
+                    case 4: action = c.onSpaceChange()
+                    default: action = c.onEngineSuspended()
+                    }
+                    if action == .present { presents += 1 }
+                }
+                if presents > 1 {
+                    violatingTimeline = timeline
+                    break
+                }
             }
-            expect(presents <= 1, "the multi-window tip presents at most once per launch under any timeline")
+            expect(
+                violatingTimeline == nil,
+                "every bounded sync/Space/suspension timeline presents at most once per launch"
+            )
         }
 
         if failed > 0 {
