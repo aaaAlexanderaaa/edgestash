@@ -72,6 +72,10 @@ public struct ScreenSetMemoryCoordinator {
     private var scaleAliases: [ScreenSetFingerprint: ScreenSetFingerprint] = [:]
     private var displaced: [ScreenSetWindowKey: ScreenSetPlacement] = [:]
     private var lastPlacements: [ScreenSetWindowKey: ScreenSetPlacement] = [:]
+    /// A closed-lid wake is still the pre-sleep configuration until display
+    /// identities or mirroring change. Repeated geometry observations are not
+    /// evidence that the held built-in display was unplugged while awake.
+    private var sleepHeldDisplayID: String?
 
     public init(baseline: ScreenSetObservation) {
         observation = baseline
@@ -86,6 +90,12 @@ public struct ScreenSetMemoryCoordinator {
     ) -> ScreenSetTransition {
         let previous = observation
         let sameIDs = previous.fingerprint.displayIDs == current.fingerprint.displayIDs
+        let present = Set(current.fingerprint.displayIDs)
+        if let keepMissingDisplay, !current.mirroring, !present.contains(keepMissingDisplay) {
+            sleepHeldDisplayID = keepMissingDisplay
+        } else if !sameIDs || current.mirroring {
+            sleepHeldDisplayID = nil
+        }
         let scaleChanged = sameIDs && (previous.sizes != current.sizes || previous.scales != current.scales)
         let known = Set(configurations.map(\.fingerprint))
         // A returning display may already have a new mode, so no same-ID scale
@@ -98,9 +108,11 @@ public struct ScreenSetMemoryCoordinator {
             ?? current.fingerprint
         let event: ScreenSetEvent
 
-        if keepMissingDisplay != nil, !current.mirroring {
+        if sleepHeldDisplayID != nil {
             // Lid still closed after sleep: keep the pre-sleep memory key.
-            event = .dropUnconfigured
+            // Do not alias this smaller display set to the full pre-sleep set
+            // when its resolution changes; it has its own ordinary memory.
+            event = sameIDs ? (scaleChanged ? .scale : .none) : .dropUnconfigured
         } else if current.mirroring {
             // A mirrored laptop-shaped desktop is not the laptop-only memory.
             event = .recover
@@ -125,7 +137,6 @@ public struct ScreenSetMemoryCoordinator {
             )
         }
         observation = current
-        let present = Set(current.fingerprint.displayIDs)
         let target = memoryFingerprint.flatMap { key in configurations.first { $0.fingerprint == key } }
 
         if event == .returnConfigured || event == .dropConfigured, let target {
@@ -140,7 +151,7 @@ public struct ScreenSetMemoryCoordinator {
             )
         }
 
-        let gone = live.filter { !present.contains($0.displayID) && $0.displayID != keepMissingDisplay }
+        let gone = live.filter { !present.contains($0.displayID) && $0.displayID != sleepHeldDisplayID }
         for slot in gone { displaced[slot.key] = slot }
         let managed = Set(live.map(\.key))
         let returning = current.mirroring || target != nil ? [] : displaced.values.filter {

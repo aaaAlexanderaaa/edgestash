@@ -133,6 +133,51 @@ func runScreenSetMemoryTests(_ expect: (Bool, String) -> Void) {
         expect(f.members == [1, 2] && f.coordinator.memoryFingerprint == desk.fingerprint, "clamshell sleep retains built-in stash and pre-sleep memory")
     }
     do {
+        let externalOnly = ScreenSetObservation(displays: [display("external", 0)])
+        let externalConfig = ScreenSetConfiguration(fingerprint: externalOnly.fingerprint, slots: [slot(3, "external")])
+        let configurations = [deskConfig, externalConfig]
+        var f = ScreenSetFixture(baseline: desk, configurations: configurations, live: [aDesk, b])
+        _ = f.move(to: externalOnly, keepMissing: "laptop")
+        for _ in 0..<3 {
+            let repeatObservation = f.move(to: externalOnly)
+            expect(repeatObservation.release.isEmpty && repeatObservation.restore.isEmpty && f.members == [1, 2], "repeated closed-lid observations neither release held stashes nor load the external-only configuration")
+        }
+        let resized = ScreenSetObservation(displays: [display("external", 80, 40, height: 1440)])
+        let scale = f.move(to: resized)
+        expect(scale.event == .scale && scale.refresh == [aDesk.key] && f.members == [1, 2], "closed-lid scale refreshes the connected stash while retaining the built-in stash")
+        _ = f.move(to: externalOnly)
+        f.record(aDesk)
+        expect(f.configurations == configurations && f.coordinator.memoryFingerprint == desk.fingerprint, "closed-lid geometry and appearance preserve the pre-sleep memory")
+        _ = f.move(to: desk)
+        expect(f.members == [1, 2], "opening the lid restores the full desk with the held member intact")
+        let awakeDrop = f.move(to: externalOnly)
+        expect(awakeDrop.event == .dropConfigured && f.members == [3], "a later awake lid close uses the external-only memory without a stale hold or cross-device scale alias")
+    }
+    do {
+        let secondExternal = display("second-external", 3840)
+        let three = ScreenSetObservation(displays: desk.displays + [secondExternal])
+        let closedLid = ScreenSetObservation(displays: [display("external", 0), secondExternal])
+        let third = slot(3, "second-external")
+        let configuration = ScreenSetConfiguration(fingerprint: three.fingerprint, slots: [aDesk, b, third])
+        let changedSets = [
+            ScreenSetObservation(displays: [display("external", 0)]),
+            ScreenSetObservation(displays: closedLid.displays + [display("new-external", 5760)]),
+            ScreenSetObservation(displays: closedLid.displays, mirroring: true)
+        ]
+        for changed in changedSets {
+            var f = ScreenSetFixture(baseline: three, configurations: [configuration], live: [aDesk, b, third])
+            _ = f.move(to: closedLid, keepMissing: "laptop")
+            _ = f.move(to: closedLid)
+            let reflow = ScreenSetObservation(displays: [display("external", 3840), display("second-external", 0)])
+            let rearranged = f.move(to: reflow)
+            expect(rearranged.refresh == [aDesk.key, third.key] && f.members == [1, 2, 3], "rearranging the same external displays refreshes geometry without ending the clamshell hold")
+            _ = f.move(to: closedLid)
+            let transition = f.move(to: changed)
+            expect(transition.release.contains(b.key) && !f.members.contains(2), "external connection or mirroring changes end the clamshell hold")
+            expect(f.configuration(three) == configuration, "ending the clamshell hold preserves the departed memory")
+        }
+    }
+    do {
         let frame = CGRect(x: 1920, y: 100, width: 800, height: 600)
         let original = CGRect(x: 1920, y: 0, width: 1920, height: 1080)
         let temporary = CGRect(x: 0, y: -360, width: 1920, height: 1440)

@@ -291,6 +291,11 @@ stash. Exiting full screen does not put it back on the edge.
   windows until `return-configured` puts them back on the remembered
   edges.
 - After `fresh`, there is no automatic return to an edge.
+- A closed-lid wake's built-in-display hold survives repeated observations,
+  reflow, and scale while the same external display identities remain. A
+  display-identity or mirroring change ends the hold and follows the ordinary
+  screen-set rules. Scaling the held desktop must not alias its smaller
+  display set to the pre-sleep memory.
 - A resolution-only change does not cancel a screen set and does not
   leave stash. Size changes are recognized before origin-based relation
   changes; the memory key is retained across scale-induced reflow.
@@ -305,6 +310,9 @@ stash. Exiting full screen does not put it back on the edge.
   after a restore or an appearance-only reveal/pin/collapse. Failed restores
   must not be erased by saving another window. Restoration uses current
   geometry and reports failed window writes to the on-desktop fallback.
+- If cancelling an in-flight collapse leaves an unpinned session expanded,
+  a successful geometry refresh resumes its leave watcher with a fresh dwell.
+  Pinned sessions continue to suppress automatic collapse.
 - Pin does not create a second screen-set policy.
 
 ## Failure, recovery, and intervention
@@ -346,6 +354,13 @@ do not.
   and that lid-sleep does not move stashes.
 
 ## Reconciliation log
+
+- **2026-09-11 — review fixes:** the clamshell hold now belongs to the memory
+  coordinator across observations, with timeline regressions for repeated
+  notifications, scale/reflow, and the later transitions that end it. A
+  successful refresh of an unpinned expanded session restarts its leave
+  watcher after animation cancellation. The timer integration still requires
+  live macOS verification; the headless memory tests do not exercise AppKit.
 
 - **2026-09-11 — verification:** the expectation check and full logic suite
   pass, including 100 desk/laptop round trips, failed-target preservation,

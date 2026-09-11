@@ -310,6 +310,14 @@ final class StashSession {
             guard StashAX.setFrame(windowElement, rebased) else { return false }
             presentation = next
             showMarker(windowQuartz: rebased)
+            // A cancelled collapse has already stopped its leave timer, but
+            // has not yet committed the collapsed phase. Retaining expanded
+            // presentation must restore its normal automatic-collapse path.
+            if !isPinned {
+                outsideSince = nil
+                lastSiblingInteractionAt = nil
+                startLeaveWatch()
+            }
             refreshPinControl()
             notifyChanged()
             return true
