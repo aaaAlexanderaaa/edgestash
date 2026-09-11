@@ -2,8 +2,8 @@ import AppKit
 import CoreGraphics
 import EdgeStashLogic
 
-/// Live reaction to screen-set events. Policy classification stays in
-/// `ScreenSetPolicy`; this type only reads AppKit facts and moves windows.
+/// AppKit adapter for the tested screen-set memory coordinator. Observations
+/// settle here; membership selection and memory writes stay in the logic layer.
 final class ScreenSetCoordinator {
     /// True while a classified event is applying, so user-leave slot writes
     /// and live-placement snapshots do not run for coordinator-driven moves.
@@ -13,11 +13,9 @@ final class ScreenSetCoordinator {
 
     static var blocksUserGeometry: Bool { isApplying || isQuiet }
 
-    private var committedFingerprint: ScreenSetFingerprint?
-    private var committedBackingScales: [String: CGFloat] = [:]
-    private var committedFrameSizes: [String: CGSize] = [:]
-    private var committedMirroring = false
-    private var lastObservedFingerprint: ScreenSetFingerprint?
+    private var memory: ScreenSetMemoryCoordinator?
+    private var committedFingerprint: ScreenSetFingerprint? { memory?.observation.fingerprint }
+    private var lastObserved: ScreenSetObservation?
     private var sleepingOrWaking = false
     private var wakePass = false
     private var preSleepFingerprint: ScreenSetFingerprint?
@@ -28,20 +26,16 @@ final class ScreenSetCoordinator {
     private var knownBuiltinID: String?
     private var sessionSource: (() -> [StashSession])?
     var onSettled: (() -> Void)?
-    private var displaced: [DisplacedPlacement] = []
 
     static weak var active: ScreenSetCoordinator?
 
-    private struct DisplacedPlacement: Equatable {
-        var windowNumber: UInt32
-        var bundleID: String
-        var displayID: String
-        var edge: Int
-    }
-
-    func captureBaseline() {
+    func captureBaseline(sessions: @escaping () -> [StashSession]) {
         Self.active = self
-        commit(Self.metrics())
+        sessionSource = sessions
+        let baseline = Self.metrics()
+        memory = ScreenSetMemoryCoordinator(baseline: baseline)
+        lastObserved = baseline
+        knownBuiltinID = DisplayCatalog.builtinIdentifier()
         Self.isQuiet = false
     }
 
@@ -58,6 +52,7 @@ final class ScreenSetCoordinator {
 
     func beginQuiet() {
         Self.isQuiet = true
+        sessionSource?().forEach { $0.prepareForScreenSetChange() }
     }
 
     func noteWillSleep() {
@@ -87,17 +82,41 @@ final class ScreenSetCoordinator {
             return
         }
         Self.isQuiet = true
+        sessions().forEach { $0.prepareForScreenSetChange() }
         rememberObservation()
         scheduleSettle()
     }
 
-    func forgetDisplaced(windowNumber: UInt32, bundleID: String) {
-        displaced.removeAll {
-            $0.windowNumber == windowNumber && $0.bundleID == bundleID
-        }
+    func recordPlacement(of session: StashSession, sessions: [StashSession]) {
+        guard !Self.blocksUserGeometry, let slot = session.screenSetSlot else { return }
+        guard !reconcileUnannouncedTopology() else { return }
+        let preferences = Preferences.shared
+        guard let next = memory?.recording(slot, live: sessions.compactMap(\.screenSetSlot),
+                                          configurations: preferences.storedScreenSets),
+              next != preferences.storedScreenSets else { return }
+        preferences.storedScreenSets = next
+    }
+
+    /// AX moved can arrive before the screen-parameter notification. Compare
+    /// the whole observation before accepting it as a user's placement change.
+    @discardableResult
+    func reconcileUnannouncedTopology() -> Bool {
+        guard let memory, let sessionSource, memory.observation != Self.metrics() else { return false }
+        noteTopologyChanged(sessions: sessionSource)
+        return true
+    }
+
+    func forgetPlacement(windowNumber: UInt32, bundleID: String, everywhere: Bool) {
+        let preferences = Preferences.shared
+        let key = ScreenSetWindowKey(windowNumber: windowNumber, bundleID: bundleID)
+        guard let next = memory?.forgetting(key, everywhere: everywhere,
+                                           configurations: preferences.storedScreenSets),
+              next != preferences.storedScreenSets else { return }
+        preferences.storedScreenSets = next
     }
 
     private func enterSleep() {
+        beginQuiet()
         settleWork?.cancel()
         settleWork = nil
         settleScheduledAt = nil
@@ -111,7 +130,7 @@ final class ScreenSetCoordinator {
     }
 
     private func rememberObservation() {
-        lastObservedFingerprint = Self.metrics().fingerprint
+        lastObserved = Self.metrics()
     }
 
     private func scheduleSettle() {
@@ -138,7 +157,7 @@ final class ScreenSetCoordinator {
         let elapsed = settleScheduledAt.map { Date().timeIntervalSince($0) } ?? 0
         let decision = ScreenSetSettlePolicy.decision(
             sleepingAndNotWakePass: sleepingOrWaking && !wakePass,
-            currentMatchesLastObserved: snapshot.fingerprint == lastObservedFingerprint,
+            currentMatchesLastObserved: snapshot == lastObserved,
             elapsedSinceScheduled: elapsed,
             scheduledDelay: settleDelay
         )
@@ -148,9 +167,12 @@ final class ScreenSetCoordinator {
             return
         case .sleptThrough:
             enterSleep()
+            // This callback is running, so enumeration can resume. Do not
+            // require a future didWake that may already have been delivered.
+            noteDidWake(sessions: sessionSource ?? { [] })
             return
         case .reschedule:
-            lastObservedFingerprint = snapshot.fingerprint
+            lastObserved = snapshot
             scheduleSettle()
         case .apply:
             settleWork = nil
@@ -158,12 +180,12 @@ final class ScreenSetCoordinator {
             if wakePass {
                 finishWake(snapshot: snapshot)
             } else {
-                apply(from: committedFingerprint, snapshot: snapshot)
+                apply(snapshot: snapshot)
             }
         }
     }
 
-    private func finishWake(snapshot: ScreenSetMetrics) {
+    private func finishWake(snapshot: ScreenSetObservation) {
         let baseline = preSleepFingerprint ?? committedFingerprint
         let preIDs = baseline.map { Set($0.displayIDs) }
         let currentIDs = Set(snapshot.fingerprint.displayIDs)
@@ -184,12 +206,6 @@ final class ScreenSetCoordinator {
             subsetHoldElapsed: subsetHold
         )
         switch decision {
-        case .sameSet:
-            clearWake()
-            refreshPresentStashes(sessions: sessionSource?() ?? [], snapshot: snapshot)
-            commit(snapshot)
-            Self.isQuiet = false
-            onSettled?()
         case .waitLonger:
             sleepingOrWaking = true
             wakePass = true
@@ -197,28 +213,10 @@ final class ScreenSetCoordinator {
             scheduleSettle()
         case .keepPreSleep:
             clearWake()
-            refreshPresentStashes(sessions: sessionSource?() ?? [], snapshot: snapshot)
-            commit(snapshot)
-            Self.isQuiet = false
-            onSettled?()
-        case .restoreConfigured:
+            apply(snapshot: snapshot, keepMissingDisplay: knownBuiltinID)
+        case .sameSet, .restoreConfigured, .increment, .applyClassified:
             clearWake()
-            apply(from: baseline, snapshot: snapshot)
-        case .increment:
-            clearWake()
-            apply(from: baseline, snapshot: snapshot)
-        case .applyClassified:
-            clearWake()
-            apply(from: baseline, snapshot: snapshot)
-        }
-    }
-
-    private func refreshPresentStashes(sessions: [StashSession], snapshot: ScreenSetMetrics) {
-        let present = Set(snapshot.fingerprint.displayIDs)
-        for session in sessions where session.isManaged {
-            if let displayID = session.displayID, present.contains(displayID) {
-                session.refreshCollapsePresentation()
-            }
+            apply(snapshot: snapshot)
         }
     }
 
@@ -229,212 +227,50 @@ final class ScreenSetCoordinator {
         wakeSubsetSince = nil
     }
 
-    private func apply(from previous: ScreenSetFingerprint?, snapshot: ScreenSetMetrics) {
-        let current = snapshot.fingerprint
-        let scaleChanged = previous == current
-            && (committedBackingScales != snapshot.scales || committedFrameSizes != snapshot.sizes)
-        let flags = ScreenSetClassifyFlags(
-            isSleepingOrWaking: false,
-            mirrorChanged: committedMirroring != snapshot.mirroring,
-            scaleChanged: scaleChanged,
-            userRearrangeLikely: Self.isDisplaySettingsFrontmost()
-        )
-        let event = ScreenSetPolicy.classify(
-            previous: previous,
-            current: current,
-            configured: Preferences.shared.configuredFingerprints(),
-            flags: flags
-        )
+    private func apply(snapshot: ScreenSetObservation, keepMissingDisplay: String? = nil) {
+        // An empty enumeration is not a desktop on which restoration can work.
+        guard !snapshot.displays.isEmpty else { scheduleSettle(); return }
         let sessions = sessionSource?() ?? []
-
-        if event == .none || event == .sleep {
-            if event == .none,
-               let previous,
-               previous.relations != current.relations,
-               !flags.userRearrangeLikely {
-                sessions.filter(\.isManaged).forEach { $0.refreshCollapsePresentation() }
-                committedBackingScales = snapshot.scales
-                committedFrameSizes = snapshot.sizes
-                lastObservedFingerprint = current
-                Self.isQuiet = false
-                onSettled?()
-                return
-            }
-            commit(snapshot)
-            Self.isQuiet = false
-            onSettled?()
-            return
-        }
+        guard let plan = memory?.settle(
+            on: snapshot,
+            configurations: Preferences.shared.storedScreenSets,
+            live: sessions.compactMap(\.screenSetSlot),
+            keepMissingDisplay: keepMissingDisplay
+        ) else { return }
 
         Self.isApplying = true
         defer {
             Self.isApplying = false
-            commit(snapshot)
             Self.isQuiet = false
+            lastObserved = snapshot
+            if let builtin = DisplayCatalog.builtinIdentifier() { knownBuiltinID = builtin }
             onSettled?()
         }
-
-        switch event {
-        case .none, .sleep:
-            break
-        case .scale:
-            sessions.filter(\.isManaged).forEach { $0.refreshCollapsePresentation() }
-        case .increment:
-            refreshPresentStashes(sessions: sessions, snapshot: snapshot)
-        case .dropConfigured:
-            applyDropConfigured(current: current, sessions: sessions)
-            refreshPresentStashes(sessions: sessions, snapshot: snapshot)
-        case .dropUnconfigured, .recover:
-            applyDropUnconfigured(current: current, sessions: sessions)
-            refreshPresentStashes(sessions: sessions, snapshot: snapshot)
-        case .returnConfigured:
-            applyReturnConfigured(current: current, sessions: sessions)
-        case .cancel:
-            if let previous {
-                Preferences.shared.discardScreenSet(fingerprint: previous)
-            }
-            displaced.removeAll()
-            scatterLeavingStash(sessions.filter(\.isManaged), on: Self.geometries())
+        var toScatter = sessions.filter { session in
+            guard let number = session.windowID else { return false }
+            return plan.release.contains(ScreenSetWindowKey(windowNumber: number, bundleID: session.bundleID))
         }
-    }
-
-    private func commit(_ snapshot: ScreenSetMetrics) {
-        committedFingerprint = snapshot.fingerprint
-        committedBackingScales = snapshot.scales
-        committedFrameSizes = snapshot.sizes
-        committedMirroring = snapshot.mirroring
-        lastObservedFingerprint = snapshot.fingerprint
-        if let builtin = DisplayCatalog.builtinIdentifier() {
-            knownBuiltinID = builtin
-        }
-    }
-
-    private func applyDropConfigured(
-        current: ScreenSetFingerprint,
-        sessions: [StashSession]
-    ) {
-        let remainingIDs = Set(current.displayIDs)
-        let slots = Preferences.shared.slots(for: current)
-        var toScatter: [StashSession] = []
-        var consumed = Set<ObjectIdentifier>()
-
-        for slot in slots {
+        var applied = Set<ScreenSetWindowKey>()
+        for slot in plan.restore {
             guard let edge = DisplayEdge(rawValue: slot.edge),
-                  let session = session(matching: slot, in: sessions) else {
-                continue
-            }
-            consumed.insert(ObjectIdentifier(session))
-            if !session.applyScreenSetSlot(displayID: slot.displayID, edge: edge) {
-                rememberDisplaced(
-                    windowNumber: slot.windowNumber,
-                    bundleID: slot.bundleID,
-                    displayID: slot.displayID,
-                    edge: slot.edge
-                )
-                toScatter.append(session)
-            }
+                  let session = sessions.first(where: { $0.bundleID == slot.bundleID && $0.windowID == slot.windowNumber }) else { continue }
+            // Preserve the appearance (including pin) when it already belongs
+            // to the target. Rebinding itself is synchronous, with no late
+            // animation callback that can save a partly applied configuration.
+            let succeeded = session.screenSetSlot == slot
+                ? session.refreshCollapsePresentation()
+                : session.applyScreenSetSlot(displayID: slot.displayID, edge: edge)
+            applied.insert(slot.key)
+            if succeeded { memory?.didRestore(slot) }
+            else { toScatter.append(session) }
         }
-
-        for session in sessions where session.isManaged && !consumed.contains(ObjectIdentifier(session)) {
-            let displayGone = session.displayID.map { !remainingIDs.contains($0) } ?? true
-            if displayGone {
-                toScatter.append(session)
-            }
-        }
-        scatterLeavingStash(toScatter, on: Self.geometries())
-    }
-
-    private func applyDropUnconfigured(
-        current: ScreenSetFingerprint,
-        sessions: [StashSession]
-    ) {
-        let remainingIDs = Set(current.displayIDs)
-        var toScatter: [StashSession] = []
         for session in sessions where session.isManaged {
-            if let displayID = session.displayID, remainingIDs.contains(displayID) {
-                continue
-            }
-            rememberDisplaced(session: session)
-            toScatter.append(session)
+            guard !toScatter.contains(where: { $0 === session }),
+                  let slot = session.screenSetSlot,
+                  !applied.contains(slot.key), plan.refresh.contains(slot.key) else { continue }
+            if !session.refreshCollapsePresentation() { toScatter.append(session) }
         }
-        scatterLeavingStash(toScatter, on: Self.geometries())
-    }
-
-    private func applyReturnConfigured(current: ScreenSetFingerprint, sessions: [StashSession]) {
-        let slots = Preferences.shared.slots(for: current)
-        let presentIDs = Set(current.displayIDs)
-        var toScatter: [StashSession] = []
-        var restored = Set<SlotKey>()
-
-        for slot in slots {
-            guard let edge = DisplayEdge(rawValue: slot.edge) else { continue }
-            let key = SlotKey(windowNumber: slot.windowNumber, bundleID: slot.bundleID)
-            guard let session = session(matching: slot, in: sessions) else { continue }
-            if presentIDs.contains(slot.displayID),
-               session.applyScreenSetSlot(displayID: slot.displayID, edge: edge) {
-                restored.insert(key)
-                displaced.removeAll {
-                    $0.windowNumber == slot.windowNumber && $0.bundleID == slot.bundleID
-                }
-            } else {
-                rememberDisplaced(
-                    windowNumber: slot.windowNumber,
-                    bundleID: slot.bundleID,
-                    displayID: slot.displayID,
-                    edge: slot.edge
-                )
-                if session.isManaged {
-                    toScatter.append(session)
-                }
-            }
-        }
-
-        for item in displaced where presentIDs.contains(item.displayID) {
-            let key = SlotKey(windowNumber: item.windowNumber, bundleID: item.bundleID)
-            guard !restored.contains(key),
-                  let session = sessions.first(where: {
-                      $0.bundleID == item.bundleID && $0.windowID == item.windowNumber
-                  }),
-                  let edge = DisplayEdge(rawValue: item.edge) else {
-                continue
-            }
-            if session.applyScreenSetSlot(displayID: item.displayID, edge: edge) {
-                restored.insert(key)
-            } else if session.isManaged {
-                toScatter.append(session)
-            }
-        }
-        displaced.removeAll { restored.contains(SlotKey(windowNumber: $0.windowNumber, bundleID: $0.bundleID)) }
-        scatterLeavingStash(toScatter, on: Self.geometries())
-    }
-
-    private func session(matching slot: StoredScreenSetSlot, in sessions: [StashSession]) -> StashSession? {
-        sessions.first {
-            $0.bundleID == slot.bundleID && $0.windowID == slot.windowNumber
-        }
-    }
-
-    private func rememberDisplaced(session: StashSession, displayID: String? = nil, edge: Int? = nil) {
-        guard let windowID = session.windowID else { return }
-        rememberDisplaced(
-            windowNumber: windowID,
-            bundleID: session.bundleID,
-            displayID: displayID ?? session.displayID ?? "",
-            edge: edge ?? session.edge?.rawValue ?? DisplayEdge.left.rawValue
-        )
-    }
-
-    private func rememberDisplaced(windowNumber: UInt32, bundleID: String, displayID: String, edge: Int) {
-        guard !displayID.isEmpty else { return }
-        displaced.removeAll { $0.windowNumber == windowNumber && $0.bundleID == bundleID }
-        displaced.append(
-            DisplacedPlacement(
-                windowNumber: windowNumber,
-                bundleID: bundleID,
-                displayID: displayID,
-                edge: edge
-            )
-        )
+        scatterLeavingStash(toScatter, on: snapshot.displays)
     }
 
     private func scatterLeavingStash(_ sessions: [StashSession], on displays: [DisplayGeometry]) {
@@ -487,32 +323,16 @@ final class ScreenSetCoordinator {
         DisplayCatalog.adjacencyGeometries(screens: screens)
     }
 
-    private static func metrics(screens: [NSScreen] = NSScreen.screens) -> ScreenSetMetrics {
-        let geometries = DisplayCatalog.adjacencyGeometries(screens: screens)
-        let fingerprint = ScreenSetPolicy.fingerprint(displays: geometries)
+    private static func metrics(screens: [NSScreen] = NSScreen.screens) -> ScreenSetObservation {
         var scales: [String: CGFloat] = [:]
-        var sizes: [String: CGSize] = [:]
         for screen in screens {
-            let id = DisplayCatalog.identifier(for: screen, screens: screens)
-            scales[id] = screen.backingScaleFactor
-            sizes[id] = geometries.first { $0.id == id }?.frame.size ?? screen.frame.size
+            scales[DisplayCatalog.identifier(for: screen, screens: screens)] = screen.backingScaleFactor
         }
-        return ScreenSetMetrics(
-            fingerprint: fingerprint,
+        return ScreenSetObservation(
+            displays: DisplayCatalog.adjacencyGeometries(screens: screens),
             scales: scales,
-            sizes: sizes,
             mirroring: isMirroring(screens: screens)
         )
-    }
-
-    private static func isDisplaySettingsFrontmost() -> Bool {
-        guard let id = NSWorkspace.shared.frontmostApplication?.bundleIdentifier else {
-            return false
-        }
-        return id == "com.apple.systempreferences"
-            || id == "com.apple.Settings"
-            || id == "com.apple.preference.displays"
-            || id.contains("Displays-Settings")
     }
 
     private static func isMirroring(screens: [NSScreen]) -> Bool {
@@ -524,15 +344,4 @@ final class ScreenSetCoordinator {
         return false
     }
 
-    private struct SlotKey: Hashable {
-        var windowNumber: UInt32
-        var bundleID: String
-    }
-}
-
-private struct ScreenSetMetrics {
-    var fingerprint: ScreenSetFingerprint
-    var scales: [String: CGFloat]
-    var sizes: [String: CGSize]
-    var mirroring: Bool
 }

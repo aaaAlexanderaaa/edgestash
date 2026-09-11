@@ -118,7 +118,7 @@ logical display map, edge halo, and seam beacon, and defer later product ideas.
 
 - Settings opens on launch only when Accessibility is unavailable; otherwise
   it is opened from the menu bar item or by reopening the app.
-- Display-set events (increment, drop, return, cancel, scale, sleep, fresh)
+- Display-set events (increment, drop, return, reflow, projection, scale, sleep, fresh)
   follow `docs/contracts/screen-set-and-window-life.md`. The former rule that
   a topology change releases a stash and writes the old frame back is
   superseded.

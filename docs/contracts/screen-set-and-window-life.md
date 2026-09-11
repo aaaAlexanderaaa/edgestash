@@ -4,7 +4,7 @@ status: target
 authority: normative
 implementation: implemented
 verification_status: partial
-last_reconciled: 2026-09-02
+last_reconciled: 2026-09-11
 supersedes_clauses_of: docs/contracts/edgestash.md
 ---
 
@@ -32,7 +32,7 @@ Do not invent others in later docs.
 |---|---|
 | **standard window** | An Accessibility standard window (document, Terminal, browser). Dialogs, settings panels, and floating palettes are not candidates. |
 | **screen set** | The connected display identities plus their **relative** arrangement. A global origin shift that leaves who-is-left-of-whom unchanged is the same screen set. |
-| **configured screen set** | EdgeStash has a remembered stash placement for that exact screen set: at least one standard window was stashed while that set was current, and that memory was not cancelled. |
+| **configured screen set** | EdgeStash has a remembered stash placement for that exact screen set: at least one standard window was stashed while that set was current, and that memory was not explicitly removed. |
 | **stash placement** | Which standard windows were stashed on which display’s which edge in that screen set. |
 | **on-desktop** | The window’s frame sits on an existing display’s desktop. Covered by another window still counts as on-desktop. |
 | **stashed** | EdgeStash is managing the window on a display edge. Collapsed, temporarily open on the edge, and pinned are appearances of stashed, not other states. |
@@ -191,16 +191,18 @@ around an unchanged window.
 ### Screen-set events
 
 Classify a display change as exactly one event. Relative arrangement
-is who-is-left-of-whom, not the global origin.
+is who-is-left-of-whom, not the global origin. The 2026-09-10 rules below
+supersede raw[4]'s former cancellation on rearrangement and mirroring.
 
 | Event | When | Windows |
 |---|---|---|
-| `sleep` | System sleep, including lid-close-to-sleep while externals stay connected. Brief topology blips during sleep and wake are this event, not unplug. | No stash opens. No stash leaves. Wake, lid open or still closed, keeps the pre-sleep placement. |
+| `sleep` | System sleep, including lid-close-to-sleep while externals stay connected. Brief topology blips during sleep and wake are this event, not unplug. | No stash opens while asleep. Wake first waits for enumeration. If only the built-in display remains absent, keep the pre-sleep placement. If external displays are still absent after the bounded grace, apply `drop-*` so their windows become usable; retain the departed memory. |
 | `increment` | One or more displays appear, and the relative arrangement of the displays that were already present is unchanged. | Existing stashes and on-desktop windows stay. The new display is empty. |
 | `drop-configured` | One or more displays disappear, and the remaining connected set plus arrangement is already a configured screen set. | Switch to that remaining set’s stash placement. Keep the departed set’s placement so it can return. |
 | `drop-unconfigured` | One or more displays disappear, the remaining relative arrangement is unchanged, and the remaining set is not configured. | Stashes on remaining displays stay. Windows whose owning display is gone leave stash, scatter on remaining displays, and are displaced until those displays return, at which they go back to the original edges. |
 | `return-configured` | Connected displays again match a configured screen set (including the set left by `drop-configured`). | Restore that set’s stash placement. Displaced windows that belong to this set return to their edges. |
-| `cancel` | The person rearranges the same displays in System Settings, or turns mirroring on or off. | That screen set’s configuration is discarded. Every stashed window leaves stash and scatters on existing displays. |
+| `reflow` | The same displays change arrangement, including a temporary system reflow or a System Settings arrangement. | Keep each stash on its display and side; refresh actual geometry on both the outward and return changes. Display notifications and a foreground Settings app do not authorize forgetting memory. |
+| `projection` | Mirroring turns on or off. | Preserve ordinary screen-set memories. While mirrored, keep stashes on available displays and scatter those whose display is absent. The mirrored desktop does not read or overwrite a laptop-only configuration even if its visible display IDs match. Ending mirroring restores the matching ordinary configuration, or displaced placements if none exists. |
 | `scale` | Resolution or scale changes; the screen set is otherwise the same. | Each stash stays on the same display and the same side. |
 | `fresh` | The Mac restarts, or the subject app quits or crashes. | Do not restore stash membership. If a window would be off an existing display, scatter it on an existing display. |
 | `lid-awake` | Lid closes or opens while the Mac stays awake. | Same class as `drop-*` / `increment` / `return-configured` for the built-in display. |
@@ -260,16 +262,20 @@ stash. Exiting full screen does not put it back on the edge.
   either restores that memory. They are not one placement scaled down.
 - **INV-L6 — increment does not rewrite the present.** An `increment`
   event does not move, open, or leave existing stashes.
-- **INV-L7 — cancel discards that set only.** A `cancel` event discards
-  the current screen set’s stash placement and puts every stashed
-  window on-desktop, scattered. It does not invent a new edge.
+- **INV-L7 — environment is not permission to forget.** Reflow, scale,
+  projection, and wake never delete a configured memory. Dragging a window
+  out of stash removes its placement in the current memory only. Window
+  destruction, app termination, and disabling that app remove its placements
+  from every memory. An intentionally emptied configuration remains a valid
+  empty target; returning to it must not import stashes from another set.
 - **INV-L8 — scatter.** Any event that puts two or more windows
   on-desktop at once assigns distinct origins.
 - **INV-L9 — fresh day.** Restart, quit, and crash do not restore
   stash membership. They may still place a window onto an existing
   display so it is not lost off-screen.
 - **INV-L10 — sleep is not unplug.** `sleep` is not classified as
-  `drop-*`, `cancel`, or `fresh`.
+  `drop-*` or `fresh` while the Mac is asleep. A settled wake with genuinely
+  absent external displays may subsequently become `drop-*`.
 
 ## Required behaviors
 
@@ -284,9 +290,21 @@ stash. Exiting full screen does not put it back on the edge.
 - After `drop-unconfigured`, displaced windows are ordinary on-desktop
   windows until `return-configured` puts them back on the remembered
   edges.
-- After `cancel` or `fresh`, there is no automatic return to an edge.
+- After `fresh`, there is no automatic return to an edge.
 - A resolution-only change does not cancel a screen set and does not
-  leave stash.
+  leave stash. Size changes are recognized before origin-based relation
+  changes; the memory key is retained across scale-induced reflow.
+- The latest observed geometry and the selected memory key are separate.
+  Same-device reflow and scale retain the selected key. When devices return
+  with a changed mode, an exact or previously resolved key wins; otherwise a
+  unique remembered set of those same devices can be used. Ambiguous memories
+  are not guessed.
+- A configured set is the complete target membership, not an additive list.
+  Release extra stashes even when their owning displays remain connected.
+- Save deliberate per-window placement changes, not the transient aggregate
+  after a restore or an appearance-only reveal/pin/collapse. Failed restores
+  must not be erased by saving another window. Restoration uses current
+  geometry and reports failed window writes to the on-desktop fallback.
 - Pin does not create a second screen-set policy.
 
 ## Failure, recovery, and intervention
@@ -307,7 +325,7 @@ stash. Exiting full screen does not put it back on the edge.
 
 | Outcome | Verification | Durable evidence |
 |---|---|---|
-| Screen-set classification | logic executable | increment, drop-configured, drop-unconfigured, return-configured, cancel, scale, sleep, recover, settle/sleep-hold |
+| Screen-set classification and complete round trips | logic executable (`ScreenSetMemoryTests.swift`) | increment, drop-configured, drop-unconfigured, return-configured, reflow, projection, scale, sleep, recover, settle/sleep-hold |
 | Activation does not open unnamed stashes | logic executable plus Debug build | Dock / Cmd-Tab with mixed on-desktop and stashed windows; default all-stashed setting |
 | Show-all opens every stash of that app | logic executable plus Debug build | owner scene: five Terminal windows, two stashed |
 | Vanished display becomes usable | logic executable plus owner review | no stale off-set frames; scatter; return to edges when the set returns |
@@ -328,6 +346,28 @@ do not.
   and that lid-sleep does not move stashes.
 
 ## Reconciliation log
+
+- **2026-09-11 — verification:** the expectation check and full logic suite
+  pass, including 100 desk/laptop round trips, failed-target preservation,
+  mirror isolation, wake-after-unplug, and return at a changed resolution.
+  The complete Swift app and Objective-C bridge compile and link with Debug
+  flags using Apple Command Line Tools. This machine has no full Xcode, so
+  the required `EdgeStash.xcodeproj` Debug build and `stage-app.sh` delivery
+  are still blocked; the direct compiler check does not close those gates.
+  Owner multi-display verification also remains open.
+
+- **2026-09-10 — temporary environments preserve intent:** the owner requested
+  fixes for the reviewed round-trip failures. Projection and arrangement
+  changes preserve remembered placements; a frontmost Settings app is not
+  evidence of an intentional reset. Scale-induced relation changes retain
+  their memory key. Configured switches reconcile the full member set, and
+  appearance callbacks cannot snapshot a partial restore over memory.
+  Wake still protects clamshell sleep, but a genuinely absent external
+  follows drop rules after the grace. Implementation verification includes
+  executable round-trip memory/placement timelines; owner multi-display
+  review remains open. Earlier reconciliation entries describe superseded
+  cancellation and unconditional wake-subset rules.
+
 
 - **2026-09-02 — wake, settle, and owned-reveal guard:** topology
   changes wait until the fingerprint is quiet before classifying.

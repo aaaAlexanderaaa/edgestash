@@ -259,6 +259,20 @@ public enum StashGeometryPolicy {
         }
     }
 
+    /// Rebase the vertical offset with the owning display, then keep the
+    /// window usable after a scale change. Absolute Quartz y is not memory.
+    public static func screenSetFrame(
+        frame: CGRect, previousDisplay: CGRect?, display: CGRect, edge: DisplayEdge
+    ) -> CGRect {
+        let size = CGSize(width: min(frame.width, display.width), height: min(frame.height, display.height))
+        let y = previousDisplay.map { display.minY + frame.minY - $0.minY } ?? frame.minY
+        return CGRect(
+            x: edge == .left ? display.minX : display.maxX - size.width,
+            y: min(max(y, display.minY), display.maxY - size.height),
+            width: size.width, height: size.height
+        )
+    }
+
     /// Leaves a narrow lip on the owning display so the marker can sit on the
     /// edge. Only exposed edges slide off; shared edges minimize instead, so
     /// a stashed window never parks its bulk on a neighboring display.

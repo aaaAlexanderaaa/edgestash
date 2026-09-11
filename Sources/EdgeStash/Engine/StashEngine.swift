@@ -43,7 +43,7 @@ final class StashEngine {
         guard AccessibilityGrant.isTrusted(prompt: false) else { return }
         isRunning = true
         StashRescue.recoverPending(reason: "engine-start")
-        screenSets.captureBaseline()
+        screenSets.captureBaseline { [weak self] in self?.sessions ?? [] }
         screenSets.onSettled = { [weak self] in
             guard let self else { return }
             self.merged.reconcile(sessions: self.sessions)
@@ -578,12 +578,12 @@ final class StashEngine {
             self?.merged.reconcile(sessions: self?.sessions ?? [])
             self?.reevaluateSeamApproach()
             if changed.isManaged {
-                self?.recordLiveScreenSetPlacements()
+                self?.recordLiveScreenSetPlacement(of: changed)
             }
         }
         session.onCollapsed = { [weak self] collapsed in
             self?.approachSuppressedIDs.insert(collapsed.mergeID)
-            self?.recordLiveScreenSetPlacements()
+            self?.recordLiveScreenSetPlacement(of: collapsed)
             self?.reevaluateSeamApproach()
         }
         session.onSeamMarkerActivity = { [weak self] _ in
@@ -774,12 +774,8 @@ final class StashEngine {
         screenSets.invalidate()
     }
 
-    private func recordLiveScreenSetPlacements() {
-        guard !ScreenSetCoordinator.blocksUserGeometry else { return }
-        let present = Set(Preferences.shared.currentFingerprint().displayIDs)
-        let slots = sessions.compactMap(\.screenSetSlot).filter { present.contains($0.displayID) }
-        guard !slots.isEmpty else { return }
-        Preferences.shared.rememberCurrentPlacement(slots: slots)
+    private func recordLiveScreenSetPlacement(of session: StashSession) {
+        screenSets.recordPlacement(of: session, sessions: sessions)
     }
 
     private func activationKind(for bundleID: String) -> AppActivationKind {

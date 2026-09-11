@@ -2720,8 +2720,8 @@ struct EdgeStashLogicTests {
                 current: threeFingerprint,
                 configured: [],
                 flags: ScreenSetClassifyFlags(mirrorChanged: true)
-            ) == .cancel,
-            "a hardware mirror change is cancel even when the ID count also changed"
+            ) == .recover,
+            "a hardware mirror change preserves memory even when the ID count also changed"
         )
         expect(
             ScreenSetPolicy.classify(
@@ -2735,8 +2735,8 @@ struct EdgeStashLogicTests {
                 ),
                 configured: [threeFingerprint],
                 flags: ScreenSetClassifyFlags()
-            ) == .cancel,
-            "the same three IDs with swapped left and right must cancel"
+            ) == .none,
+            "same display IDs with swapped positions preserve membership and require geometry refresh"
         )
         expect(
             ScreenSetPolicy.classify(
@@ -2749,7 +2749,7 @@ struct EdgeStashLogicTests {
                     ]
                 ),
                 configured: [threeFingerprint],
-                flags: ScreenSetClassifyFlags(userRearrangeLikely: false)
+                flags: ScreenSetClassifyFlags()
             ) == .none,
             "a same-ID relation scramble without System Settings is not cancel"
         )
@@ -3055,8 +3055,8 @@ struct EdgeStashLogicTests {
                 currentIsConfigured: true,
                 onlyBuiltinMissing: false,
                 subsetHoldElapsed: 5
-            ) == .keepPreSleep,
-            "wake onto a remembered laptop-only set must not apply that layout"
+            ) == .applyClassified,
+            "wake onto a remembered laptop-only set applies drop after the enumeration grace"
         )
         expect(
             ScreenSetSettlePolicy.wakeDecision(
@@ -3202,6 +3202,8 @@ struct EdgeStashLogicTests {
                 "every bounded sync/Space/suspension timeline presents at most once per launch"
             )
         }
+
+        runScreenSetMemoryTests { condition, message in expect(condition, message) }
 
         if failed > 0 {
             fputs("\(failed) test(s) failed\n", stderr)

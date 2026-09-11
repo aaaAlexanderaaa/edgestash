@@ -472,42 +472,6 @@ final class Preferences: ObservableObject {
         Set(storedScreenSets.map(\.fingerprint))
     }
 
-    func rememberCurrentPlacement(slots: [StoredScreenSetSlot]) {
-        let fingerprint = currentFingerprint()
-        guard !slots.isEmpty else { return }
-        var next = storedScreenSets
-        if let index = next.firstIndex(where: { $0.fingerprint == fingerprint }) {
-            next[index].slots = slots
-        } else {
-            next.append(StoredScreenSet(fingerprint: fingerprint, slots: slots))
-        }
-        storedScreenSets = next
-    }
-
-    func slots(for fingerprint: ScreenSetFingerprint) -> [StoredScreenSetSlot] {
-        storedScreenSets.first { $0.fingerprint == fingerprint }?.slots ?? []
-    }
-
-    func discardScreenSet(fingerprint: ScreenSetFingerprint) {
-        let next = storedScreenSets.filter { $0.fingerprint != fingerprint }
-        if next != storedScreenSets {
-            storedScreenSets = next
-        }
-    }
-
-    func forgetScreenSetSlot(windowNumber: UInt32, bundleID: String) {
-        var next = storedScreenSets
-        for index in next.indices {
-            next[index].slots.removeAll {
-                $0.windowNumber == windowNumber && $0.bundleID == bundleID
-            }
-        }
-        next.removeAll { $0.slots.isEmpty }
-        if next != storedScreenSets {
-            storedScreenSets = next
-        }
-    }
-
     func allStashedDockAction(for bundleID: String) -> AllStashedDockAction {
         let stored = appProfiles[bundleID]?.allStashedDock.flatMap(AllStashedDockAction.init(rawValue:))
         return StashActivationPolicy.resolvedDockAction(stored)

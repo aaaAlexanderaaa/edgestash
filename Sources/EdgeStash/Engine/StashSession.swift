@@ -271,89 +271,74 @@ final class StashSession {
         _ = expand(fromDock: true)
     }
 
-    /// Keep the same display and edge; rebuild slide vs minimize from the
-    /// current adjacency after a scale or a screen-set rebind.
-    func refreshCollapsePresentation() {
-        guard isManaged, let edge, let displayID else { return }
-        let screens = NSScreen.screens
-        let displays = DisplayCatalog.adjacencyGeometries(screens: screens)
-        guard let display = displays.first(where: { $0.id == displayID }) else { return }
-        let frame = restoreFrame
-            ?? StashAX.frame(of: windowElement)
-            ?? CGRect(origin: display.frame.origin, size: CGSize(width: max(lockedWidth, 100), height: 400))
-        lockedWidth = frame.width > 0 ? frame.width : lockedWidth
-        restoreFrame = CGRect(
-            origin: StashGeometryPolicy.expandedOrigin(
-                edge: edge,
-                frame: frame,
-                display: display.frame,
-                lockedWidth: lockedWidth
-            ),
-            size: CGSize(width: lockedWidth, height: frame.height)
-        )
-        rescueVisibleFrame = restoreFrame
-        rescueDisplayFrame = display.frame
-        let previous = presentation
-        let next = StashSessionPolicy.collapsePresentation(
-            at: edge,
-            of: display,
-            windowFrame: restoreFrame,
-            in: displays
-        )
-        presentation = next
-        ignoringGeometryNotifications = true
-        defer { ignoringGeometryNotifications = false }
-        if phase == .expanded, let restoreFrame {
-            _ = StashAX.setFrame(windowElement, restoreFrame)
-            showMarker(windowQuartz: restoreFrame)
-            refreshPinControl()
-            notifyChanged()
-            return
-        }
-        if phase == .collapsed {
-            rehideCollapsed(on: display, previous: previous, next: next)
-        }
+    /// Invalidate callbacks carrying pre-change coordinates before waiting for
+    /// display enumeration. The settled transaction will restore presentation.
+    func prepareForScreenSetChange() {
+        cancelHoverReveal()
+        pendingGeometryDetach?.cancel()
+        pendingGeometryDetach = nil
+        animator.cancel()
+        lifecycleGeneration += 1
+        focusReleaseGeneration += 1
+        spaceRevealGeneration += 1
+        restoringShared = false
+        busy = false
     }
 
+    /// Keep the same display and side while rebasing actual desktop geometry.
     @discardableResult
-    func applyScreenSetSlot(displayID: String, edge: DisplayEdge) -> Bool {
-        let screens = NSScreen.screens
-        let displays = DisplayCatalog.adjacencyGeometries(screens: screens)
-        guard let display = displays.first(where: { $0.id == displayID }),
-              let screen = DisplayCatalog.screen(withID: displayID, screens: screens) else {
-            return false
-        }
-        let primaryHeight = DisplayCatalog.primaryHeight(screens: screens)
+    func refreshCollapsePresentation() -> Bool {
+        guard isManaged, let edge, let displayID else { return false }
+        let displays = DisplayCatalog.adjacencyGeometries()
+        guard let display = displays.first(where: { $0.id == displayID }) else { return false }
+        let frame = restoreFrame ?? StashAX.frame(of: windowElement)
+            ?? CGRect(origin: display.frame.origin, size: CGSize(width: max(lockedWidth, 100), height: 400))
+        let rebased = StashGeometryPolicy.screenSetFrame(
+            frame: frame, previousDisplay: rescueDisplayFrame, display: display.frame, edge: edge
+        )
+        restoreFrame = rebased
+        lockedWidth = rebased.width
+        rescueVisibleFrame = rebased
+        rescueDisplayFrame = display.frame
+        let next = StashSessionPolicy.collapsePresentation(
+            at: edge, of: display, windowFrame: rebased, in: displays
+        )
         ignoringGeometryNotifications = true
         defer { ignoringGeometryNotifications = false }
-        if isPinned { isPinned = false }
-        if phase == .idle {
-            let frame = StashAX.frame(of: windowElement)
-                ?? restoreFrame
-                ?? CGRect(
-                    x: display.frame.minX + 80,
-                    y: display.frame.minY + 80,
-                    width: max(lockedWidth, 480),
-                    height: 400
-                )
-            return capture(
-                edge: edge,
-                frame: frame,
-                display: display,
-                screen: screen,
-                primaryHeight: primaryHeight
-            )
-        }
-        self.edge = edge
-        self.displayID = displayID
-        if phase == .expanded || phase == .captured {
-            return collapse()
-        }
-        if phase == .collapsed {
-            refreshCollapsePresentation()
+        StashRescue.persist(session: self)
+        if phase == .expanded {
+            guard StashAX.setFrame(windowElement, rebased) else { return false }
+            presentation = next
+            showMarker(windowQuartz: rebased)
+            refreshPinControl()
+            notifyChanged()
             return true
         }
-        return false
+        guard rehideCollapsed(on: display, next: next) else { return false }
+        presentation = next
+        phase = .collapsed
+        showMarker(windowQuartz: rebased)
+        notifyChanged()
+        return true
+    }
+
+    /// Screen-set restores finish inside the coordinator's write guard. A
+    /// deferred collapse animation must not publish a partial target as memory.
+    @discardableResult
+    func applyScreenSetSlot(displayID: String, edge: DisplayEdge) -> Bool {
+        guard DisplayCatalog.screen(withID: displayID) != nil else { return false }
+        prepareForScreenSetChange()
+        if phase == .idle {
+            restoreFrame = StashAX.frame(of: windowElement) ?? restoreFrame
+        }
+        isPinned = false
+        leaveTimer?.invalidate()
+        pinWindow.conceal()
+        self.edge = edge
+        self.displayID = displayID
+        phase = .captured
+        markerHiddenForSpace = false
+        return refreshCollapsePresentation()
     }
 
     func leaveStash(to origin: CGPoint) {
@@ -498,8 +483,10 @@ final class StashSession {
             switch event {
             case .detachedFromEdge, .windowDestroyed, .appDisabled, .appTerminated:
                 if let windowID {
-                    Preferences.shared.forgetScreenSetSlot(windowNumber: windowID, bundleID: bundleID)
-                    ScreenSetCoordinator.active?.forgetDisplaced(windowNumber: windowID, bundleID: bundleID)
+                    ScreenSetCoordinator.active?.forgetPlacement(
+                        windowNumber: windowID, bundleID: bundleID,
+                        everywhere: event != .detachedFromEdge
+                    )
                 }
             case .miniaturized, .appQuitting, .accessibilityLost:
                 break
@@ -520,57 +507,36 @@ final class StashSession {
         notifyChanged()
     }
 
-    private func rehideCollapsed(
-        on display: DisplayGeometry,
-        previous: StashCollapsePresentation?,
-        next: StashCollapsePresentation
-    ) {
-        guard let edge, let restoreFrame else { return }
-        switch (previous, next) {
-        case (.slideOffscreen, .slideOffscreen), (nil, .slideOffscreen):
-            let hidden = StashGeometryPolicy.visualHiddenOrigin(
-                edge: edge,
-                frame: restoreFrame,
-                display: display.frame,
-                lockedWidth: lockedWidth
-            )
-            _ = StashAX.setFrame(
-                windowElement,
-                CGRect(origin: hidden, size: restoreFrame.size)
-            )
-            if let windowID {
-                _ = StashSurface.setAlpha(windowID: windowID, alpha: 0.02)
-            }
-            usingSharedMinimize = false
-        case (.systemMinimize, .systemMinimize), (nil, .systemMinimize):
-            usingSharedMinimize = true
-        case (.slideOffscreen, .systemMinimize):
-            _ = StashAX.setFrame(windowElement, restoreFrame)
-            if let windowID {
-                _ = StashSurface.setAlpha(windowID: windowID, alpha: 1)
-            }
+    private func rehideCollapsed(on display: DisplayGeometry, next: StashCollapsePresentation) -> Bool {
+        guard let edge, let restoreFrame else { return false }
+        switch next {
+        case .systemMinimize:
+            guard let screen = DisplayCatalog.screen(withID: display.id),
+                  let cgID = DisplayCatalog.displayID(for: screen) else { return false }
+            seamSpaceAvailability = DisplaySpaceTransport.shared.availability(for: cgID)
+            // Already minimized stashes may retain a disabled beacon while
+            // Space information is unavailable. New seam hides require support.
+            guard seamSpaceAvailability != .unavailable || usingSharedMinimize else { return false }
             usingSharedMinimize = true
             lastOwnedMinimizeAt = Date()
-            _ = StashAX.setMinimized(windowElement, true)
-        case (.systemMinimize, .slideOffscreen):
-            _ = StashAX.setMinimized(windowElement, false)
-            usingSharedMinimize = false
+            guard StashAX.isMinimized(windowElement) == true || StashAX.setMinimized(windowElement, true) else { return false }
+            // A minimized window is anchored by displayID; its frame can be
+            // written on the confirmed reveal path if AX rejects it while hidden.
+            if let windowID, !StashSurface.setAlpha(windowID: windowID, alpha: 1) { return false }
+        case .slideOffscreen:
             let hidden = StashGeometryPolicy.visualHiddenOrigin(
-                edge: edge,
-                frame: restoreFrame,
-                display: display.frame,
-                lockedWidth: lockedWidth
+                edge: edge, frame: restoreFrame, display: display.frame, lockedWidth: lockedWidth
             )
-            _ = StashAX.setFrame(
-                windowElement,
-                CGRect(origin: hidden, size: restoreFrame.size)
-            )
-            if let windowID {
-                _ = StashSurface.setAlpha(windowID: windowID, alpha: 0.02)
+            // Hide before deminiaturizing so a topology conversion cannot flash
+            // an ordinary window forward. No application activation is involved.
+            if let windowID, !StashSurface.setAlpha(windowID: windowID, alpha: 0.02) { return false }
+            if StashAX.isMinimized(windowElement) == true {
+                guard StashAX.setMinimized(windowElement, false) else { return false }
             }
+            usingSharedMinimize = false
+            guard StashAX.setFrame(windowElement, CGRect(origin: hidden, size: restoreFrame.size)) else { return false }
         }
-        showMarker(windowQuartz: restoreFrame)
-        notifyChanged()
+        return true
     }
 
     func capture(
@@ -580,7 +546,8 @@ final class StashSession {
         screen _: NSScreen,
         primaryHeight _: CGFloat
     ) -> Bool {
-        guard StashSessionPolicy.phase(after: .capture, from: phase) == .captured else { return false }
+        guard !ScreenSetCoordinator.blocksUserGeometry,
+              StashSessionPolicy.phase(after: .capture, from: phase) == .captured else { return false }
         markerHiddenForSpace = false
         self.edge = edge
         self.displayID = display.id
@@ -616,6 +583,7 @@ final class StashSession {
 
     @discardableResult
     func collapse(merged: Bool = false) -> Bool {
+        guard !ScreenSetCoordinator.blocksUserGeometry else { return false }
         guard !isPinned else { return false }
         guard let next = StashSessionPolicy.phase(after: .collapse, from: phase),
               let edge,
@@ -720,6 +688,7 @@ final class StashSession {
 
     @discardableResult
     func expand(fromDock: Bool, merged: Bool = false) -> Bool {
+        guard !ScreenSetCoordinator.blocksUserGeometry else { return false }
         guard let next = StashSessionPolicy.phase(after: .expand, from: phase),
               let restoreFrame else {
             return false

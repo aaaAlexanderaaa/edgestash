@@ -39,20 +39,9 @@ struct AppStashProfile: Codable, Equatable {
     }
 }
 
-/// One stashed standard window inside a remembered screen set.
-struct StoredScreenSetSlot: Codable, Equatable {
-    var windowNumber: UInt32
-    var bundleID: String
-    var displayID: String
-    var edge: Int
-}
-
-/// Stash placement for one configured screen set. Optional on disk so earlier
-/// documents still decode.
-struct StoredScreenSet: Codable, Equatable {
-    var fingerprint: ScreenSetFingerprint
-    var slots: [StoredScreenSetSlot]
-}
+// Keep the existing JSON shape; policy and runtime use the same values.
+typealias StoredScreenSetSlot = ScreenSetPlacement
+typealias StoredScreenSet = ScreenSetConfiguration
 
 enum DockClearanceMode: String, CaseIterable {
     case automatic

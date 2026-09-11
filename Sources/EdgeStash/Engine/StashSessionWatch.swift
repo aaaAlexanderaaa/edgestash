@@ -338,7 +338,7 @@ extension StashSession {
             shutdown(event: .windowDestroyed)
             return
         }
-        if ignoringGeometryNotifications { return }
+        if ignoringGeometryNotifications || ScreenSetCoordinator.blocksUserGeometry { return }
         let minimizeNotification: ManagedMinimizeNotification?
         switch name {
         case kAXWindowMiniaturizedNotification as String:
@@ -371,6 +371,7 @@ extension StashSession {
         }
         if name == kAXMovedNotification as String, !busy, let edge {
             guard !ignoringGeometryNotifications else { return }
+            if ScreenSetCoordinator.active?.reconcileUnannouncedTopology() == true { return }
             guard let frame = StashAX.frame(of: windowElement) else { return }
             let screens = NSScreen.screens
             let primaryHeight = DisplayCatalog.primaryHeight(screens: screens)

@@ -4,7 +4,7 @@ status: current
 authority: normative
 implementation: implemented
 verification_status: partial
-last_reconciled: 2026-09-03
+last_reconciled: 2026-09-10
 ---
 
 # Behavior grammar and the expectation check
@@ -100,6 +100,21 @@ coordinator/policy, add timeline evidence, and replace `structural-only` with an
 once-per-launch to re-entry notification is a behavior change: update this
 contract, the coordinator transitions, and their evidence together.
 
+## Screen-set system mutations
+
+The screen-set contract also declares the non-presentation effects below.
+The presentation scanner does not discover AX writes or preference saves;
+these are verified by the shared headless coordinator's timeline suite in
+`Tests/ScreenSetMemoryTests.swift` (`screen_set round-trip membership and
+memory invariants`). The manifest's presentation cardinality counts remain
+unchanged; these timeline checks do not claim real AX completion evidence.
+
+| Effect | Trigger and guards | Action and cardinality | Suppression / owner |
+|---|---|---|---|
+| screen-set placement | settled complete display observation; awake and a usable display exists | `ScreenSetCoordinator.apply` restores each target member, releases extras, refreshes retained members; each target is attempted once per application, with one on-desktop fallback if its write fails | `ScreenSetMemoryCoordinator` returns complete target sets; synchronous writes stay under `isApplying`; old animation callbacks are cancelled |
+| screen-set memory update | deliberate changed window membership/display/edge; observation settled and not mirrored | update that window in the selected memory; an unchanged reveal/pin/collapse writes no configuration | `ScreenSetMemoryCoordinator.recording` compares the window's placement; environment transitions never snapshot their result |
+| screen-set memory removal | drag out of stash, or window death/app termination/app disable | drag removes from current set; death/disable removes from every set | `ScreenSetMemoryCoordinator.forgetting`; reflow, scale and projection are not removal triggers |
+
 ## Manifest (machine-readable)
 
 The checker parses the pipe-separated rows between the markers below. Columns:
@@ -127,6 +142,13 @@ color_tint_picker | popup | Sources/EdgeStash/Settings/Controls/ColorMenus.swift
 <!-- END grammar-manifest -->
 
 ## Reconciliation log
+
+- **2026-09-10 — screen-set round trips:** declared AX placement and memory
+  effects separately from the presentation-only scanner. Their membership and
+  memory invariants now execute in the logic suite through the coordinator
+  used by the live app. The 12 presentation productions and their existing
+  cardinalities are unchanged; multi-display AX and owner review remain open.
+
 
 - **2026-09-03 — portable gate and honest coverage:** the structural scanner
   now preserves its regular expression under both BSD awk and GNU awk, validates

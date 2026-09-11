@@ -34,20 +34,15 @@ public struct ScreenSetClassifyFlags: Equatable {
     public var isSleepingOrWaking: Bool
     public var mirrorChanged: Bool
     public var scaleChanged: Bool
-    /// Same-ID relation changes are cancel only when the person is likely
-    /// rearranging in System Settings. A reflow during unplug is not cancel.
-    public var userRearrangeLikely: Bool
 
     public init(
         isSleepingOrWaking: Bool = false,
         mirrorChanged: Bool = false,
-        scaleChanged: Bool = false,
-        userRearrangeLikely: Bool = true
+        scaleChanged: Bool = false
     ) {
         self.isSleepingOrWaking = isSleepingOrWaking
         self.mirrorChanged = mirrorChanged
         self.scaleChanged = scaleChanged
-        self.userRearrangeLikely = userRearrangeLikely
     }
 }
 
@@ -58,7 +53,6 @@ public enum ScreenSetEvent: Equatable {
     case dropConfigured
     case dropUnconfigured
     case returnConfigured
-    case cancel
     case scale
     /// Identities changed in a way that is not increment, drop, or return.
     /// Keep every configured memory. Windows whose owning display is gone
@@ -116,8 +110,8 @@ public enum ScreenSetPolicy {
         if flags.isSleepingOrWaking { return .sleep }
 
         guard let previous else {
-            // First observation only records the baseline. Restoring or
-            // cancelling needs a previous set; launch/reboot is `fresh` in
+            // First observation only records the baseline. Restoration
+            // needs a previous set; launch/reboot is `fresh` in
             // the engine, not a classify event.
             return .none
         }
@@ -125,14 +119,12 @@ public enum ScreenSetPolicy {
         let previousIDs = Set(previous.displayIDs)
         let currentIDs = Set(current.displayIDs)
 
-        // Hardware mirroring is cancel even when the visible ID count drops.
-        // Overlapping frames during an unplug are not this flag.
-        if flags.mirrorChanged { return .cancel }
+        // Projection is temporary. Never discard the departed memory.
+        if flags.mirrorChanged {
+            return configured.contains(current) ? .returnConfigured : .recover
+        }
 
         if previousIDs == currentIDs {
-            if previous.relations != current.relations {
-                return flags.userRearrangeLikely ? .cancel : .none
-            }
             if flags.scaleChanged { return .scale }
             return .none
         }
@@ -152,8 +144,7 @@ public enum ScreenSetPolicy {
             return .increment
         }
 
-        // A shrink whose remaining frames have not settled must still be a
-        // drop, not cancel: cancel would discard the departed set's memory.
+        // A shrink retains the departed memory even if remaining frames reflow.
         if isShrink {
             return configured.contains(current) ? .dropConfigured : .dropUnconfigured
         }

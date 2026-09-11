@@ -84,7 +84,7 @@ public enum ScreenSetSettlePolicy {
         preSleepIDs: Set<String>?,
         currentIDs: Set<String>,
         currentIsConfigured: Bool,
-        onlyBuiltinMissing _: Bool,
+        onlyBuiltinMissing: Bool,
         subsetHoldElapsed: TimeInterval
     ) -> ScreenSetWakeDecision {
         guard let preSleepIDs else { return .applyClassified }
@@ -96,10 +96,9 @@ public enum ScreenSetSettlePolicy {
         }
         if isShrink {
             if subsetHoldElapsed < wakeSubsetGrace { return .waitLonger }
-            // Any still-incomplete pre-sleep set is wake, not unplug. Do not
-            // switch to a remembered laptop layout; that jumps stashes and
-            // jumps them back when the dock finishes enumerating.
-            return .keepPreSleep
+            // Clamshell sleep keeps the built-in placement. A genuinely
+            // unplugged external must become usable after enumeration settles.
+            return onlyBuiltinMissing ? .keepPreSleep : .applyClassified
         }
         if currentIsConfigured { return .restoreConfigured }
         return .applyClassified
