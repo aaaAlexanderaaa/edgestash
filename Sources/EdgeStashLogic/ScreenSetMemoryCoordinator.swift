@@ -67,6 +67,13 @@ public struct ScreenSetTransition {
 /// macOS adapter only observes displays and executes the returned operations.
 /// Environment changes never save a snapshot of their transient result.
 public struct ScreenSetMemoryCoordinator {
+    /// WindowServer numbers are process-lifetime facts, not durable window
+    /// identities. Preserve configured (including empty) screen sets on a new
+    /// EdgeStash launch, but never import a previous process's membership.
+    public static func startingFresh(_ configurations: [ScreenSetConfiguration]) -> [ScreenSetConfiguration] {
+        configurations.map { ScreenSetConfiguration(fingerprint: $0.fingerprint, slots: []) }
+    }
+
     public private(set) var observation: ScreenSetObservation
     public private(set) var memoryFingerprint: ScreenSetFingerprint?
     private var scaleAliases: [ScreenSetFingerprint: ScreenSetFingerprint] = [:]
@@ -147,7 +154,7 @@ public struct ScreenSetMemoryCoordinator {
                 event: event,
                 restore: target.slots,
                 release: Set(live.filter { !keys.contains($0.key) }.map(\.key)),
-                live: live
+                live: live, previous: previous
             )
         }
 
@@ -157,18 +164,28 @@ public struct ScreenSetMemoryCoordinator {
         let returning = current.mirroring || target != nil ? [] : displaced.values.filter {
             present.contains($0.displayID) && !managed.contains($0.key)
         }.sorted { $0.windowNumber < $1.windowNumber }
-        return transition(event: event, restore: returning, release: Set(gone.map(\.key)), live: live)
+        return transition(event: event, restore: returning, release: Set(gone.map(\.key)), live: live, previous: previous)
     }
 
     private mutating func transition(
-        event: ScreenSetEvent, restore: [ScreenSetPlacement], release: Set<ScreenSetWindowKey>, live: [ScreenSetPlacement]
+        event: ScreenSetEvent, restore: [ScreenSetPlacement], release: Set<ScreenSetWindowKey>,
+        live: [ScreenSetPlacement], previous: ScreenSetObservation
     ) -> ScreenSetTransition {
         lastPlacements = Dictionary(uniqueKeysWithValues: live.filter { !release.contains($0.key) }.map { ($0.key, $0) })
         for slot in restore { lastPlacements[slot.key] = slot }
         let restoring = Set(restore.map(\.key))
         let present = Set(observation.fingerprint.displayIDs)
-        let refresh = Set(live.filter {
-            present.contains($0.displayID) && !release.contains($0.key) && !restoring.contains($0.key)
+        let refresh = Set(live.filter { slot in
+            guard present.contains(slot.displayID), !release.contains(slot.key), !restoring.contains(slot.key) else { return false }
+            guard let before = previous.displays.first(where: { $0.id == slot.displayID }),
+                  let after = observation.displays.first(where: { $0.id == slot.displayID }),
+                  let edge = DisplayEdge(rawValue: slot.edge) else { return true }
+            // Repeated observations and unrelated display changes must not
+            // rewrite stable windows. Changed adjacency or geometry still does.
+            return before.frame != after.frame
+                || previous.scales[slot.displayID] != observation.scales[slot.displayID]
+                || DisplayEdgePolicy.collapseStrategy(at: edge, of: before, in: previous.displays)
+                    != DisplayEdgePolicy.collapseStrategy(at: edge, of: after, in: observation.displays)
         }.map(\.key))
         return ScreenSetTransition(event: event, restore: restore, release: release, refresh: refresh)
     }

@@ -4,7 +4,7 @@ status: current
 authority: normative
 implementation: implemented
 verification_status: partial
-last_reconciled: 2026-09-02
+last_reconciled: 2026-09-23
 supersedes: []
 ---
 
@@ -159,6 +159,24 @@ logical display map, edge halo, and seam beacon, and defer later product ideas.
 
 ## Failure, recovery, and intervention
 
+- Animation time completing does not prove a window reached its destination.
+  Commit a slide transition only after the final size/position writes succeed.
+  A failed collapse restores visibility; a failed expand restores the collapsed
+  presentation or takes the visibility-restoring release path. A failed
+  synchronous collapse of an expanded window resumes its leave watcher.
+- Recheck seam destination and membership immediately before deminimizing and
+  again after frame restoration, before activation. If the destination changed
+  without a delivered notification, or the frame write failed, compensate by
+  minimizing and clear the transaction; a failed compensation uses release.
+- An idle session and on-desktop frame geometry are not proof of visibility.
+  Rescue records survive failed opacity or deminimization writes, including
+  detach and subsequent quit. Exact numeric rescue matches require the same
+  app/process lifetime; an untrusted alpha-only rescue also verifies current
+  WindowServer ownership. A known-dead process receives no visibility writes.
+- A collapsed seam's transient unavailable state is rechecked by the existing
+  0.5-second poll. Only a changed availability refreshes its marker; no new
+  explanation is produced by polling.
+
 - If Accessibility is lost, restore managed windows where possible, preserve
   unresolved rescue records, and suspend the live engine.
 - If shared-edge minimization fails after positioning, restore the prior frame.
@@ -207,6 +225,13 @@ logical display map, edge halo, and seam beacon, and defer later product ideas.
   `docs/contracts/screen-set-and-window-life.md`.
 
 ## Reconciliation log
+
+- **2026-09-23 — transition completion and recovery audit:** repaired unchecked
+  animation/frame completion, final seam commit validation, failed-collapse
+  watcher cleanup, premature rescue clearing, and recycled process/window
+  identifiers. These implement INV-8/9 and the accepted window-life contract;
+  the audit distinguishes executable policy evidence from remaining live AX
+  and perceptual evidence.
 
 - **2026-09-02 — screen-set life accepted as target:** everyday plug,
   unplug, sleep, and app activation are first-version acceptance, not

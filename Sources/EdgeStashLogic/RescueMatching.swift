@@ -40,9 +40,11 @@ public enum RescueMatching {
         recordedEdge: Int,
         recordedFrame: CGRect,
         recordedDisplay: CGRect,
-        among candidates: [Candidate]
+        among candidates: [Candidate],
+        allowRecordedNumberMatch: Bool = true
     ) -> Verdict {
-        if let kept = candidates.first(where: { $0.windowID == recordedNumber }), let windowID = kept.windowID {
+        if allowRecordedNumberMatch,
+           let kept = candidates.first(where: { $0.windowID == recordedNumber }), let windowID = kept.windowID {
             return .matched(windowID)
         }
 
@@ -59,6 +61,13 @@ public enum RescueMatching {
             return .unresolved
         }
         return .matched(windowID)
+    }
+
+    public static func recordedProcessIsStillSame(
+        bundleMatches: Bool, launchedAt: Date?, recordedAt: Date
+    ) -> Bool {
+        guard bundleMatches, let launchedAt else { return false }
+        return launchedAt <= recordedAt
     }
 
     /// A size-only AX write is not a restore. Drop the record only when the

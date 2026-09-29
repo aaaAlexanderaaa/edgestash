@@ -37,7 +37,7 @@ final class StashSession {
         )
     }
     var captureGestureFrame: CGRect? {
-        guard isIdle, !busy else { return nil }
+        guard isIdle || isExpanded, !busy else { return nil }
         return StashAX.frame(of: windowElement)
     }
     var mergeID: String { String(describing: ObjectIdentifier(self)) }
@@ -91,6 +91,8 @@ final class StashSession {
     /// write must not be treated as a user drag off the edge.
     var ignoringGeometryNotifications = false
     var pendingGeometryDetach: DispatchWorkItem?
+    var externalGeometryWasDragged = false
+    private(set) var needsScreenSetRepair = false
 
     init(appElement: AXUIElement, windowElement: AXUIElement, pid: pid_t, bundleID: String) {
         self.appElement = appElement
@@ -126,7 +128,6 @@ final class StashSession {
         marker.onClicked = { [weak self] in self?.handleMarkerClick() }
         pinWindow.onToggle = { [weak self] in self?.togglePin() }
         installObserver()
-        adoptIfAlreadyHidden()
     }
 
     deinit {
@@ -274,7 +275,13 @@ final class StashSession {
     /// Invalidate callbacks carrying pre-change coordinates before waiting for
     /// display enumeration. The settled transaction will restore presentation.
     func prepareForScreenSetChange() {
+        externalGeometryWasDragged = false
+        needsScreenSetRepair = needsScreenSetRepair || busy || restoringShared || phase == .captured
         cancelHoverReveal()
+        leaveTimer?.invalidate()
+        leaveTimer = nil
+        outsideSince = nil
+        lastSiblingInteractionAt = nil
         pendingGeometryDetach?.cancel()
         pendingGeometryDetach = nil
         animator.cancel()
@@ -283,6 +290,26 @@ final class StashSession {
         spaceRevealGeneration += 1
         restoringShared = false
         busy = false
+    }
+
+    func resumeAfterScreenSetChange() {
+        leaveStashIfFullScreened()
+        // A quiet increment can skip every AX write and still needs to resume
+        // the watcher paused during enumeration.
+        if isExpanded, !isPinned, leaveTimer?.isValid != true {
+            outsideSince = nil
+            lastSiblingInteractionAt = nil
+            startLeaveWatch()
+        }
+    }
+
+    func adoptExternalPlacement(frame: CGRect, display: DisplayGeometry, edge: DisplayEdge) {
+        self.edge = edge
+        displayID = display.id
+        restoreFrame = frame
+        rescueDisplayFrame = display.frame
+        lockedWidth = frame.width
+        if !refreshCollapsePresentation() { shutdown(event: .miniaturized) }
     }
 
     /// Keep the same display and side while rebasing actual desktop geometry.
@@ -307,6 +334,12 @@ final class StashSession {
         defer { ignoringGeometryNotifications = false }
         StashRescue.persist(session: self)
         if phase == .expanded {
+            // A cancelled slide may have crossed the alpha/minimize boundary
+            // before committing its phase. Restore the whole appearance.
+            if StashAX.isMinimized(windowElement) == true,
+               !StashAX.setMinimized(windowElement, false) { return false }
+            if let windowID, !StashSurface.setAlpha(windowID: windowID, alpha: 1) { return false }
+            usingSharedMinimize = false
             guard StashAX.setFrame(windowElement, rebased) else { return false }
             presentation = next
             showMarker(windowQuartz: rebased)
@@ -319,12 +352,14 @@ final class StashSession {
                 startLeaveWatch()
             }
             refreshPinControl()
+            needsScreenSetRepair = false
             notifyChanged()
             return true
         }
         guard rehideCollapsed(on: display, next: next) else { return false }
         presentation = next
         phase = .collapsed
+        needsScreenSetRepair = false
         showMarker(windowQuartz: rebased)
         notifyChanged()
         return true
@@ -440,6 +475,11 @@ final class StashSession {
         lastSiblingInteractionAt = nil
         hoverDelayTimer?.invalidate()
         leaveTimer?.invalidate()
+        if event == .detachedFromEdge, let liveFrame = StashAX.frame(of: windowElement) {
+            // Keep the user's actual landing frame for a failed visibility
+            // undo; a later retry must not return a deliberate drag to the edge.
+            restoreFrame = liveFrame
+        }
         let shouldRestore = SessionLifecyclePolicy.shouldRestoreVisibility(for: event)
         var positionOK = true
         var alphaOK = true
@@ -460,13 +500,14 @@ final class StashSession {
             unminimizeOK = StashAX.isMinimized(windowElement) == false
                 || StashAX.setMinimized(windowElement, false)
         }
-        if SessionLifecyclePolicy.shouldClearRescueRecords(
+        let restorationSettled = SessionLifecyclePolicy.shouldClearRescueRecords(
             for: event,
             restorePositionSucceeded: positionOK,
             restoreAlphaSucceeded: alphaOK,
             restoreUnminimizeSucceeded: unminimizeOK,
             isFloating: phase == .idle
-        ) {
+        )
+        if restorationSettled {
             StashRescue.clear(processID: pid, windowNumber: windowID)
         }
         hideMarker()
@@ -476,12 +517,13 @@ final class StashSession {
             uninstallObserver()
         }
         phase = .idle
+        needsScreenSetRepair = false
         edge = nil
         presentation = nil
-        usingSharedMinimize = false
+        usingSharedMinimize = !unminimizeOK
         lastOwnedMinimizeAt = .distantPast
         isPinned = false
-        if SessionLifecyclePolicy.shouldClearDisplayBinding(for: event) {
+        if restorationSettled, SessionLifecyclePolicy.shouldClearDisplayBinding(for: event) {
             displayID = nil
             restoreFrame = nil
             rescueVisibleFrame = nil
@@ -537,7 +579,8 @@ final class StashSession {
             )
             // Hide before deminiaturizing so a topology conversion cannot flash
             // an ordinary window forward. No application activation is involved.
-            if let windowID, !StashSurface.setAlpha(windowID: windowID, alpha: 0.02) { return false }
+            guard let windowID,
+                  StashSurface.setAlpha(windowID: windowID, alpha: StashGeometryPolicy.hiddenWindowAlpha) else { return false }
             if StashAX.isMinimized(windowElement) == true {
                 guard StashAX.setMinimized(windowElement, false) else { return false }
             }
@@ -573,20 +616,9 @@ final class StashSession {
         rescueVisibleFrame = restoreFrame
         phase = .captured
         if collapse() { return true }
-        revertFailedCapture()
+        restoreFrame = frame
+        shutdown(event: .miniaturized)
         return false
-    }
-
-    private func revertFailedCapture() {
-        phase = .idle
-        edge = nil
-        displayID = nil
-        restoreFrame = nil
-        rescueVisibleFrame = nil
-        rescueDisplayFrame = nil
-        presentation = nil
-        usingSharedMinimize = false
-        busy = false
     }
 
     @discardableResult
@@ -646,13 +678,24 @@ final class StashSession {
         StashRescue.persist(session: self)
         leaveTimer?.invalidate()
         pinWindow.conceal()
+        var collapseStarted = false
+        defer {
+            if !collapseStarted, phase == .expanded, !isPinned {
+                outsideSince = nil
+                startLeaveWatch()
+                refreshPinControl()
+            }
+        }
 
         switch presentation {
         case .systemMinimize:
             guard StashAX.canSetMinimized(windowElement) else { return false }
             let priorFrame = StashAX.frame(of: windowElement) ?? frame
             let moved = StashAX.setFrame(windowElement, expanded)
-            guard moved else { return false }
+            guard moved else {
+                _ = StashAX.setFrame(windowElement, priorFrame)
+                return false
+            }
             usingSharedMinimize = true
             restoringShared = false
             lastOwnedMinimizeAt = Date()
@@ -681,16 +724,19 @@ final class StashSession {
                 to: hidden,
                 collapsing: true,
                 merged: merged
-            ) { [weak self] in
+            ) { [weak self] placed in
                 guard let self else { return }
-                if let windowID = self.windowID {
-                    // 2% alpha keeps the window composited and AX-addressable while being
-                    // invisible; exactly zero can let macOS drop it from the layer tree.
-                    _ = StashSurface.setAlpha(windowID: windowID, alpha: 0.02)
+                // The 2pt positioning lip must not contribute content pixels.
+                // A failed hide cannot commit a falsely collapsed session.
+                guard placed, let windowID = self.windowID,
+                      StashSurface.setAlpha(windowID: windowID, alpha: StashGeometryPolicy.hiddenWindowAlpha) else {
+                    self.shutdown(event: .miniaturized)
+                    return
                 }
                 self.finishCollapse(next: next, frame: expanded, merged: merged)
             }
         }
+        collapseStarted = true
         return true
     }
 
@@ -721,7 +767,10 @@ final class StashSession {
         }
         let current = StashAX.frame(of: windowElement) ?? restoreFrame
         if let windowID {
-            _ = StashSurface.setAlpha(windowID: windowID, alpha: 1)
+            guard StashSurface.setAlpha(windowID: windowID, alpha: 1) else {
+                busy = false
+                return false
+            }
         }
         let screens = NSScreen.screens
         let primaryHeight = DisplayCatalog.primaryHeight(screens: screens)
@@ -731,8 +780,14 @@ final class StashSession {
             to: restoreFrame.origin,
             collapsing: false,
             merged: merged
-        ) { [weak self] in
-            self?.finishExpand(next: next, frame: restoreFrame, fromDock: fromDock)
+        ) { [weak self] placed in
+            guard let self else { return }
+            guard placed else {
+                self.busy = false
+                if !self.refreshCollapsePresentation() { self.shutdown(event: .miniaturized) }
+                return
+            }
+            self.finishExpand(next: next, frame: restoreFrame, fromDock: fromDock)
         }
         return true
     }
@@ -748,7 +803,10 @@ final class StashSession {
         if StashAX.isMinimized(windowElement) == false {
             usingSharedMinimize = false
             restoringShared = true
-            _ = StashAX.setFrame(windowElement, restoreFrame)
+            guard StashAX.setFrame(windowElement, restoreFrame) else {
+                failSharedRevealAfterDeminimize()
+                return false
+            }
             finishExpand(next: next, frame: restoreFrame, fromDock: false, activatesApp: false)
             restoringShared = false
             return true
@@ -784,10 +842,16 @@ final class StashSession {
                 return
             }
             switch result {
-            case .success:
+            case let .success(targetSpaceID):
+                guard DisplaySpaceTransport.shared.confirmsDestination(
+                    windowID: windowID, displayID: cgDisplayID, targetSpaceID: targetSpaceID
+                ) else {
+                    self.failSharedRevealAfterDeminimize()
+                    return
+                }
                 if fromDock { StashFocusReturn.remember(excluding: self.pid) }
                 guard StashAX.setMinimized(self.windowElement, false) else {
-                    self.failSharedReveal(availability: .unavailable)
+                    self.failSharedRevealAfterDeminimize()
                     return
                 }
                 self.usingSharedMinimize = false
@@ -797,7 +861,17 @@ final class StashSession {
                           self.spaceRevealGeneration == revealToken else {
                         return
                     }
-                    _ = StashAX.setFrame(self.windowElement, restoreFrame)
+                    guard !ScreenSetCoordinator.blocksUserGeometry,
+                          DisplaySpaceTransport.shared.confirmsDestination(
+                            windowID: windowID, displayID: cgDisplayID, targetSpaceID: targetSpaceID
+                          ),
+                          StashAX.setFrame(self.windowElement, restoreFrame),
+                          DisplaySpaceTransport.shared.confirmsDestination(
+                            windowID: windowID, displayID: cgDisplayID, targetSpaceID: targetSpaceID
+                          ) else {
+                        self.failSharedRevealAfterDeminimize()
+                        return
+                    }
                     self.finishExpand(next: next, frame: restoreFrame, fromDock: fromDock)
                     self.restoringShared = false
                 }
@@ -847,6 +921,14 @@ final class StashSession {
         }
     }
 
+    private func failSharedRevealAfterDeminimize() {
+        cancelPendingSpaceReveal()
+        // Cancellation can release the session when re-minimize itself fails.
+        // Never recreate a collapsed marker after that visibility fallback.
+        guard phase == .collapsed else { return }
+        failSharedReveal(availability: .unavailable)
+    }
+
     /// An expanded seam window was minimized outside the collapse() write.
     /// Minimize is the hide, so keep the session and restore the beacon.
     func adoptSeamRecollapse() {
@@ -883,7 +965,6 @@ final class StashSession {
         cancelHoverReveal()
         if let restoreFrame { showMarker(windowQuartz: restoreFrame) }
         notifyChanged()
-        marker.showDisabledExplanation()
     }
 
     func finishExpand(
@@ -937,7 +1018,7 @@ final class StashSession {
         to end: CGPoint,
         collapsing: Bool,
         merged: Bool,
-        completion: @escaping () -> Void
+        completion: @escaping (Bool) -> Void
     ) {
         let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         let height = (StashAX.frame(of: windowElement) ?? restoreFrame)?.height ?? lockedWidth
@@ -950,10 +1031,9 @@ final class StashSession {
                 span: StashMotionPolicy.span(reduceMotion: reduceMotion, collapsing: collapsing, merged: merged),
                 size: CGSize(width: lockedWidth, height: height),
                 refundsClock: !merged
-            )
-        ) {
-            completion()
-        }
+            ),
+            onSettled: completion
+        )
     }
 
     private func playEffects(collapsing: Bool, merged: Bool, frame: CGRect, primaryHeight: CGFloat) {

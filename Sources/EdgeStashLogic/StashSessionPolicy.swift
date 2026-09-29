@@ -20,9 +20,71 @@ public enum StashCollapsePresentation: Equatable {
     case systemMinimize
 }
 
+public enum ManagedGeometryAction: Equatable {
+    case none
+    case detach
+    case repairHidden
+    case rebind(displayID: String, edge: DisplayEdge)
+}
+
 /// AppKit-free stash session rules. The live engine (Task 5+) applies these
 /// outcomes; this type does not talk to Accessibility or move windows.
 public enum StashSessionPolicy {
+    /// AXMoved describes a physical change, not necessarily a user decision.
+    /// Hidden windows moved by the system retain membership. Visible user
+    /// drags may leave stash or change sides; a system move to another display
+    /// retains the original side even if the system centers its initial frame.
+    public static func externalGeometryAction(
+        phase: StashSessionPhase, presentation: StashCollapsePresentation?,
+        frame: CGRect, displayID: String, edge: DisplayEdge,
+        displays: [DisplayGeometry], wasDragged: Bool,
+        isBusy: Bool = false, screenSetQuiet: Bool = false
+    ) -> ManagedGeometryAction {
+        guard !isBusy, !screenSetQuiet else { return .none }
+        guard let source = displays.first(where: { $0.id == displayID }) else { return .none }
+        func alignedSide(on display: DisplayGeometry) -> DisplayEdge? {
+            ([edge] + DisplayEdge.allCases.filter { $0 != edge }).first {
+                abs($0 == .left ? frame.minX - display.frame.minX : frame.maxX - display.frame.maxX) <= 20
+            }
+        }
+        if phase == .collapsed, let presentation {
+            // A hidden frame may overlap its old neighbor almost entirely;
+            // the narrow lip identifies the display it is actually parked on.
+            let parkedDestination = displays.first {
+                $0.id != displayID && frame.intersection($0.frame).width > 0
+                    && StashGeometryPolicy.parkedEdge(of: frame, in: $0.frame) != nil
+            }
+            let destination = parkedDestination
+                ?? StashGeometryPolicy.owningDisplay(for: frame, in: displays, preferredID: displayID)
+            if let destination, destination.id != displayID {
+                if !wasDragged { return .rebind(displayID: destination.id, edge: edge) }
+                if let side = StashGeometryPolicy.parkedEdge(of: frame, in: destination.frame)
+                    ?? alignedSide(on: destination) {
+                    return .rebind(displayID: destination.id, edge: side)
+                }
+                return .detach
+            }
+            if wasDragged, let side = alignedSide(on: source) {
+                return side == edge && StashGeometryPolicy.isStillOnStashEdge(
+                    frame: frame, display: source.frame, edge: edge, presentation: presentation
+                ) ? .none : .rebind(displayID: displayID, edge: side)
+            }
+            if StashGeometryPolicy.isStillOnStashEdge(frame: frame, display: source.frame, edge: edge, presentation: presentation) {
+                return .none
+            }
+            return wasDragged ? .detach : .repairHidden
+        }
+        guard phase == .expanded,
+              let destination = StashGeometryPolicy.owningDisplay(for: frame, in: displays) else { return .none }
+        if let side = alignedSide(on: destination) {
+            return destination.id == displayID && side == edge ? .none : .rebind(displayID: destination.id, edge: side)
+        }
+        if destination.id != displayID, !wasDragged {
+            return .rebind(displayID: destination.id, edge: edge)
+        }
+        return .detach
+    }
+
     /// Edge capture belongs to the window that was under the pointer when the
     /// gesture began, and only after that window actually moved. AX positions
     /// can round by a fraction of a point, so a one-point threshold filters a
@@ -116,18 +178,6 @@ public enum StashSessionPolicy {
         }
     }
 
-    /// Rearranging displays can flip a seam from slide-off to minimize (or
-    /// drop the display). Restore the window instead of keeping a stale stash.
-    public static func shouldReleaseAfterTopologyChange(
-        current: StashCollapsePresentation?,
-        next: StashCollapsePresentation?,
-        displayStillPresent: Bool
-    ) -> Bool {
-        if !displayStillPresent { return true }
-        guard let current, let next else { return true }
-        return current != next
-    }
-
     /// Collapse binds an edge to the capture display. Prefer that display
     /// over whichever screen currently owns the most pixels — a seam-spanning
     /// frame would otherwise flip the presentation to the neighbor.
@@ -187,48 +237,4 @@ public enum StashSessionPolicy {
         didMoveToExpanded && !minimizeSucceeded
     }
 
-    /// An expanded window dragged off the stash edge is released. A pin
-    /// keeps the session so leave-collapse still works after the window
-    /// is put back.
-    public static func shouldIgnoreGeometryMove(
-        screenSetQuiet: Bool,
-        owningDisplayConnected: Bool
-    ) -> Bool {
-        screenSetQuiet || !owningDisplayConnected
-    }
-
-    public static func shouldDetachAfterOffEdgeMove(
-        isPinned: Bool,
-        stillOnEdge: Bool,
-        owningDisplayConnected: Bool = true,
-        screenSetQuiet: Bool = false
-    ) -> Bool {
-        if shouldIgnoreGeometryMove(
-            screenSetQuiet: screenSetQuiet,
-            owningDisplayConnected: owningDisplayConnected
-        ) {
-            return false
-        }
-        return !isPinned && !stillOnEdge
-    }
-
-    /// Mission Control (and other space exposés) can drag a collapsed
-    /// window off its parked edge. The session must release so the
-    /// window becomes idle and capturable on its new display. A vanished
-    /// display or a screen-set quiet period is not that drag.
-    public static func shouldReleaseCollapsedAfterExternalMove(
-        isCollapsed: Bool,
-        isBusy: Bool,
-        stillParkedOnOwningEdge: Bool,
-        owningDisplayConnected: Bool = true,
-        screenSetQuiet: Bool = false
-    ) -> Bool {
-        if shouldIgnoreGeometryMove(
-            screenSetQuiet: screenSetQuiet,
-            owningDisplayConnected: owningDisplayConnected
-        ) {
-            return false
-        }
-        return isCollapsed && !isBusy && !stillParkedOnOwningEdge
-    }
 }

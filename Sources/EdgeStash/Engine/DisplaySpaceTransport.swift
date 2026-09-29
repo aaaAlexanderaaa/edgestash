@@ -43,6 +43,17 @@ final class DisplaySpaceTransport {
         )
     }
 
+    /// Re-read at the actual commit, not only at the earlier async prepare.
+    /// Notifications can arrive after a blocking AX write has already returned.
+    func confirmsDestination(windowID: UInt32, displayID: CGDirectDisplayID, targetSpaceID: UInt64) -> Bool {
+        guard case let .ready(current) = availability(for: displayID) else { return false }
+        return SpaceChangePolicy.mayCommitSeamReveal(
+            targetSpaceID: targetSpaceID,
+            currentDisplaySpaceID: current,
+            membershipConfirmed: ESWindowSpaceMembership(windowID, targetSpaceID) == 1
+        )
+    }
+
     func prepareMinimizedWindow(
         windowID: UInt32,
         for displayID: CGDirectDisplayID,

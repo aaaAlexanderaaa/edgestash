@@ -62,7 +62,11 @@ enum StashRescue {
                 ) else {
                     continue
                 }
-                _ = StashSurface.setAlpha(windowID: dossier.subject.windowNumber, alpha: 1)
+                if recordedProcessIsStillSame(dossier), StashSurface.belongsToProcess(
+                    windowID: dossier.subject.windowNumber, pid: dossier.subject.processID
+                ) {
+                    _ = StashSurface.setAlpha(windowID: dossier.subject.windowNumber, alpha: 1)
+                }
             }
             NSLog("[EdgeStash] rescue \(reason): AX untrusted, alpha-only for \(preferences.rescueDossiers.count) dossier(s)")
             return
@@ -129,17 +133,12 @@ enum StashRescue {
             guard let (element, windowID, frame) = locateRecordedWindow(in: appElement, dossier: dossier) else {
                 continue
             }
-            if scatterOrigin == nil,
-               let savedDisplay = dossier.placement.display.rect,
-               RescueMatching.shouldSkipRestoreBecauseAlreadyVisible(frame: frame, display: savedDisplay),
-               displayStillPresent(savedDisplay, in: DisplayCatalog.adjacencyGeometries()) {
-                _ = StashSurface.setAlpha(windowID: windowID, alpha: 1)
-                Preferences.shared.removeRescueDossier(
-                    processID: dossier.subject.processID,
-                    windowNumber: dossier.subject.windowNumber
-                )
-                return true
-            }
+            // On-desktop geometry does not prove visibility: minimized seam
+            // windows retain that same frame, and alpha restoration can fail.
+            let alreadyPlaced = scatterOrigin == nil && dossier.placement.display.rect.map {
+                RescueMatching.shouldSkipRestoreBecauseAlreadyVisible(frame: frame, display: $0)
+                    && displayStillPresent($0, in: DisplayCatalog.adjacencyGeometries())
+            } == true
             let placement = placementFrame(for: dossier, current: frame, scatterOrigin: scatterOrigin)
             let alphaRestored = StashSurface.setAlpha(windowID: windowID, alpha: 1)
             let unminimized: Bool
@@ -148,7 +147,7 @@ enum StashRescue {
             } else {
                 unminimized = StashAX.setMinimized(element, false)
             }
-            let applied = StashAX.applyFrame(element, placement)
+            let applied = alreadyPlaced ? (sized: true, moved: true) : StashAX.applyFrame(element, placement)
             if RescueMatching.recordIsSettled(
                 moved: applied.moved,
                 resized: applied.sized,
@@ -173,15 +172,26 @@ enum StashRescue {
     /// (the app may have relaunched under a new pid). Original pid first.
     private static func restorationTargets(for dossier: RescueDossier) -> [pid_t] {
         let alive = NSWorkspace.shared.runningApplications.filter { !$0.isTerminated }
-        let original = alive.first { $0.processIdentifier == dossier.subject.processID }
+        let original = alive.first {
+            $0.processIdentifier == dossier.subject.processID
+                && recordedProcessIsStillSame(dossier)
+        }
         let bundleKin = alive.filter {
-            $0.processIdentifier != dossier.subject.processID
+            $0.processIdentifier != original?.processIdentifier
                 && $0.bundleIdentifier == dossier.subject.bundleID
         }
 
         var targets: [pid_t] = original.map { [$0.processIdentifier] } ?? []
         targets.append(contentsOf: bundleKin.map(\.processIdentifier))
         return targets
+    }
+
+    private static func recordedProcessIsStillSame(_ dossier: RescueDossier) -> Bool {
+        let app = NSRunningApplication(processIdentifier: dossier.subject.processID)
+        return RescueMatching.recordedProcessIsStillSame(
+            bundleMatches: app?.bundleIdentifier == dossier.subject.bundleID,
+            launchedAt: app?.launchDate, recordedAt: dossier.recordedAt
+        )
     }
 
     private static func reviveApp(pid: pid_t) {
@@ -215,7 +225,12 @@ enum StashRescue {
             recordedEdge: dossier.placement.edge,
             recordedFrame: savedFrame,
             recordedDisplay: savedDisplay,
-            among: candidates
+            among: candidates,
+            allowRecordedNumberMatch: {
+                var pid: pid_t = 0
+                return AXUIElementGetPid(appElement, &pid) == .success
+                    && pid == dossier.subject.processID && recordedProcessIsStillSame(dossier)
+            }()
         )
         switch verdict {
         case .matched(let windowID):

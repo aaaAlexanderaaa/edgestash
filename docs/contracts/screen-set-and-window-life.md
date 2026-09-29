@@ -4,7 +4,7 @@ status: target
 authority: normative
 implementation: implemented
 verification_status: partial
-last_reconciled: 2026-09-11
+last_reconciled: 2026-09-23
 supersedes_clauses_of: docs/contracts/edgestash.md
 ---
 
@@ -313,7 +313,32 @@ stash. Exiting full screen does not put it back on the edge.
 - If cancelling an in-flight collapse leaves an unpinned session expanded,
   a successful geometry refresh resumes its leave watcher with a fresh dwell.
   Pinned sessions continue to suppress automatic collapse.
+- Display-only power-off pauses window reactions too. Every screens-did-wake
+  reconciles the settled displays, even without system sleep notifications.
+  Only actual system sleep authorizes the closed-lid wake hold; display-only
+  wake follows ordinary drop rules after enumeration. Empty enumeration does
+  not consume the wake baseline.
+- A temporary AX/discovery failure during restoration keeps the remembered
+  target and schedules at most three retries after 1, 2, and 4 seconds. Only
+  failed targets retry; each failed write uses the on-desktop fallback. A new
+  selected memory supersedes old retry destinations; same-memory observations
+  retain pending targets. Deliberate recapture, death, or disable cancels that
+  window's pending target. Exhaustion leaves memory intact for a later return.
 - Pin does not create a second screen-set policy.
+- Geometry reconciliation waits until a drag finishes. A drag to the opposite
+  edge keeps membership; a drag back to the desktop releases even a pinned
+  stash. A non-drag system move to another connected display keeps the same
+  side. An unsolicited move of a collapsed window repairs its hidden
+  presentation instead of forgetting its placement.
+- Fresh EdgeStash launches load configured screen-set keys with empty window
+  memberships. Old numeric window identifiers cannot restore membership after
+  a later replug. Discovery never captures a window merely because its frame
+  resembles a parked window; pending rescue restores visibility separately.
+- Duplicate observations of the same selected memory do not reset failed
+  targets' retry budgets. An unaffected stash on an increment receives no AX
+  placement write; changed adjacency, changed coordinates, and cancelled
+  in-flight animations still require reconciliation. Paused leave watchers
+  resume even when no placement write was needed.
 
 ## Failure, recovery, and intervention
 
@@ -354,6 +379,29 @@ do not.
   and that lid-sleep does not move stashes.
 
 ## Reconciliation log
+
+- **2026-09-23 — state-machine boundary audit:** fixed duplicate observations
+  resetting the retry budget, cross-launch window-number membership reuse,
+  user/system geometry conflation, pinned-drag and opposite-edge handling,
+  and unnecessary writes on quiet increments. The shared live geometry
+  decision and failure/identity cases run in `StateMachineBoundaryTests.swift`.
+  The audit and remaining live-input/physical verification gaps are recorded
+  in `docs/reviews/2026-09-23-state-machine-audit.md`.
+
+- **2026-09-22 — power and restoration follow-through:** owner reports further
+  display-switch, power-cycle, and unplug/return failures. Display-only wake
+  previously did nothing outside a system-sleep pass, and failed AX restoration
+  only retried on a later topology change. The adapter now handles display power
+  separately, preserves wake through empty enumeration, retries failed targets
+  with a bounded backoff, and rechecks topology before a deferred move can
+  forget placement. Cancelling animation also stops leave timers; retaining an
+  expanded window restores its alpha/minimized state as well as its frame.
+  Headless timelines cover power notification order and retry target/budget
+  rules; physical display cycles and owner review remain required.
+  The expectation check passed. `stage-app.sh` built both Debug and Release
+  with Apple Command Line Tools and staged the Release app, zip, and
+  `CURRENT.txt`; the script records that toolchain explicitly. This Mac still
+  lacks full Xcode, so the required Xcode-project Debug gate remains open.
 
 - **2026-09-11 — review fixes:** the clamshell hold now belongs to the memory
   coordinator across observations, with timeline regressions for repeated

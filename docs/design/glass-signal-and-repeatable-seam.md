@@ -5,7 +5,7 @@ status: target
 authority: normative
 implementation: in_progress
 verification_status: pending
-last_reconciled: 2026-08-31
+last_reconciled: 2026-09-22
 supersedes_visual_clauses_of: docs/design/logical-display-and-seam-beacon.md
 ---
 
@@ -129,6 +129,13 @@ geometry. The merge label column is not hit geometry: only `merge-hit`
 consumes pointer events. A 240pt merge window that eats clicks is a
 defect.
 
+An exposed-edge stash's real window must contribute no content pixels while
+collapsed. The 2pt positioning lip is fully transparent (window alpha zero),
+including Terminal text and borders; only the separate glass rail remains
+visible. A failed transparency write cannot commit a collapsed presentation.
+Revealing or releasing the window restores full opacity. Shared seams continue
+to hide with system minimization.
+
 ### Interaction map
 
 Interaction IDs in the current surface stay (`restore-from-beacon`,
@@ -216,6 +223,17 @@ leave a visible `seam-rail` in `glass-painted` (or `glass-system` on the pin).
   pin, halo, and sheen match; system minimization still hides the window.
 
 ## Reconciliation log
+
+- **2026-09-22 — eliminate content leaking through the outer lip:** the owner
+  reported small window slivers and Terminal horizontal lines after stashing.
+  The old 2% window alpha left content visible through the 2pt lip. Collapsed
+  slide windows now use zero alpha, with checked hide/reveal writes. A disposable
+  local WindowServer probe confirmed a zero-alpha window remains enumerable in
+  both all-window and on-screen metadata on this Mac. This is not a claim of
+  multi-display perceptual verification or older-macOS coverage.
+  A separate cross-process AX probe could not run its cycles because the
+  diagnostic executable lacks Accessibility trust; live AX hide/reveal review
+  remains open. Debug/Release CLT builds and the expectation check passed.
 
 - **2026-08-31 — merge label column was eating the desktop:** the reserved
   240pt merge panel (sized for hover labels) was the live `NSPanel`

@@ -50,6 +50,12 @@ public enum FocusReturnPolicy {
         !settingsIsKey
     }
 
+    /// A delayed collapse callback may run after the person has already
+    /// switched apps. In that case their newer focus choice wins.
+    public static func shouldReturnFocus(sourcePID: Int32, frontmostPID: Int32?) -> Bool {
+        frontmostPID == sourcePID
+    }
+
     /// Dock / shortcut reveal may return focus. A user unminimize or hover
     /// reveal must leave the window frontmost.
     public static func shouldReleaseAfterExpand(fromDock: Bool) -> Bool {

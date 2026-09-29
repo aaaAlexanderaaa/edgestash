@@ -1,5 +1,88 @@
 import Foundation
 
+/// AX and app discovery can lag a settled display observation. Retry only the
+/// failed targets, at 1/2/4 seconds, then leave the usable fallback and memory.
+/// A new environment replaces this queue; deliberate capture/death cancels a key.
+public struct ScreenSetRestorationRetry {
+    private var failures: [ScreenSetWindowKey: (slot: ScreenSetPlacement, count: Int, dueAt: Date?)] = [:]
+    private static let delays: [TimeInterval] = [1, 2, 4]
+
+    public init() {}
+
+    /// A repeated observation in the same selected memory preserves pending
+    /// targets without spending their timed retry attempts early. A changed
+    /// target is a new placement and can be attempted immediately.
+    public mutating func beginApplication(
+        restoring slots: [ScreenSetPlacement], retainingPending: Bool
+    ) -> [ScreenSetPlacement] {
+        if !retainingPending { failures.removeAll() }
+        return slots.filter { slot in
+            guard let failed = failures[slot.key] else { return true }
+            return failed.slot != slot
+        }.sorted { ($0.bundleID, $0.windowNumber) < ($1.bundleID, $1.windowNumber) }
+    }
+
+    public var pending: [ScreenSetPlacement] {
+        failures.values.filter { $0.dueAt != nil }.map(\.slot).sorted {
+            ($0.bundleID, $0.windowNumber) < ($1.bundleID, $1.windowNumber)
+        }
+    }
+
+    public func due(now: Date = Date()) -> [ScreenSetPlacement] {
+        pending.filter { slot in
+            failures[slot.key]?.dueAt.map { $0 <= now } == true
+        }
+    }
+
+    public func nextDelay(now: Date = Date()) -> TimeInterval? {
+        failures.values.compactMap(\.dueAt).min().map { max(0, $0.timeIntervalSince(now)) }
+    }
+
+    public mutating func failed(_ slot: ScreenSetPlacement, now: Date = Date()) {
+        let count = failures[slot.key].map { $0.slot == slot ? $0.count : 0 } ?? 0
+        let nextCount = count + 1
+        let dueAt = nextCount <= Self.delays.count
+            ? now.addingTimeInterval(Self.delays[nextCount - 1]) : nil
+        failures[slot.key] = (slot, nextCount, dueAt)
+    }
+
+    public mutating func remove(_ key: ScreenSetWindowKey) {
+        failures.removeValue(forKey: key)
+    }
+}
+
+/// Screen power notifications are independent of system sleep. Only a real
+/// system sleep authorizes retaining the missing built-in display on wake.
+public struct ScreenSetPowerState {
+    public private(set) var systemSleeping = false
+    public private(set) var screensSleeping = false
+    public private(set) var isWaking = false
+    public private(set) var preservesClosedLid = false
+    public var blocksEnumeration: Bool { systemSleeping || screensSleeping }
+
+    public init() {}
+
+    public mutating func systemWillSleep() {
+        systemSleeping = true
+        isWaking = false
+        preservesClosedLid = true
+    }
+
+    public mutating func screensDidSleep() {
+        screensSleeping = true
+        isWaking = false
+    }
+
+    public mutating func didWake(systemWake: Bool) {
+        systemSleeping = false
+        screensSleeping = false
+        isWaking = true
+        preservesClosedLid = preservesClosedLid || systemWake
+    }
+
+    public mutating func settled() { self = ScreenSetPowerState() }
+}
+
 public enum ScreenSetSettleDecision: Equatable {
     /// Topology blips while the Mac is asleep must not classify as unplug.
     case ignoreSleepBlip

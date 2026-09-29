@@ -46,6 +46,10 @@ final class StashEngine {
         screenSets.captureBaseline { [weak self] in self?.sessions ?? [] }
         screenSets.onSettled = { [weak self] in
             guard let self else { return }
+            let current = self.sessions
+            current.forEach { $0.resumeAfterScreenSetChange() }
+            self.approachTargetID = nil
+            self.approachSuppressedIDs.formUnion(current.filter(\.isCollapsed).map(\.mergeID))
             self.merged.reconcile(sessions: self.sessions)
             self.reevaluateSeamApproach()
         }
@@ -123,6 +127,10 @@ final class StashEngine {
 
     func noteMacScreensDidWake() {
         screenSets.noteScreensDidWake { [weak self] in self?.sessions ?? [] }
+    }
+
+    func noteMacScreensDidSleep() {
+        screenSets.noteScreensDidSleep()
     }
 
     @objc private func preferencesChanged() {
@@ -258,6 +266,7 @@ final class StashEngine {
     /// the hover dwell — re-arming on every mouse move would never let the
     /// dwell finish.
     private func reevaluateSeamApproach(rearm: Bool = false) {
+        guard !ScreenSetCoordinator.blocksUserGeometry else { return }
         let screens = NSScreen.screens
         let primaryHeight = DisplayCatalog.primaryHeight(screens: screens)
         let mouse = NSEvent.mouseLocation
@@ -373,7 +382,7 @@ final class StashEngine {
         guard let hit = StashSurface.frontmostWindow(atQuartz: mouseQuartz) else {
             return
         }
-        let idle = sessions.filter(\.isIdle)
+        let idle = sessions.filter { $0.isIdle || $0.isExpanded }
         let candidates = idle.map {
             StashSessionPolicy.CaptureHit(windowID: $0.windowID, pid: $0.pid)
         }
@@ -403,6 +412,11 @@ final class StashEngine {
         }
         captureRetryGeneration += 1
         let generation = captureRetryGeneration
+        if captureGesture.session.isManaged {
+            captureGesture.session.finishManagedGeometryGesture(from: captureGesture.initialFrame)
+            self.captureGesture = nil
+            return
+        }
         attemptCapture(captureGesture, attempt: 0, generation: generation)
     }
 
@@ -851,20 +865,14 @@ final class StashEngine {
 /// A rail, beacon, or shortcut reveal activates the subject app. That
 /// activate must not run the Dock / Cmd-Tab all-stashed policy.
 enum StashOwnedActivation {
-    private static var latest: (bundleID: String, at: Date)?
-    static let window: TimeInterval = 1.2
+    private static var ledger = OwnedActivationLedger()
 
     static func note(bundleID: String) {
-        latest = (bundleID, Date())
+        ledger.note(bundleID: bundleID)
     }
 
     static func consume(_ bundleID: String, now: Date = Date()) -> Bool {
-        guard let latest, latest.bundleID == bundleID,
-              now.timeIntervalSince(latest.at) <= window else {
-            return false
-        }
-        self.latest = nil
-        return true
+        ledger.consume(bundleID: bundleID, now: now)
     }
 }
 

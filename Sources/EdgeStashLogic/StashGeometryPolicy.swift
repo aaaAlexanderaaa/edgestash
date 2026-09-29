@@ -22,10 +22,11 @@ public enum StashGeometryPolicy {
     public static let seamInnerGap: CGFloat = 1
     /// How far the outer glass sits inside the display edge.
     public static let outerOnScreenClearance: CGFloat = 1
-    /// A parked window keeps a two-point lip inside the owning display so it
-    /// stays composited and AX-addressable; a single point rounds away on
-    /// scaled displays.
+    /// A parked window keeps a two-point positioning lip inside its display;
+    /// its surface is fully transparent. The separate glass rail is the only
+    /// visible content. A single point rounds away on scaled displays.
     public static let edgeLip: CGFloat = 2
+    public static let hiddenWindowAlpha: Float = 0
     /// Marker panel windows: 5pt glass plus transparent margin.
     public static let outerPanelWidth: CGFloat = 11
     public static let seamPanelWidth: CGFloat = 9

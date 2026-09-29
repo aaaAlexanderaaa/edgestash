@@ -4,7 +4,7 @@ status: current
 authority: normative
 implementation: implemented
 verification_status: partial
-last_reconciled: 2026-09-11
+last_reconciled: 2026-09-23
 ---
 
 # Behavior grammar and the expectation check
@@ -106,14 +106,28 @@ The screen-set contract also declares the non-presentation effects below.
 The presentation scanner does not discover AX writes or preference saves;
 these are verified by the shared headless coordinator's timeline suite in
 `Tests/ScreenSetMemoryTests.swift` (`screen_set round-trip membership and
-memory invariants`). The manifest's presentation cardinality counts remain
+memory invariants`) and `Tests/StateMachineBoundaryTests.swift`
+(`state_machine failure and duplicate-event invariants`). The manifest's presentation cardinality counts remain
 unchanged; these timeline checks do not claim real AX completion evidence.
 
 | Effect | Trigger and guards | Action and cardinality | Suppression / owner |
 |---|---|---|---|
-| screen-set placement | settled complete display observation; awake and a usable display exists | `ScreenSetCoordinator.apply` restores each target member, releases extras, refreshes retained members; each target is attempted once per application, with one on-desktop fallback if its write fails | `ScreenSetMemoryCoordinator` returns complete target sets and retains the clamshell hold while display identities and mirroring are unchanged; synchronous writes stay under `isApplying`; old animation callbacks are cancelled; a successful expanded unpinned refresh restarts the leave watcher with a fresh dwell |
+| screen-set placement | settled complete display observation, including display-only wake; awake and a usable display exists | `ScreenSetCoordinator.apply` restores each target member, releases extras, refreshes retained members; one initial attempt plus at most three retries at 1/2/4s for failed targets, with an on-desktop fallback after a failed write | `ScreenSetMemoryCoordinator` returns complete target sets; `ScreenSetPowerState` distinguishes display power from real sleep; `ScreenSetRestorationRetry` bounds retries and replaces stale destinations; synchronous writes stay under `isApplying`; old animation callbacks are cancelled; a successful expanded unpinned refresh restarts the leave watcher with a fresh dwell |
 | screen-set memory update | deliberate changed window membership/display/edge; observation settled and not mirrored | update that window in the selected memory; an unchanged reveal/pin/collapse writes no configuration | `ScreenSetMemoryCoordinator.recording` compares the window's placement; environment transitions never snapshot their result |
 | screen-set memory removal | drag out of stash, or window death/app termination/app disable | drag removes from current set; death/disable removes from every set | `ScreenSetMemoryCoordinator.forgetting`; reflow, scale and projection are not removal triggers |
+
+Duplicate observations of an unchanged selected memory retain each failed
+target's budget; successful targets are removed from the retry queue. A quiet
+increment skips unaffected placements while resuming any paused leave watcher.
+Fresh process hydration preserves screen-set keys but clears their window
+memberships. None of these operations creates a new presentation production.
+
+Session completion requires acknowledgement of the final AX frame writes.
+Rescue completion also requires opacity and deminimization success; idle phase
+or on-desktop geometry alone cannot clear a dossier. A seam reveal checks the
+current destination before deminimization and after its frame write. Its existing
+poll may re-enable a transiently unavailable beacon when availability changes;
+the limitation explanation remains caller-gated and once-per-machine.
 
 ## Manifest (machine-readable)
 
@@ -142,6 +156,20 @@ color_tint_picker | popup | Sources/EdgeStash/Settings/Controls/ColorMenus.swift
 <!-- END grammar-manifest -->
 
 ## Reconciliation log
+
+- **2026-09-23 — state boundary evidence:** added failure/duplicate-event
+  evidence for rescue completion, process and window lifetime, bounded retries,
+  quiet increments, and the live user/system geometry decision. Removed unused
+  superseded topology-release/geometry policies and their misleading green
+  tests. Presentation anchors and their declared cardinalities are unchanged;
+  native notification ordering remains a live verification obligation.
+
+- **2026-09-22 — failed restoration retries:** updated the declared system
+  mutation cardinality from a single attempt to one plus three bounded retries.
+  This implements the owner's repeated display/power restoration repair;
+  successful siblings are not retried. The shared retry and power-state types
+  have executable timeline evidence in `ScreenSetMemoryTests.swift`. No new
+  popup or presentation production was added.
 
 - **2026-09-10 — screen-set round trips:** declared AX placement and memory
   effects separately from the presentation-only scanner. Their membership and

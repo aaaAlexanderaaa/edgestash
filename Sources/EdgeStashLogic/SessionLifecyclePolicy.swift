@@ -93,7 +93,7 @@ public enum SessionLifecyclePolicy {
         restorePositionSucceeded: Bool,
         restoreAlphaSucceeded: Bool = true,
         restoreUnminimizeSucceeded: Bool = true,
-        isFloating: Bool
+        isFloating _: Bool
     ) -> Bool {
         switch event {
         case .windowDestroyed, .appTerminated:
@@ -103,9 +103,11 @@ public enum SessionLifecyclePolicy {
                 restorePositionSucceeded
                     && restoreAlphaSucceeded
                     && restoreUnminimizeSucceeded
-            ) || isFloating
+            )
         case .detachedFromEdge:
-            return true
+            // The live dragged frame is authoritative, but transparency and
+            // minimization still have to be undone successfully.
+            return restoreAlphaSucceeded && restoreUnminimizeSucceeded
         }
     }
 
@@ -162,20 +164,20 @@ public enum SessionLifecyclePolicy {
 
     public static func shouldRestoreVisibility(for event: Event) -> Bool {
         switch event {
-        case .miniaturized, .appTerminated, .appDisabled, .appQuitting, .accessibilityLost:
+        case .miniaturized, .appDisabled, .appQuitting, .accessibilityLost:
             return true
-        case .windowDestroyed, .detachedFromEdge:
+        case .windowDestroyed, .appTerminated, .detachedFromEdge:
             return false
         }
     }
 
-    /// Detach keeps the user's live frame but must undo the 2% hide, or
+    /// Detach keeps the user's live frame but must undo the transparent hide, or
     /// a Mission Control drag leaves a ghost window that will not capture.
     public static func shouldRestoreAlpha(for event: Event) -> Bool {
         switch event {
-        case .miniaturized, .appTerminated, .appDisabled, .appQuitting, .accessibilityLost, .detachedFromEdge:
+        case .miniaturized, .appDisabled, .appQuitting, .accessibilityLost, .detachedFromEdge:
             return true
-        case .windowDestroyed:
+        case .windowDestroyed, .appTerminated:
             return false
         }
     }

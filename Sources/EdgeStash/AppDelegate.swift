@@ -74,6 +74,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         )
         workspace.addObserver(
             self,
+            selector: #selector(macScreensDidSleep),
+            name: NSWorkspace.screensDidSleepNotification,
+            object: nil
+        )
+        workspace.addObserver(
+            self,
             selector: #selector(macScreensDidWake),
             name: NSWorkspace.screensDidWakeNotification,
             object: nil
@@ -164,6 +170,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func macScreensDidWake() {
         engine?.noteMacScreensDidWake()
+    }
+
+    @objc private func macScreensDidSleep() {
+        engine?.noteMacScreensDidSleep()
     }
 
     @objc private func quitApp() {

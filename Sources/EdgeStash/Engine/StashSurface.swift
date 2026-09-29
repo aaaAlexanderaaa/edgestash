@@ -8,6 +8,14 @@ func CGSMainConnectionID() -> CInt
 func CGSSetWindowAlpha(_ cid: CInt, _ wid: CInt, _ alpha: Float) -> CGError
 
 enum StashSurface {
+    static func belongsToProcess(windowID: UInt32, pid: pid_t) -> Bool {
+        let list = CGWindowListCopyWindowInfo(.optionIncludingWindow, windowID) as? [[String: Any]] ?? []
+        return list.contains {
+            ($0[kCGWindowNumber as String] as? UInt32) == windowID
+                && ($0[kCGWindowOwnerPID as String] as? pid_t) == pid
+        }
+    }
+
     static func frontmostWindow(atQuartz point: CGPoint) -> (windowID: UInt32, pid: pid_t)? {
         let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
             as? [[String: Any]] ?? []

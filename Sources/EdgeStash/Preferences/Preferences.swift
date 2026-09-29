@@ -197,7 +197,7 @@ final class Preferences: ObservableObject {
             self.rescueDossiers = rescues
         }
         if let screenSets = stored.screenSets {
-            self.storedScreenSets = screenSets
+            self.storedScreenSets = ScreenSetMemoryCoordinator.startingFresh(screenSets)
         }
 
         loadLaunchAtLogin(storedLaunchFlag: stored.launchAtLogin)

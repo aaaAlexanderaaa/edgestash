@@ -34,6 +34,10 @@ enum StashFocusReturn {
         guard FocusReturnPolicy.shouldSchedule(settingsIsKey: settingsIsKey) else { return }
         let preferred = rememberedPID
         rememberedPID = nil
+        guard FocusReturnPolicy.shouldReturnFocus(
+            sourcePID: sourcePID,
+            frontmostPID: NSWorkspace.shared.frontmostApplication?.processIdentifier
+        ) else { return }
         if let preferred,
            activate(pid: preferred, sourcePID: sourcePID, collapsedManagedPIDs: collapsedManagedPIDs) {
             return

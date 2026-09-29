@@ -51,16 +51,16 @@ final class StashAnimator {
     private var wakeGap: TimeInterval = 0
     private var presentedFraction: CGFloat = 0
     private var writes = 0
-    private var settled: (() -> Void)?
+    private var settled: ((Bool) -> Void)?
+    private var finalPlacementSucceeded = false
 
     /// Starts a slide, replacing any run in flight. A zero span (reduced
     /// motion) places the window directly and settles immediately.
-    func begin(_ slide: Slide, onSettled: @escaping () -> Void) {
+    func begin(_ slide: Slide, onSettled: @escaping (Bool) -> Void) {
         abort()
+        finalPlacementSucceeded = false
         if slide.span <= 0 {
-            _ = StashAX.setPosition(slide.target, slide.destination)
-            _ = StashAX.setSize(slide.target, slide.size)
-            onSettled()
+            onSettled(StashAX.setFrame(slide.target, CGRect(origin: slide.destination, size: slide.size)))
             return
         }
         active = slide
@@ -75,8 +75,7 @@ final class StashAnimator {
 
         var created: CVDisplayLink?
         guard CVDisplayLinkCreateWithActiveCGDisplays(&created) == kCVReturnSuccess, let created else {
-            _ = StashAX.setPosition(slide.target, slide.destination)
-            _ = StashAX.setSize(slide.target, slide.size)
+            finalPlacementSucceeded = StashAX.setFrame(slide.target, CGRect(origin: slide.destination, size: slide.size))
             finish()
             return
         }
@@ -125,6 +124,13 @@ final class StashAnimator {
         presentedFraction = fraction
         let finished = fraction >= 1
 
+        if finished {
+            // Elapsed time is not evidence that AX accepted the destination.
+            // Size first, position last: a resize can itself adjust position.
+            finalPlacementSucceeded = StashAX.setFrame(slide.target, CGRect(origin: slide.destination, size: slide.size))
+            return true
+        }
+
         let budget = StashMotionPolicy.writeInterval(linkPeriod: wakeGap > 0 ? wakeGap : nil)
         if !finished && now < nextWriteAt { return false }
         nextWriteAt = now + budget
@@ -157,7 +163,7 @@ final class StashAnimator {
         active = nil
         let handler = settled
         settled = nil
-        handler?()
+        handler?(finalPlacementSucceeded)
     }
 
     private func abort() {

@@ -20,6 +20,83 @@ func runScreenSetMemoryTests(_ expect: (Bool, String) -> Void) {
 
     // MARK: screen_set round-trip membership and memory invariants.
     do {
+        // Screen-only sleep must quiet geometry and subsequently reconcile,
+        // without borrowing the system-sleep clamshell exception.
+        var power = ScreenSetPowerState()
+        power.screensDidSleep()
+        expect(power.blocksEnumeration && !power.isWaking, "display power-off blocks transient enumeration")
+        power.didWake(systemWake: false)
+        expect(power.isWaking && !power.blocksEnumeration && !power.preservesClosedLid, "display-only wake reconciles even without system sleep")
+        let wake = ScreenSetSettlePolicy.wakeDecision(
+            preSleepIDs: ["laptop", "external"], currentIDs: ["external"],
+            currentIsConfigured: true, onlyBuiltinMissing: power.preservesClosedLid,
+            subsetHoldElapsed: 5
+        )
+        expect(wake == .applyClassified, "awake lid/display power changes cannot retain an absent built-in stash forever")
+        power.settled()
+        power.didWake(systemWake: false)
+        expect(power.isWaking, "an unpaired screens-did-wake still repairs presentation")
+        for screensFirst in [true, false] {
+            power.settled()
+            if screensFirst { power.screensDidSleep() }
+            power.systemWillSleep()
+            if !screensFirst { power.screensDidSleep() }
+            power.didWake(systemWake: false)
+            power.didWake(systemWake: true)
+            expect(power.isWaking && power.preservesClosedLid && !power.blocksEnumeration, "screen/system notification order retains real sleep semantics")
+            power.settled()
+            power.screensDidSleep()
+            power.didWake(systemWake: false)
+            expect(!power.preservesClosedLid, "a later screen-only wake cannot inherit the previous system-sleep hold")
+        }
+    }
+    do {
+        var f = ScreenSetFixture(baseline: laptop, configurations: [deskConfig, laptopConfig], live: [aLaptop])
+        let plan = f.move(to: desk, failing: [aDesk.key])
+        var retry = ScreenSetRestorationRetry()
+        let retryStart = Date(timeIntervalSince1970: 1_000)
+        _ = retry.beginApplication(restoring: plan.restore, retainingPending: false)
+        retry.failed(aDesk, now: retryStart)
+        expect(retry.pending == [aDesk] && retry.nextDelay(now: retryStart) == 1, "only the failed AX target receives an automatic retry")
+        // No extra unplug: the application becomes responsive on the same set.
+        f.live[aDesk.key] = aDesk
+        f.coordinator.didRestore(aDesk)
+        retry.remove(aDesk.key)
+        expect(f.members == [1, 2] && retry.nextDelay(now: retryStart) == nil, "same-set recovery completes without moving successful siblings or waiting for replug")
+        expect(f.configuration(desk) == deskConfig, "successful retry preserves remembered membership")
+
+        retry.failed(aDesk, now: retryStart)
+        let repeated = retry.beginApplication(restoring: [], retainingPending: true)
+        expect(repeated.isEmpty && retry.pending == [aDesk] && retry.nextDelay(now: retryStart) == 1,
+               "same-memory reflow retains a failed target without attempting it before the timed retry")
+        let changed = retry.beginApplication(restoring: [aLaptop], retainingPending: false)
+        expect(changed == [aLaptop] && retry.pending.isEmpty, "a new configured set cancels old retry destinations")
+        retry.failed(aDesk)
+        expect(retry.beginApplication(restoring: [aLaptop], retainingPending: true) == [aLaptop], "explicit current target wins over a queued old placement")
+        retry.failed(aLaptop)
+        retry.remove(aLaptop.key)
+        expect(retry.pending.isEmpty, "window death, app disable, or deliberate recapture cancels its pending restore")
+    }
+    do {
+        var retry = ScreenSetRestorationRetry()
+        let retryStart = Date(timeIntervalSince1970: 1_000)
+        for (delay, elapsed) in [(1.0, 0.0), (2.0, 1.0), (4.0, 3.0)] {
+            retry.failed(aDesk, now: retryStart.addingTimeInterval(elapsed))
+            expect(retry.nextDelay(now: retryStart.addingTimeInterval(elapsed)) == delay && retry.pending == [aDesk], "transient failures back off within the bounded retry budget")
+        }
+        retry.failed(aDesk, now: retryStart.addingTimeInterval(7))
+        expect(retry.nextDelay(now: retryStart.addingTimeInterval(7)) == nil && retry.pending.isEmpty, "persistent AX rejection stops after the initial attempt and three retries")
+        retry.failed(b, now: retryStart.addingTimeInterval(7))
+        expect(retry.pending == [b], "another failed target cannot rearm an exhausted window")
+    }
+    do {
+        // Terminal glyphs behind the lip must contribute no pixels, even at
+        // maximum black/white contrast; the rail is a separate visible panel.
+        let channelDifference: Float = 255
+        expect(channelDifference * StashGeometryPolicy.hiddenWindowAlpha == 0, "parked content is completely transparent, not a faint terminal stripe")
+        expect(StashGeometryPolicy.edgeLip > 0 && StashGeometryPolicy.barThickness == 5, "content hiding preserves the positioning lip and accepted 5pt rail")
+    }
+    do {
         var f = ScreenSetFixture(baseline: desk, configurations: [deskConfig, laptopConfig], live: [aDesk, b])
         let drop = f.move(to: laptop)
         expect(drop.event == .dropConfigured && f.members == [1], "configured shrink removes extras on surviving displays")

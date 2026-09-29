@@ -1105,38 +1105,6 @@ struct EdgeStashLogicTests {
             "the shared segment of a partial share must minimize, not slide onto the neighbor"
         )
         expect(
-            StashSessionPolicy.shouldReleaseAfterTopologyChange(
-                current: .slideOffscreen,
-                next: .systemMinimize,
-                displayStillPresent: true
-            ),
-            "a seam that flips from slide-off to minimize must restore the window"
-        )
-        expect(
-            StashSessionPolicy.shouldReleaseAfterTopologyChange(
-                current: .systemMinimize,
-                next: .slideOffscreen,
-                displayStillPresent: true
-            ),
-            "a seam that stops being shared must release the minimized stash"
-        )
-        expect(
-            !StashSessionPolicy.shouldReleaseAfterTopologyChange(
-                current: .slideOffscreen,
-                next: .slideOffscreen,
-                displayStillPresent: true
-            ),
-            "an unchanged outer edge keeps its stash"
-        )
-        expect(
-            StashSessionPolicy.shouldReleaseAfterTopologyChange(
-                current: .slideOffscreen,
-                next: .slideOffscreen,
-                displayStillPresent: false
-            ),
-            "a disconnected display must restore its stashes"
-        )
-        expect(
             StashSessionPolicy.shouldRestorePriorFrame(didMoveToExpanded: true, minimizeSucceeded: false),
             "a failed shared-edge minimize must move the window back"
         )
@@ -1155,73 +1123,6 @@ struct EdgeStashLogicTests {
         expect(
             FocusReturnPolicy.shouldReleaseAfterExpand(fromDock: true),
             "a Dock reveal may still release focus after expanding"
-        )
-        expect(
-            StashSessionPolicy.shouldDetachAfterOffEdgeMove(isPinned: false, stillOnEdge: false),
-            "an unpinned expanded window that leaves the edge is released"
-        )
-        expect(
-            !StashSessionPolicy.shouldDetachAfterOffEdgeMove(isPinned: true, stillOnEdge: false),
-            "a pinned window may be dragged off the edge without ending the session"
-        )
-        expect(
-            !StashSessionPolicy.shouldDetachAfterOffEdgeMove(isPinned: false, stillOnEdge: true),
-            "a window still on the stash edge stays managed"
-        )
-        expect(
-            StashSessionPolicy.shouldReleaseCollapsedAfterExternalMove(
-                isCollapsed: true,
-                isBusy: false,
-                stillParkedOnOwningEdge: false
-            ),
-            "Mission Control may drag a collapsed window off its parked edge; release it"
-        )
-        expect(
-            !StashSessionPolicy.shouldReleaseCollapsedAfterExternalMove(
-                isCollapsed: true,
-                isBusy: true,
-                stillParkedOnOwningEdge: false
-            ),
-            "an in-flight collapse slide is not an external move"
-        )
-        expect(
-            !StashSessionPolicy.shouldReleaseCollapsedAfterExternalMove(
-                isCollapsed: true,
-                isBusy: false,
-                stillParkedOnOwningEdge: true
-            ),
-            "a collapsed window that is still parked stays managed"
-        )
-        expect(
-            StashSessionPolicy.shouldIgnoreGeometryMove(
-                screenSetQuiet: true,
-                owningDisplayConnected: true
-            ),
-            "a screen-set quiet period must not treat a system move as a user drag"
-        )
-        expect(
-            StashSessionPolicy.shouldIgnoreGeometryMove(
-                screenSetQuiet: false,
-                owningDisplayConnected: false
-            ),
-            "a vanished owning display must not treat the system move as a user drag"
-        )
-        expect(
-            !StashSessionPolicy.shouldDetachAfterOffEdgeMove(
-                isPinned: false,
-                stillOnEdge: false,
-                owningDisplayConnected: false
-            ),
-            "an expanded stash whose display vanished stays managed until screen-set policy runs"
-        )
-        expect(
-            !StashSessionPolicy.shouldReleaseCollapsedAfterExternalMove(
-                isCollapsed: true,
-                isBusy: false,
-                stillParkedOnOwningEdge: false,
-                screenSetQuiet: true
-            ),
-            "a collapsed stash must not release while the screen set is settling or sleeping"
         )
         expect(
             !FocusReturnPolicy.shouldReleaseAfterLeaveCollapse(didCollapse: false),
@@ -3204,6 +3105,7 @@ struct EdgeStashLogicTests {
         }
 
         runScreenSetMemoryTests { condition, message in expect(condition, message) }
+        runStateMachineBoundaryTests { condition, message in expect(condition, message) }
 
         if failed > 0 {
             fputs("\(failed) test(s) failed\n", stderr)

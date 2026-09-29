@@ -68,6 +68,26 @@ public enum StashActivationPolicy {
     }
 }
 
+/// One show-all action may reveal windows from several apps before macOS sends
+/// their activation notifications. Keep each owned activation independently so
+/// an earlier app is not mistaken for a Dock or Cmd-Tab activation.
+public struct OwnedActivationLedger {
+    private var notedAt: [String: Date] = [:]
+
+    public init() {}
+
+    public mutating func note(bundleID: String, now: Date = Date()) {
+        notedAt[bundleID] = now
+    }
+
+    public mutating func consume(
+        bundleID: String, now: Date = Date(), window: TimeInterval = 1.2
+    ) -> Bool {
+        guard let at = notedAt.removeValue(forKey: bundleID) else { return false }
+        return now.timeIntervalSince(at) <= window
+    }
+}
+
 /// Control-Down is App Exposé for the frontmost app; Control-Up is Mission
 /// Control. Trackpad and the Mission Control key are not this mapping.
 public enum ShowAllWindowsKeyPolicy {
