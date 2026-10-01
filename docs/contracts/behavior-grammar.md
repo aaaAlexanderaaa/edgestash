@@ -4,7 +4,7 @@ status: current
 authority: normative
 implementation: implemented
 verification_status: partial
-last_reconciled: 2026-09-23
+last_reconciled: 2026-09-30
 ---
 
 # Behavior grammar and the expectation check
@@ -131,6 +131,26 @@ the limitation explanation remains caller-gated and once-per-machine.
 
 ## Manifest (machine-readable)
 
+Interaction timing is also exercised by the native adapters' shared policies
+in `Tests/InteractionContinuityTests.swift`: `stash_interaction dwell and
+cancellation invariants`, `focus_return operation ownership invariants`,
+`pointer_sibling visible ownership invariants`, and `stash_presentation latest
+target invariants`. These cover continuous dwell, stale callback rejection,
+focus ownership, pointer metadata ordering, and one newest pending target.
+They do not prove native AX completion or presentation cardinalities.
+
+The same file's `marker_mouse_up preserves explicit target invariants` and
+`merge_reveal named entry point invariants` exercise the combined click /
+mouse-up / shortcut timeline and selection across merged and other named
+reveal paths, including delayed request replay. The live marker gate and
+merged selection use those shared policies. Presentation coverage is unchanged.
+
+The existing `merge_strip` production includes a narrow interactive rail and
+its mouse-transparent label panel, both presented by the same `present`
+anchor. A target change refreshes labels immediately without restarting dwell;
+neither panel creates a new popup production. Its `structural-only` coverage
+remains explicit until live presentation/cardinality evidence is available.
+
 The checker parses the pipe-separated rows between the markers below. Columns:
 `effect_id | kind | anchor_file | anchor_symbol | cardinality | suppression | trigger | verification`.
 
@@ -156,6 +176,12 @@ color_tint_picker | popup | Sources/EdgeStash/Settings/Controls/ColorMenus.swift
 <!-- END grammar-manifest -->
 
 ## Reconciliation log
+
+- **2026-09-30 — continuity evidence:** added the shared interaction timeline
+  evidence above and clarified the two panels of the existing merge surface.
+  All 12 presentation anchors remain declared; one presentation cardinality
+  is executable and eleven remain structural-only. No coverage promotion is
+  inferred from the new interaction tests.
 
 - **2026-09-23 — state boundary evidence:** added failure/duplicate-event
   evidence for rescue completion, process and window lifetime, bounded retries,

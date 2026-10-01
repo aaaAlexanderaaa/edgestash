@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import EdgeStashLogic
 
 @_silgen_name("CGSMainConnectionID")
 func CGSMainConnectionID() -> CInt
@@ -17,14 +18,19 @@ enum StashSurface {
     }
 
     static func frontmostWindow(atQuartz point: CGPoint) -> (windowID: UInt32, pid: pid_t)? {
+        guard let hit = WindowSurfacePolicy.frontmostWindow(at: point, in: pointerWindows()) else { return nil }
+        return (hit.windowID, hit.pid)
+    }
+
+    private static func pointerWindows() -> [WindowSurfaceHit] {
         let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
             as? [[String: Any]] ?? []
-        for info in list {
-            guard (info[kCGWindowLayer as String] as? Int) == 0,
+        return list.compactMap { info in
+            guard let layer = info[kCGWindowLayer as String] as? Int,
                   let pid = info[kCGWindowOwnerPID as String] as? pid_t,
                   let windowID = info[kCGWindowNumber as String] as? UInt32,
                   let bounds = info[kCGWindowBounds as String] as? [String: Any] else {
-                continue
+                return nil
             }
             let frame = CGRect(
                 x: bounds["X"] as? CGFloat ?? 0,
@@ -32,11 +38,11 @@ enum StashSurface {
                 width: bounds["Width"] as? CGFloat ?? 0,
                 height: bounds["Height"] as? CGFloat ?? 0
             )
-            if frame.contains(point) {
-                return (windowID, pid)
-            }
+            return WindowSurfaceHit(
+                windowID: windowID, pid: pid, frame: frame, layer: layer,
+                alpha: info[kCGWindowAlpha as String] as? CGFloat ?? 1
+            )
         }
-        return nil
     }
 
     @discardableResult
@@ -51,40 +57,16 @@ enum StashSurface {
         onScreenBounds(windowID: windowID, pid: pid) != nil
     }
 
-    /// Whether the (Quartz) point is over another on-screen window of the same
-    /// process. Screen-sized background windows and the session's own window
-    /// do not count as siblings.
+    /// Only the topmost visible document window under the pointer counts.
+    /// A sibling covered by another app cannot extend the leave grace.
     static func isPointerInSiblingWindow(
         pid: pid_t,
         excluding windowID: UInt32?,
         atQuartz point: CGPoint
     ) -> Bool {
-        let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
-            as? [[String: Any]] ?? []
-        let screenFrames = NSScreen.screens.map(\.frame)
-        for info in list {
-            guard (info[kCGWindowOwnerPID as String] as? pid_t) == pid,
-                  let id = info[kCGWindowNumber as String] as? UInt32,
-                  id != windowID,
-                  (info[kCGWindowLayer as String] as? Int) == 0,
-                  let bounds = info[kCGWindowBounds as String] as? [String: Any] else {
-                continue
-            }
-            let frame = CGRect(
-                x: bounds["X"] as? CGFloat ?? 0,
-                y: bounds["Y"] as? CGFloat ?? 0,
-                width: bounds["Width"] as? CGFloat ?? 0,
-                height: bounds["Height"] as? CGFloat ?? 0
-            )
-            // Screen-sized windows are desktop backgrounds, not siblings;
-            // frame sizes compare directly across the two coordinate systems.
-            let isScreenSizedBackground = screenFrames.contains { screen in
-                frame.width >= screen.width * 0.98 && frame.height >= screen.height * 0.98
-            }
-            if isScreenSizedBackground { continue }
-            if frame.contains(point) { return true }
-        }
-        return false
+        WindowSurfacePolicy.isPointerInSiblingWindow(
+            pid: pid, excluding: windowID, at: point, in: pointerWindows()
+        )
     }
 
     static func onScreenBounds(windowID: UInt32, pid: pid_t) -> CGRect? {

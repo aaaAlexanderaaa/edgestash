@@ -9,6 +9,7 @@ public struct MergeMember: Equatable {
     public let visibleMaxY: CGFloat
     public let windowHeight: CGFloat
     public let title: String
+    public let presentation: StashCollapsePresentation
 
     public init(
         id: String,
@@ -17,7 +18,8 @@ public struct MergeMember: Equatable {
         visibleMinY: CGFloat,
         visibleMaxY: CGFloat,
         windowHeight: CGFloat,
-        title: String
+        title: String,
+        presentation: StashCollapsePresentation = .slideOffscreen
     ) {
         self.id = id
         self.edge = edge
@@ -26,6 +28,7 @@ public struct MergeMember: Equatable {
         self.visibleMaxY = visibleMaxY
         self.windowHeight = windowHeight
         self.title = title
+        self.presentation = presentation
     }
 }
 
@@ -206,16 +209,19 @@ public enum MergeGroupPolicy {
         let panelHeight = min(screen.height, max(unionHeight, tallestWindow) + heightBleed)
         let midY = (unionMinY + unionMaxY) / 2
         let panelY = min(max(midY - panelHeight / 2, screen.minY), screen.maxY - panelHeight)
+        let hasSeam = members.contains { $0.presentation == .systemMinimize }
+        let overhang = hasSeam ? 0 : edgeOverhang
         let panelX = group.edge == .left
-            ? screen.minX - edgeOverhang
-            : screen.maxX - panelWidth + edgeOverhang
+            ? screen.minX - overhang
+            : screen.maxX - panelWidth + overhang
         let panelFrame = CGRect(x: panelX, y: panelY, width: panelWidth, height: panelHeight)
 
         // The track hugs the screen-facing edge of the panel; the label
         // column sits toward the content side.
+        let inset = hasSeam ? StashGeometryPolicy.seamGlassInset : trackInset
         let trackX = group.edge == .left
-            ? trackInset
-            : panelWidth - trackInset - trackWidth
+            ? inset
+            : panelWidth - inset - trackWidth
         let trackRect = CGRect(x: trackX, y: unionMinY - panelY, width: trackWidth, height: unionHeight)
 
         let hitWidth = mouseOpaqueWidth

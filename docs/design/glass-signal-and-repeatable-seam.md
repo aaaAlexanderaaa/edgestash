@@ -5,7 +5,7 @@ status: target
 authority: normative
 implementation: in_progress
 verification_status: pending
-last_reconciled: 2026-09-22
+last_reconciled: 2026-09-30
 supersedes_visual_clauses_of: docs/design/logical-display-and-seam-beacon.md
 ---
 
@@ -129,6 +129,16 @@ geometry. The merge label column is not hit geometry: only `merge-hit`
 consumes pointer events. A 240pt merge window that eats clicks is a
 defect.
 
+The live merged rail always uses `merge-hit` as its window frame. Hover labels
+use a separate, mouse-transparent panel and update as soon as the hover target
+changes; they do not enlarge the interactive window or restart its dwell.
+
+Merged seam segments keep the same 28pt inward / 12pt overshoot approach band,
+partitioned by the merged segment layout. They participate in the engine's
+single seam target selection. A group containing seam segments keeps its
+21pt interactive panel inside the owning display and its glass 2pt inward;
+seam chips retain the quieter tint and inner gap.
+
 An exposed-edge stash's real window must contribute no content pixels while
 collapsed. The 2pt positioning lip is fully transparent (window alpha zero),
 including Terminal text and borders; only the separate glass rail remains
@@ -223,6 +233,14 @@ leave a visible `seam-rail` in `glass-painted` (or `glass-system` on the pin).
   pin, halo, and sheen match; system minimization still hides the window.
 
 ## Reconciliation log
+
+- **2026-09-30 — merged signal repair:** labels refresh on target change in
+  a separate mouse-transparent panel; the interactive panel stays 21pt.
+  Merged seam segments retain the existing approach band through the engine's
+  shared target choice, stay inside the owner display, and paint the accepted
+  half-wash and gap. Optional macOS 26 pin glass resolves its class/properties
+  at runtime so an older SDK retains the painted fallback. Owner pixel and
+  cross-application click-through review remain open.
 
 - **2026-09-22 — eliminate content leaking through the outer lip:** the owner
   reported small window slivers and Terminal horizontal lines after stashing.

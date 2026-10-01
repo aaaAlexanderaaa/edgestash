@@ -7,6 +7,7 @@ struct StashMergeSegmentModel {
     let title: String
     let icon: NSImage?
     let slotRect: CGRect
+    let kind: StashOverlayKind
 }
 
 struct StashMergeStripModel {
@@ -15,9 +16,11 @@ struct StashMergeStripModel {
     let trackRect: CGRect
     let hitRect: CGRect
     let segments: [StashMergeSegmentModel]
+    let labelWindowFrame: CGRect
+    let labelSegments: [StashMergeSegmentModel]
     let activeID: ObjectIdentifier?
-    let hoveredID: ObjectIdentifier?
-    let showsLabels: Bool
+    var hoveredID: ObjectIdentifier?
+    var showsLabels: Bool
 }
 
 final class StashMergeStrip: NSPanel {
@@ -25,8 +28,15 @@ final class StashMergeStrip: NSPanel {
     var onClickSegment: ((ObjectIdentifier) -> Void)?
 
     private let content = StashMergeStripView()
+    private let labels = StashMergeLabelsView()
+    private let labelPanel: NSPanel
+    private var model: StashMergeStripModel?
 
     init() {
+        labelPanel = NSPanel(
+            contentRect: .zero, styleMask: [.nonactivatingPanel, .borderless],
+            backing: .buffered, defer: false
+        )
         super.init(
             contentRect: NSRect(
                 x: 0,
@@ -43,19 +53,59 @@ final class StashMergeStrip: NSPanel {
         hasShadow = false
         ignoresMouseEvents = false
         level = .mainMenu
-        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         contentView = content
         content.autoresizingMask = [.width, .height]
         content.onHover = { [weak self] id in self?.onHoverSegment?(id) }
         content.onClick = { [weak self] id in self?.onClickSegment?(id) }
+        labelPanel.isOpaque = false
+        labelPanel.backgroundColor = .clear
+        labelPanel.hasShadow = false
+        labelPanel.ignoresMouseEvents = true
+        labelPanel.level = .mainMenu
+        labelPanel.collectionBehavior = collectionBehavior
+        labelPanel.contentView = labels
+        labels.autoresizingMask = [.width, .height]
     }
 
     override var canBecomeKey: Bool { false }
+    override var canBecomeMain: Bool { false }
+
+    override func orderOut(_ sender: Any?) {
+        labelPanel.orderOut(sender)
+        super.orderOut(sender)
+    }
 
     func present(_ model: StashMergeStripModel) {
+        self.model = model
         content.model = model
-        setFrame(model.windowFrame, display: true)
+        if frame != model.windowFrame { setFrame(model.windowFrame, display: true) }
         orderFront(nil)
+        if model.showsLabels {
+            labels.model = model
+            if labelPanel.frame != model.labelWindowFrame {
+                labelPanel.setFrame(model.labelWindowFrame, display: true)
+            }
+            labelPanel.orderFront(nil)
+        } else {
+            labelPanel.orderOut(nil)
+        }
+    }
+
+    func updateHover(_ id: ObjectIdentifier?) {
+        guard var model, model.hoveredID != id else { return }
+        model.hoveredID = id
+        model.showsLabels = id != nil
+        present(model)
+    }
+
+    func rearmHoverAfterMouseUp() {
+        onHoverSegment?(segmentAtPointer())
+    }
+
+    func segmentAtPointer() -> ObjectIdentifier? {
+        let local = content.convert(convertPoint(fromScreen: NSEvent.mouseLocation), from: nil)
+        return content.hit(at: local)
     }
 }
 
@@ -113,17 +163,51 @@ private final class StashMergeStripView: NSView {
             for segment in model.segments {
                 let active = segment.id == model.activeID
                 let hovered = segment.id == model.hoveredID
-                let strength: CGFloat = active ? 1 : (hovered ? 0.75 : 0.5)
+                let strength: CGFloat = (active ? 1 : (hovered ? 0.75 : 0.5))
+                    * (segment.kind == .seamBeacon ? 0.5 : 1)
+                let rail = segment.slotRect.insetBy(dx: 0, dy: 1)
                 StashGlassPainter.paintCapsule(
-                    segment.slotRect.insetBy(dx: 0, dy: 1),
+                    rail,
                     tint: segment.color,
                     strength: strength
                 )
+                if segment.kind == .seamBeacon {
+                    StashGlassPainter.punchGap(StashGeometryPolicy.seamInnerGapRect(in: rail))
+                }
             }
-            for segment in model.segments where model.showsLabels {
-                let active = segment.id == model.activeID
-                let hovered = segment.id == model.hoveredID
-                drawLabel(for: segment, edge: model.edge, emphasized: active || hovered)
+        }
+    }
+
+    private func reportHover(_ event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        onHover?(hit(at: point))
+    }
+
+    func hit(at point: CGPoint) -> ObjectIdentifier? {
+        guard let model, model.hitRect.contains(point) else { return nil }
+        if let exact = model.segments.first(where: { $0.slotRect.insetBy(dx: -6, dy: 0).contains(point) }) {
+            return exact.id
+        }
+        return model.segments.min {
+            abs($0.slotRect.midY - point.y) < abs($1.slotRect.midY - point.y)
+        }?.id
+    }
+}
+
+/// Labels never share the interactive window's footprint. WindowServer sees
+/// an always-narrow rail and an independent mouse-transparent decoration.
+private final class StashMergeLabelsView: NSView {
+    var model: StashMergeStripModel? {
+        didSet { needsDisplay = true }
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard let model else { return }
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            for segment in model.labelSegments {
+                drawLabel(for: segment, edge: model.edge,
+                          emphasized: segment.id == model.activeID || segment.id == model.hoveredID)
             }
         }
     }
@@ -169,21 +253,4 @@ private final class StashMergeStripView: NSView {
         return luminance > 0.6 ? NSColor.black.withAlphaComponent(0.85) : NSColor.white
     }
 
-    private func reportHover(_ event: NSEvent) {
-        let point = convert(event.locationInWindow, from: nil)
-        onHover?(hit(at: point))
-    }
-
-    private func hit(at point: CGPoint) -> ObjectIdentifier? {
-        guard let model else { return nil }
-        if let exact = model.segments.first(where: { $0.slotRect.insetBy(dx: -6, dy: 0).contains(point) }) {
-            return exact.id
-        }
-        if model.hitRect.contains(point) {
-            return model.segments.min {
-                abs($0.slotRect.midY - point.y) < abs($1.slotRect.midY - point.y)
-            }?.id
-        }
-        return nil
-    }
 }

@@ -59,6 +59,7 @@ final class StashEngine {
         hotkeys.onAppShortcut = { [weak self] bundleID in self?.handleAppShortcut(bundleID) }
         hotkeys.onTemporaryShortcut = { [weak self] in self?.handleTemporaryShortcut() }
         hotkeys.start()
+        merged.onPointerActivity = { [weak self] in self?.reevaluateSeamApproach() }
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(preferencesChanged),
@@ -195,11 +196,13 @@ final class StashEngine {
     private func observeMice() {
         StashEngineMouseRelay.shared.engine = self
         installSessionEventTap()
-        mouseDownMonitor = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDown) { [weak self] _ in
-            self?.handleMouseDown()
+        mouseDownMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] event in
+            if event.type == .leftMouseDown { self?.handleMouseDown() }
+            else { self?.noteFrontmostInteraction() }
         }
-        localMouseDown = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
-            self?.handleMouseDown()
+        localMouseDown = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] event in
+            if event.type == .leftMouseDown { self?.handleMouseDown() }
+            else { self?.noteFrontmostInteraction() }
             return event
         }
         mouseUpMonitor = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseUp) { [weak self] _ in
@@ -217,6 +220,7 @@ final class StashEngine {
 
     private func observeShowAllKeys() {
         let handler: (NSEvent) -> Void = { [weak self] event in
+            self?.noteFrontmostInteraction()
             self?.handleShowAllKey(event)
         }
         showAllKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { event in
@@ -226,6 +230,11 @@ final class StashEngine {
             handler(event)
             return event
         }
+    }
+
+    private func noteFrontmostInteraction() {
+        guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier else { return }
+        sessions.filter { $0.pid == pid }.forEach { $0.noteDirectInteraction() }
     }
 
     private func handleShowAllKey(_ event: NSEvent) {
@@ -292,7 +301,7 @@ final class StashEngine {
                 minY: frame.minY - StashGeometryPolicy.panelBleed,
                 maxY: frame.maxY + StashGeometryPolicy.panelBleed
             )
-        }
+        } + merged.seamApproachSegments
         for segment in segments where approachSuppressedIDs.contains(segment.id) {
             if !SeamApproachPolicy.contains(pointer: pointer, segment: segment, displays: displays) {
                 approachSuppressedIDs.remove(segment.id)
@@ -300,6 +309,7 @@ final class StashEngine {
         }
         let candidates = segments.filter { !approachSuppressedIDs.contains($0.id) }
         let nextID = SeamApproachPolicy.target(pointer: pointer, segments: candidates, displays: displays)
+        merged.updateSeamApproachTarget(nextID)
         if nextID == approachTargetID {
             // A dwell that fired mid-drag aborts on the pressed button; after
             // mouse-up the same target re-arms. beginHoverReveal is idempotent
@@ -365,6 +375,7 @@ final class StashEngine {
 
     func handleMouseDown() {
         guard shouldAcceptMouse(.down) else { return }
+        noteFrontmostInteraction()
         captureRetryGeneration += 1
         let mouse = NSEvent.mouseLocation
         StashDock.noteMouseDown(at: mouse)
@@ -382,6 +393,7 @@ final class StashEngine {
         guard let hit = StashSurface.frontmostWindow(atQuartz: mouseQuartz) else {
             return
         }
+        sessions.filter { $0.pid == hit.pid }.forEach { $0.noteDirectInteraction() }
         let idle = sessions.filter { $0.isIdle || $0.isExpanded }
         let candidates = idle.map {
             StashSessionPolicy.CaptureHit(windowID: $0.windowID, pid: $0.pid)
@@ -404,6 +416,8 @@ final class StashEngine {
         // mouse-up: cancel a dwell whose target the pointer left mid-drag, or
         // re-arm one that aborted on the pressed button while still inside.
         reevaluateSeamApproach(rearm: true)
+        sessions.forEach { $0.rearmMarkerHoverAfterMouseUp() }
+        merged.rearmHoverAfterMouseUp()
         guard shouldAcceptMouse(.up) else { return }
         guard let captureGesture,
               sessions.contains(where: { $0 === captureGesture.session }) else {
@@ -600,6 +614,12 @@ final class StashEngine {
             self?.recordLiveScreenSetPlacement(of: collapsed)
             self?.reevaluateSeamApproach()
         }
+        session.onExpanded = { [weak self] expanded in
+            self?.lastPreferredSession[expanded.bundleID] = ObjectIdentifier(expanded)
+        }
+        session.onRevealRequested = { [weak self] requested in
+            self?.merged.noteRevealRequest(requested)
+        }
         session.onSeamMarkerActivity = { [weak self] _ in
             self?.reevaluateSeamApproach()
         }
@@ -639,6 +659,10 @@ final class StashEngine {
             return
         }
         discover(app: app, bundleID: bundleID)
+        if let focused = StashAX.focusedWindow(of: AXUIElementCreateApplication(pid)),
+           let session = sessions.first(where: { $0.isExpanded && $0.sameWindow(as: focused) }) {
+            lastPreferredSession[bundleID] = ObjectIdentifier(session)
+        }
     }
 
     private func handleAppShortcut(_ bundleID: String) {
@@ -648,21 +672,23 @@ final class StashEngine {
             hasIdleWindow: group.contains(where: \.isIdle),
             hasManagedWindow: group.contains(where: \.isManaged)
         ), let idle = preferredIdle(in: group, bundleID: bundleID) {
-            _ = idle.captureNearestAllowed()
+            if idle.captureNearestAllowed() {
+                lastPreferredSession[bundleID] = ObjectIdentifier(idle)
+            }
             merged.reconcile(sessions: sessions)
             return
         }
         switch Preferences.shared.chordScope(for: bundleID) {
         case .allManagedWindows:
             let target = AppShortcutPolicy.targetExpanded(
-                hasVisibleWindow: group.contains { $0.isExpanded },
-                hasHiddenWindow: group.contains { $0.isCollapsed }
+                hasVisibleWindow: group.contains { $0.isManaged && $0.desiredPresentationIsExpanded },
+                hasHiddenWindow: group.contains { $0.isManaged && !$0.desiredPresentationIsExpanded }
             )
             guard let target else { return }
             if target {
-                group.filter(\.isCollapsed).forEach { $0.expandFromDock() }
+                group.filter { $0.isManaged && !$0.desiredPresentationIsExpanded }.forEach { $0.expandFromDock() }
             } else {
-                group.filter(\.isExpanded).forEach { $0.toggleFromShortcut() }
+                group.filter { $0.isManaged && $0.desiredPresentationIsExpanded }.forEach { $0.toggleFromShortcut() }
             }
         case .recentWindow:
             preferred(in: group.filter(\.isManaged), bundleID: bundleID)?.toggleFromShortcut()
@@ -703,7 +729,9 @@ final class StashEngine {
         session.markTemporary()
         temporarySession = session
         if session.isIdle {
-            _ = session.captureNearestAllowed()
+            if session.captureNearestAllowed() {
+                lastPreferredSession[bundleID] = ObjectIdentifier(session)
+            }
         } else {
             session.toggleFromShortcut()
         }
@@ -831,23 +859,23 @@ final class StashEngine {
         case .raiseOnDesktopOnly, .doNotOpenStash, .followSystem:
             return
         case .openMostRecent:
-            let collapsed = group.filter(\.isCollapsed)
+            let collapsed = group.filter { $0.isManaged && !$0.desiredPresentationIsExpanded }
             guard let session = preferred(in: collapsed, bundleID: bundleID) else { return }
             session.expandFromDock()
             lastPreferredSession[bundleID] = ObjectIdentifier(session)
         case .openOnPointerDisplay:
             guard let displayID = pointerDisplayID() else { return }
-            let matches = group.filter { $0.isCollapsed && $0.displayID == displayID }
+            let matches = group.filter { $0.isManaged && !$0.desiredPresentationIsExpanded && $0.displayID == displayID }
             guard !matches.isEmpty else { return }
             matches.forEach { $0.expandFromDock() }
         case .openAllStashes:
-            group.filter(\.isCollapsed).forEach { $0.expandFromDock() }
+            group.filter { $0.isManaged && !$0.desiredPresentationIsExpanded }.forEach { $0.expandFromDock() }
         case .openThumbnail:
             let title = pendingThumbnailTitle
             pendingThumbnailTitle = nil
             guard let title else { return }
             let match = group.first {
-                $0.isCollapsed && StashAX.string($0.windowElement, kAXTitleAttribute as String) == title
+                $0.isManaged && !$0.desiredPresentationIsExpanded && StashAX.string($0.windowElement, kAXTitleAttribute as String) == title
             }
             match?.expandFromDock()
         }

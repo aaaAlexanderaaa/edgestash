@@ -4,7 +4,7 @@ status: current
 authority: normative
 implementation: implemented
 verification_status: partial
-last_reconciled: 2026-09-23
+last_reconciled: 2026-09-30
 supersedes: []
 ---
 
@@ -129,6 +129,29 @@ logical display map, edge halo, and seam beacon, and defer later product ideas.
 - Hover reveals a stash only after the reveal-delay dwell, and the reveal
   activates its app: the dwell is the intent gate, and a true hide (minimized
   or offscreen siblings) keeps activation from flooding other stashes forward.
+- A dwell measures continuous presence in one target, including mouse motion
+  within a merged segment. A visit reveals at most once; leaving rearms it.
+  Clicks cancel pending hover work before toggling. Hover cannot reveal while
+  a mouse button is pressed, including when the configured delay is zero;
+  mouse-up re-evaluates a settled collapsed target with a fresh dwell. An
+  owned reveal already in flight cannot rearm hover or let it overwrite a
+  newer explicit collapse target.
+- Delayed focus return belongs to its completed operation and phase. A new
+  reveal, pin action, direct pointer/keyboard interaction, session end, or
+  environment cancellation invalidates it, including the right of an older
+  animation completion to schedule another return. The existing Dock/shortcut
+  return policy remains; later user interaction wins. A covered or fully
+  transparent sibling is not pointer interaction with that app.
+- Named reveal/collapse requests during an owned transition retain at most one
+  newest target. A toggle addresses that target, not the uncommitted phase;
+  successful completion applies it after the current writes settle. Failure,
+  release, Space-reveal cancellation, and screen-set cancellation discard it.
+  A newer operation begun by completion reconciliation supersedes an older
+  pending target. Merged-window selection retains the last requested window
+  even after the pointer leaves while that reveal is still in flight. Every
+  named reveal entry point updates that selection when its request is accepted;
+  replaying an earlier queued request does not make it newer again. Pin priority
+  remains unchanged.
 - Marker, strip, and pin panels stay above other apps' windows as permanent
   signals: main-menu level, visible on every Space including full-screen, and
   stationary through full-screen transitions.
@@ -225,6 +248,20 @@ logical display map, edge halo, and seam beacon, and defer later product ideas.
   `docs/contracts/screen-set-and-window-life.md`.
 
 ## Reconciliation log
+
+- **2026-09-30 — review follow-up:** the owner requested fixes for two
+  independently replayed regressions. Every accepted named reveal now updates
+  merged selection, while queued replay cannot reassert an older preference.
+  Marker mouse-up and delayed hover callbacks reject owned transitions so a
+  second dwell cannot erase a queued shortcut collapse. Combined timeline
+  evidence is in `InteractionContinuityTests.swift`; native AX review stays open.
+
+- **2026-09-30 — interaction continuity repair:** the owner requested fixes
+  following the interaction audit. Continuous dwell, click cancellation,
+  operation-owned focus return, one newest pending presentation target, and
+  visible sibling ownership now have shared policy evidence. Native timers,
+  marker/merge adapters, and resize bookkeeping use these rules. The existing
+  hide and activation policies remain; real AX timing and owner review stay open.
 
 - **2026-09-23 — transition completion and recovery audit:** repaired unchecked
   animation/frame completion, final seam commit validation, failed-collapse

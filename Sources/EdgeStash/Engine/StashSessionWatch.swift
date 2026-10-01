@@ -27,7 +27,10 @@ extension StashSession {
 
     func beginHoverReveal() {
         guard !ScreenSetCoordinator.blocksUserGeometry else { return }
-        guard phase == .collapsed, !markerSuppressed else { return }
+        guard HoverRevealPolicy.shouldBegin(
+            phase: phase, isBusy: busy, markerSuppressed: markerSuppressed,
+            clickLocked: clickCollapseLockActive, buttonPressed: NSEvent.pressedMouseButtons != 0
+        ) else { return }
         if presentation == .systemMinimize {
             guard canBeginSeamReveal else { return }
         }
@@ -40,10 +43,19 @@ extension StashSession {
             _ = expand(fromDock: false)
             return
         }
+        let lifecycle = lifecycleGeneration
         hoverDelayTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
-            guard let self, NSEvent.pressedMouseButtons == 0 else { return }
+            guard let self, self.lifecycleGeneration == lifecycle,
+                  HoverRevealPolicy.shouldBegin(
+                    phase: self.phase, isBusy: self.busy, markerSuppressed: self.markerSuppressed,
+                    clickLocked: self.clickCollapseLockActive, buttonPressed: NSEvent.pressedMouseButtons != 0
+                  ) else { return }
             _ = self.expand(fromDock: false)
         }
+    }
+
+    func rearmMarkerHoverAfterMouseUp() {
+        if marker.hasPointerInside { beginHoverReveal() }
     }
 
     func cancelHoverReveal() {
@@ -52,18 +64,16 @@ extension StashSession {
     }
 
     func handleMarkerClick() {
-        hoverDelayTimer?.invalidate()
-        switch phase {
-        case .collapsed:
+        cancelHoverReveal()
+        guard isManaged else { return }
+        if !desiredPresentationIsExpanded {
             // A click while the lock is held expands immediately; the lock
             // stays on so the next click collapses again (click toggle).
             _ = expand(fromDock: false)
-        case .expanded:
+        } else {
             if collapse() {
                 clickCollapseLockActive = true
             }
-        default:
-            break
         }
     }
 
@@ -145,12 +155,11 @@ extension StashSession {
     }
 
     func scheduleFocusRelease() {
-        focusReleaseGeneration += 1
-        let generation = focusReleaseGeneration
+        guard let ticket = focusReturn.schedule(phase: phase) else { return }
         // Let the reveal animation land and the click interaction settle before
         // handing focus back to the previous app.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-            guard let self, self.focusReleaseGeneration == generation else { return }
+            guard let self, self.focusReturn.consume(ticket, phase: self.phase, busy: self.busy) else { return }
             let context = self.focusContext?()
             StashFocusReturn.release(
                 sourcePID: self.pid,
@@ -158,6 +167,10 @@ extension StashSession {
                 collapsedManagedPIDs: context?.collapsedPIDs ?? []
             )
         }
+    }
+
+    func noteDirectInteraction() {
+        focusReturn.cancel()
     }
 
     func refreshPinControl() {
@@ -213,7 +226,8 @@ extension StashSession {
             kAXUIElementDestroyedNotification as String,
             kAXWindowMiniaturizedNotification as String,
             kAXWindowDeminiaturizedNotification as String,
-            kAXMovedNotification as String
+            kAXMovedNotification as String,
+            kAXResizedNotification as String
         ] {
             _ = AXObserverAddNotification(observer, windowElement, note as CFString, refcon)
         }
@@ -343,7 +357,7 @@ extension StashSession {
             }
             return
         }
-        if name == kAXMovedNotification as String, !busy, isManaged {
+        if (name == kAXMovedNotification as String || name == kAXResizedNotification as String), !busy, isManaged {
             if ScreenSetCoordinator.active?.reconcileUnannouncedTopology() == true { return }
             externalGeometryWasDragged = externalGeometryWasDragged || (NSEvent.pressedMouseButtons & 1) != 0
             scheduleDeferredGeometryReconciliation()
@@ -393,7 +407,10 @@ extension StashSession {
         )
         switch action {
         case .none:
-            break
+            if phase == .expanded, frame != restoreFrame,
+               let display = displays.first(where: { $0.id == displayID }) {
+                adoptExpandedGeometry(frame: frame, display: display)
+            }
         case .detach:
             shutdown(event: .detachedFromEdge)
         case .repairHidden:
@@ -403,4 +420,5 @@ extension StashSession {
             adoptExternalPlacement(frame: frame, display: display, edge: side)
         }
     }
+
 }

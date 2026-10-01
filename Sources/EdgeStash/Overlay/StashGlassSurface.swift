@@ -91,11 +91,18 @@ final class StashGlassSurface: NSView {
         }
         systemGlass?.removeFromSuperview()
         systemGlass = nil
-        guard #available(macOS 26.0, *) else { return }
-        let glass = NSGlassEffectView()
-        glass.style = .regular
-        glass.cornerRadius = cornerRadius
-        glass.tintColor = tint.withAlphaComponent(strength)
+        guard #available(macOS 26.0, *),
+              let glassClass = NSClassFromString("NSGlassEffectView") as? NSView.Type else { return }
+        let glass = glassClass.init(frame: .zero)
+        guard ["setStyle:", "setCornerRadius:", "setTintColor:"].allSatisfy({
+            glass.responds(to: NSSelectorFromString($0))
+        }) else { return }
+        // NSGlassEffectViewStyleRegular is zero. Resolve the same native view
+        // and properties at runtime so the macOS 12 deployment target can
+        // also be compiled with an SDK predating this optional pin surface.
+        glass.setValue(NSNumber(value: 0), forKey: "style")
+        glass.setValue(NSNumber(value: Double(cornerRadius)), forKey: "cornerRadius")
+        glass.setValue(tint.withAlphaComponent(strength), forKey: "tintColor")
         addSubview(glass)
         systemGlass = glass
         installedRole = role
@@ -103,9 +110,9 @@ final class StashGlassSurface: NSView {
     }
 
     private func updateSystemGlassTint() {
-        guard #available(macOS 26.0, *), let glass = systemGlass as? NSGlassEffectView else { return }
-        glass.tintColor = tint.withAlphaComponent(strength)
-        glass.cornerRadius = cornerRadius
+        guard let glass = systemGlass else { return }
+        glass.setValue(tint.withAlphaComponent(strength), forKey: "tintColor")
+        glass.setValue(NSNumber(value: Double(cornerRadius)), forKey: "cornerRadius")
     }
 
     private func layoutSystemGlass() {

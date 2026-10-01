@@ -15,6 +15,7 @@ final class StashMarkerWindow: NSPanel {
 
     private let markView = StashMarkerView()
     private var pointerInside = false
+    var hasPointerInside: Bool { pointerInside }
     private var interactionEnabled = true
     private var disabledExplanation = ""
     private var currentEdge: DisplayEdge = .left

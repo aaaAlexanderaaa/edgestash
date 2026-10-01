@@ -3106,6 +3106,7 @@ struct EdgeStashLogicTests {
 
         runScreenSetMemoryTests { condition, message in expect(condition, message) }
         runStateMachineBoundaryTests { condition, message in expect(condition, message) }
+        runInteractionContinuityTests { condition, message in expect(condition, message) }
 
         if failed > 0 {
             fputs("\(failed) test(s) failed\n", stderr)

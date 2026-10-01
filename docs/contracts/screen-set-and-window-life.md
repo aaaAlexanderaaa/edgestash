@@ -4,7 +4,7 @@ status: target
 authority: normative
 implementation: implemented
 verification_status: partial
-last_reconciled: 2026-09-23
+last_reconciled: 2026-09-30
 supersedes_clauses_of: docs/contracts/edgestash.md
 ---
 
@@ -231,6 +231,10 @@ An EdgeStash-controlled open of a seam stash still follows INV-9. A
 Dock app-icon click that does not open a stash must not run a seam
 reveal transaction and must not activate the app a second time.
 
+The most recent stash is updated by a successful capture or reveal and by
+focused-window use of an expanded stash, including marker, merged strip,
+and that window's Dock-thumbnail reveal. A failed capture does not change it.
+
 ### How a window stops being stashed
 
 The window is no longer stashed when the person drags it back onto the
@@ -330,6 +334,10 @@ stash. Exiting full screen does not put it back on the edge.
   stash. A non-drag system move to another connected display keeps the same
   side. An unsolicited move of a collapsed window repairs its hidden
   presentation instead of forgetting its placement.
+- A resize of an expanded stash updates its saved size and its marker, merged
+  rail, and pin geometry after the gesture settles, including while pinned.
+  Accepted live geometry is not rewritten merely to refresh those signals;
+  a small deliberate width change is not rounded back to the old stash width.
 - Fresh EdgeStash launches load configured screen-set keys with empty window
   memberships. Old numeric window identifiers cannot restore membership after
   a later replug. Discovery never captures a window merely because its frame
@@ -379,6 +387,12 @@ do not.
   and that lid-sleep does not move stashes.
 
 ## Reconciliation log
+
+- **2026-09-30 — live size and recent-window repair:** expanded resize
+  notifications update accepted size, rescue, and overlay geometry after
+  settling without a redundant AX write. Capture, successful reveals, and
+  focused expanded-window use update recent-stash selection. The owner asked
+  to repair these continuity gaps; multi-display and native-input review remain open.
 
 - **2026-09-23 — state-machine boundary audit:** fixed duplicate observations
   resetting the retry budget, cross-launch window-number membership reuse,
