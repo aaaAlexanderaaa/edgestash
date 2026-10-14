@@ -163,6 +163,14 @@ public struct WindowSurfaceHit {
 }
 
 public enum WindowSurfacePolicy {
+    /// Space visibility includes fully transparent parked windows. Opacity
+    /// filters apply to pointer ownership, not to window/Space membership.
+    public static func onScreenBounds(
+        windowID: UInt32, pid: Int32, in windows: [WindowSurfaceHit]
+    ) -> CGRect? {
+        windows.first { $0.windowID == windowID && $0.pid == pid }?.frame
+    }
+
     public static func frontmostWindow(at point: CGPoint, in windows: [WindowSurfaceHit]) -> WindowSurfaceHit? {
         windows.first { $0.layer == 0 && $0.alpha > 0 && $0.frame.contains(point) }
     }

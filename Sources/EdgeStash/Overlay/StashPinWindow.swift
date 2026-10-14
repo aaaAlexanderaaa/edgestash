@@ -11,7 +11,6 @@ final class StashPinWindow: NSPanel {
 
     private let button = StashPinButton()
     private var phase = Phase.hidden
-    private var latestFrames: PinControlFrames?
 
     private enum Phase {
         case hidden
@@ -49,7 +48,6 @@ final class StashPinWindow: NSPanel {
         reduceMotion: Bool
     ) {
         button.apply(pinned: pinned, accent: accent)
-        latestFrames = frames
         if visible {
             surface(frames: frames, reduceMotion: reduceMotion)
         } else {
@@ -60,6 +58,7 @@ final class StashPinWindow: NSPanel {
     /// Hard teardown: no animation, phase reset. Engine paths that tear the
     /// session down call this instead of ordering the panel out themselves.
     func conceal() {
+        guard phase != .hidden || isVisible else { return }
         phase = .hidden
         alphaValue = 0
         super.orderOut(nil)
@@ -68,10 +67,10 @@ final class StashPinWindow: NSPanel {
     private func surface(frames: PinControlFrames, reduceMotion: Bool) {
         switch phase {
         case .shown:
-            setFrame(frames.buttonFrame, display: true)
-            alphaValue = 1
+            if frame != frames.buttonFrame { setFrame(frames.buttonFrame, display: true) }
+            if alphaValue != 1 { alphaValue = 1 }
         case .revealing:
-            setFrame(frames.buttonFrame, display: true)
+            if frame != frames.buttonFrame { setFrame(frames.buttonFrame, display: true) }
         case .hiding, .hidden:
             phase = .revealing
             alphaValue = 0
@@ -128,6 +127,7 @@ private final class StashPinButton: NSView {
     private var pressed = false
     private var hovered = false
     private let glass = StashGlassSurface()
+    private var appliedLabel: String?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -150,13 +150,16 @@ private final class StashPinButton: NSView {
     }
 
     func apply(pinned: Bool, accent: NSColor) {
+        let label = pinned ? L10n.pinRelease : L10n.pinPlace
+        guard self.pinned != pinned || self.accent != accent || appliedLabel != label else { return }
         self.pinned = pinned
         self.accent = accent
+        appliedLabel = label
         glass.apply(role: .disc, tint: accent)
         needsDisplay = true
         setAccessibilityElement(true)
         setAccessibilityRole(.button)
-        setAccessibilityLabel(pinned ? L10n.pinRelease : L10n.pinPlace)
+        setAccessibilityLabel(label)
     }
 
     override func updateTrackingAreas() {

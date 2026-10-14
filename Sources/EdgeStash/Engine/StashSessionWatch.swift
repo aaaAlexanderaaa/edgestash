@@ -3,13 +3,18 @@ import ApplicationServices
 import EdgeStashLogic
 
 extension StashSession {
-    func reconcileMinimized(now: Date = Date()) {
+    func reconcileMinimized(
+        now: Date = Date(),
+        readAvailability: (CGDirectDisplayID) -> SeamSpaceAvailability = {
+            DisplaySpaceTransport.shared.availability(for: $0)
+        }
+    ) {
         guard !ScreenSetCoordinator.blocksUserGeometry else { return }
         guard usingSharedMinimize, phase == .collapsed, !restoringShared else { return }
         guard now.timeIntervalSince(lastMinimizeCheck) >= 0.5 else { return }
         lastMinimizeCheck = now
         let previousAvailability = seamSpaceAvailability
-        refreshSeamSpaceAvailability()
+        refreshSeamSpaceAvailability(read: readAvailability)
         if seamSpaceAvailability != previousAvailability {
             if let restoreFrame { showMarker(windowQuartz: restoreFrame) }
             onChanged?(self)

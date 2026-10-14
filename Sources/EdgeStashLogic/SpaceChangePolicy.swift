@@ -12,6 +12,25 @@ public enum SeamSpaceAvailability: Equatable {
     case unavailable
 }
 
+/// Share display observations only within one synchronous reconciliation pass.
+/// Create a new batch on every poll; reveal preparation and commit checks must
+/// read the transport directly so they cannot reuse an earlier observation.
+public struct SeamSpaceObservationBatch {
+    private var observations: [UInt32: SeamSpaceAvailability] = [:]
+
+    public init() {}
+
+    public mutating func availability(
+        for displayID: UInt32,
+        read: () -> SeamSpaceAvailability
+    ) -> SeamSpaceAvailability {
+        if let observed = observations[displayID] { return observed }
+        let observed = read()
+        observations[displayID] = observed
+        return observed
+    }
+}
+
 public enum SeamRevealPreparation: Equatable {
     /// The window already belongs to the owning display's current Space.
     case reveal

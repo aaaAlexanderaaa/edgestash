@@ -25,6 +25,18 @@ final class StashMarkerWindow: NSPanel {
     /// present has already started; the generation guard keeps a stale
     /// completion from ordering out a re-presented panel.
     private var fadeGeneration = 0
+    private var presented = false
+    private var presentation: Presentation?
+
+    private struct Presentation: Equatable {
+        let kind: StashOverlayKind
+        let edge: DisplayEdge
+        let color: NSColor
+        let frame: CGRect
+        let title: String
+        let enabled: Bool
+        let explanation: String
+    }
 
     /// Placeholder frame until the first present; sized from the marker
     /// metrics so the placeholder already matches real geometry.
@@ -75,6 +87,14 @@ final class StashMarkerWindow: NSPanel {
         disabledExplanation: String,
         reduceMotion: Bool
     ) {
+        let next = Presentation(
+            kind: kind, edge: edge, color: color, frame: frame,
+            title: title, enabled: enabled, explanation: disabledExplanation
+        )
+        let arriving = !presented || !isVisible
+        guard presentation != next || arriving || self.frame != frame else { return }
+        presentation = next
+        presented = true
         fadeGeneration += 1
         if interactionEnabled, !enabled, pointerInside {
             onHoverExited?()
@@ -83,14 +103,18 @@ final class StashMarkerWindow: NSPanel {
         self.disabledExplanation = disabledExplanation
         currentEdge = edge
         markView.apply(kind: kind, edge: edge, color: color, title: title, enabled: enabled)
-        setFrame(frame, display: true)
-        fade(visible: true, reduceMotion: reduceMotion)
-        orderFront(nil)
+        if self.frame != frame { setFrame(frame, display: true) }
+        if arriving {
+            fade(visible: true, reduceMotion: reduceMotion)
+            orderFront(nil)
+        }
     }
 
     func dismiss(reduceMotion: Bool) {
         pointerInside = false
         dismissExplanation()
+        guard presented else { return }
+        presented = false
         fadeGeneration += 1
         let generation = fadeGeneration
         fade(visible: false, reduceMotion: reduceMotion) { [weak self] in

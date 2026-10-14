@@ -1,7 +1,7 @@
 import AppKit
 import EdgeStashLogic
 
-struct StashMergeSegmentModel {
+struct StashMergeSegmentModel: Equatable {
     let id: ObjectIdentifier
     let color: NSColor
     let title: String
@@ -10,7 +10,7 @@ struct StashMergeSegmentModel {
     let kind: StashOverlayKind
 }
 
-struct StashMergeStripModel {
+struct StashMergeStripModel: Equatable {
     let windowFrame: CGRect
     let edge: DisplayEdge
     let trackRect: CGRect
@@ -77,18 +77,23 @@ final class StashMergeStrip: NSPanel {
     }
 
     func present(_ model: StashMergeStripModel) {
+        // The five-second discovery poll also reconciles merge groups. An
+        // unchanged visible strip needs neither repainting nor window ordering.
+        let labelsChanged = labelPanel.isVisible != model.showsLabels
+            || (model.showsLabels && labelPanel.frame != model.labelWindowFrame)
+        guard self.model != model || !isVisible || frame != model.windowFrame || labelsChanged else { return }
         self.model = model
         content.model = model
         if frame != model.windowFrame { setFrame(model.windowFrame, display: true) }
-        orderFront(nil)
+        if !isVisible { orderFront(nil) }
         if model.showsLabels {
             labels.model = model
             if labelPanel.frame != model.labelWindowFrame {
                 labelPanel.setFrame(model.labelWindowFrame, display: true)
             }
-            labelPanel.orderFront(nil)
+            if !labelPanel.isVisible { labelPanel.orderFront(nil) }
         } else {
-            labelPanel.orderOut(nil)
+            if labelPanel.isVisible { labelPanel.orderOut(nil) }
         }
     }
 

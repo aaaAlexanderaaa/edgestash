@@ -4,7 +4,7 @@ status: current
 authority: normative
 implementation: implemented
 verification_status: partial
-last_reconciled: 2026-08-30
+last_reconciled: 2026-10-14
 ---
 
 # Local-first operation
@@ -50,9 +50,10 @@ If a new file imports a network or capture API, revert it.
 
 - Search under `Sources` finds no `URLSession`,
   `CGWindowListCreateImage`, or `SCStream` (checked 2026-08-29).
-- `CGWindowListCopyWindowInfo` appears only in the Dock measurement: it
-  reads window bounds, owner pid, and layer — window metadata, never
-  content — and is not a capture path.
+- `CGWindowListCopyWindowInfo` reads metadata for Dock measurement, pointer
+  ownership, current-Space marker visibility, focus return, and rescue checks:
+  bounds, window id, owner pid, layer, and alpha, never window content.
+  It is not a capture path.
 - Settings opens without prompting; Grant Access is explicit on System.
 
 ## Promise register
@@ -60,6 +61,10 @@ If a new file imports a network or capture API, revert it.
 None.
 
 ## Reconciliation log
+
+- **2026-10-14:** corrected the metadata-use inventory to include the existing
+  pointer, Space-visibility, focus-return, and rescue checks. Sharing metadata
+  within a synchronous Space rebuild adds no capture or network capability.
 
 - **2026-08-29:** adopted as the local-first rule for the EdgeStash tree.
 - **2026-08-29 — Settings host:** `Preferences` / Settings rail land with

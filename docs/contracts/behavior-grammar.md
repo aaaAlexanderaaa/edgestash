@@ -4,7 +4,7 @@ status: current
 authority: normative
 implementation: implemented
 verification_status: partial
-last_reconciled: 2026-09-30
+last_reconciled: 2026-10-14
 ---
 
 # Behavior grammar and the expectation check
@@ -129,6 +129,29 @@ current destination before deminimization and after its frame write. Its existin
 poll may re-enable a transiently unavailable beacon when availability changes;
 the limitation explanation remains caller-gated and once-per-machine.
 
+## Background observations and unchanged overlays
+
+The existing 0.5-second minimize poll shares one Space-availability observation
+per owning display within its synchronous pass. Each window still receives its
+own AX minimized-state check. No observation survives into the next poll;
+reveal preparation and both final destination checks read the transport directly.
+`SeamSpaceObservationBatch` is used by the live poll and its per-pass query
+bounds execute in `Tests/BackgroundObservationTests.swift`
+(`background_observation per-pass query bounds`). This is query-count evidence,
+not a macOS 27 CPU or compositor measurement.
+
+A settled Space rebuild reads at most one on-screen metadata list, lazily.
+Collapsed seam beacons do not need that list; their visibility is independent
+of the minimized window's Space. Transparent slide windows still count as
+on-screen metadata for Space visibility, but never as pointer targets.
+
+An unchanged visible marker or merged strip does not repaint, restart a fade,
+or order its panel forward on reconciliation. A hidden panel is presented
+again when requested, including reversal of an unfinished marker dismissal.
+Pin polling also skips unchanged paint, frame, opacity, and hidden-panel writes.
+These suppress redundant work within the existing productions; presentation
+cardinality coverage remains `structural-only` for those rows.
+
 ## Manifest (machine-readable)
 
 Interaction timing is also exercised by the native adapters' shared policies
@@ -176,6 +199,22 @@ color_tint_picker | popup | Sources/EdgeStash/Settings/Controls/ColorMenus.swift
 <!-- END grammar-manifest -->
 
 ## Reconciliation log
+
+- **2026-10-14 — background WindowServer load:** the owner reports persistent
+  desktop stutter after stashing on macOS 27. Shared display observations,
+  one metadata list per Space rebuild, and unchanged-overlay guards remove
+  redundant reads, redraws, fades, and ordering. Poll intervals, reveal commit
+  validation, hide strategy, and visible chrome remain the accepted behavior.
+  Query bounds have headless evidence; macOS 27 profiling and owner desktop
+  review remain open.
+  The expectation check and CLT Debug/Release builds passed. A disposable
+  native probe on macOS 15.7.9 repeated each unchanged marker, merged strip
+  (with and without labels), shown pin, and hidden pin update 500 times:
+  zero `setFrame`, alpha, ordering, or redraw requests were observed in those
+  loops. Marker dismissal reversal, hidden-strip re-presentation, and native
+  frame-drift repair also passed. This isolated AppKit evidence does not
+  promote the manifest's presentation cardinalities or prove macOS 27 CPU
+  behavior. Full Xcode is absent; the Xcode-project Debug gate remains open.
 
 - **2026-09-30 — continuity evidence:** added the shared interaction timeline
   evidence above and clarified the two panels of the existing merge surface.

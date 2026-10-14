@@ -71,7 +71,16 @@ final class StashEngine {
             self?.syncSessions()
         }
         minimizeTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-            self?.sessions.forEach { $0.reconcileMinimized() }
+            guard let self else { return }
+            let now = Date()
+            var spaces = SeamSpaceObservationBatch()
+            for session in self.sessions {
+                session.reconcileMinimized(now: now) { displayID in
+                    spaces.availability(for: displayID) {
+                        DisplaySpaceTransport.shared.availability(for: displayID)
+                    }
+                }
+            }
         }
     }
 
@@ -178,7 +187,17 @@ final class StashEngine {
         DispatchQueue.main.asyncAfter(deadline: .now() + SpaceChangePolicy.rebuildDelay) { [weak self] in
             guard let self, self.spaceRebuildGeneration == generation else { return }
             self.sessions.forEach { $0.leaveStashIfFullScreened() }
-            self.sessions.forEach { $0.refreshMarkerAfterSpaceChange() }
+            // One fresh metadata list for this rebuild, read lazily: collapsed
+            // seam beacons do not depend on the real window being on screen.
+            var windows: [WindowSurfaceHit]?
+            self.sessions.forEach { session in
+                session.refreshMarkerAfterSpaceChange { windowID, pid in
+                    if windows == nil { windows = StashSurface.onScreenWindows() }
+                    return WindowSurfacePolicy.onScreenBounds(
+                        windowID: windowID, pid: pid, in: windows ?? []
+                    ) != nil
+                }
+            }
             self.merged.reconcile(sessions: self.sessions)
             self.reevaluateSeamApproach()
         }

@@ -18,11 +18,13 @@ enum StashSurface {
     }
 
     static func frontmostWindow(atQuartz point: CGPoint) -> (windowID: UInt32, pid: pid_t)? {
-        guard let hit = WindowSurfacePolicy.frontmostWindow(at: point, in: pointerWindows()) else { return nil }
+        guard let hit = WindowSurfacePolicy.frontmostWindow(at: point, in: onScreenWindows()) else { return nil }
         return (hit.windowID, hit.pid)
     }
 
-    private static func pointerWindows() -> [WindowSurfaceHit] {
+    /// Fresh, ordered metadata for a caller-owned synchronous observation pass.
+    /// Never retain this across events or use it for rescue identity checks.
+    static func onScreenWindows() -> [WindowSurfaceHit] {
         let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
             as? [[String: Any]] ?? []
         return list.compactMap { info in
@@ -65,26 +67,11 @@ enum StashSurface {
         atQuartz point: CGPoint
     ) -> Bool {
         WindowSurfacePolicy.isPointerInSiblingWindow(
-            pid: pid, excluding: windowID, at: point, in: pointerWindows()
+            pid: pid, excluding: windowID, at: point, in: onScreenWindows()
         )
     }
 
     static func onScreenBounds(windowID: UInt32, pid: pid_t) -> CGRect? {
-        let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
-            as? [[String: Any]] ?? []
-        for info in list {
-            guard (info[kCGWindowOwnerPID as String] as? pid_t) == pid,
-                  (info[kCGWindowNumber as String] as? UInt32) == windowID,
-                  let bounds = info[kCGWindowBounds as String] as? [String: Any] else {
-                continue
-            }
-            return CGRect(
-                x: bounds["X"] as? CGFloat ?? 0,
-                y: bounds["Y"] as? CGFloat ?? 0,
-                width: bounds["Width"] as? CGFloat ?? 0,
-                height: bounds["Height"] as? CGFloat ?? 0
-            )
-        }
-        return nil
+        WindowSurfacePolicy.onScreenBounds(windowID: windowID, pid: pid, in: onScreenWindows())
     }
 }

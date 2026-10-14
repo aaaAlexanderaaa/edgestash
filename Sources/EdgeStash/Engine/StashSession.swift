@@ -7,6 +7,10 @@ final class StashSession {
     let bundleID: String
     let appElement: AXUIElement
     let windowElement: AXUIElement
+    /// The application's bundle icon is stable for this window/process life.
+    /// Reuse its image in merge models instead of loading two new image objects
+    /// per member on every discovery poll (which also defeats model equality).
+    lazy var applicationIcon = NSRunningApplication(processIdentifier: pid)?.icon
 
     private(set) var phase: StashSessionPhase = .idle
     private(set) var edge: DisplayEdge?
@@ -442,14 +446,20 @@ final class StashSession {
     /// display-anchored and remains visible, enabled only when that display's
     /// current Space is an ordinary user Space. Expanded and slide-stashed
     /// windows show a marker only on the Space that contains the real window.
-    func refreshMarkerAfterSpaceChange() {
+    func refreshMarkerAfterSpaceChange(
+        isOnScreen: (UInt32, pid_t) -> Bool = { StashSurface.isOnScreen(windowID: $0, pid: $1) }
+    ) {
         guard isManaged, let restoreFrame else {
             hideMarker()
             return
         }
         let onActiveSpace: Bool
-        if let windowID {
-            onActiveSpace = StashSurface.isOnScreen(windowID: windowID, pid: pid)
+        if presentation == .systemMinimize, isCollapsed {
+            // A collapsed seam's beacon is display-anchored, independent of
+            // its minimized window's presence in the on-screen window list.
+            onActiveSpace = true
+        } else if let windowID {
+            onActiveSpace = isOnScreen(windowID, pid)
         } else {
             // The window number was never resolved; keep the marker reachable
             // rather than hiding a stash the user cannot verify.
@@ -996,7 +1006,11 @@ final class StashSession {
         finishCollapse(next: next, frame: frame, merged: false)
     }
 
-    func refreshSeamSpaceAvailability() {
+    func refreshSeamSpaceAvailability(
+        read: (CGDirectDisplayID) -> SeamSpaceAvailability = {
+            DisplaySpaceTransport.shared.availability(for: $0)
+        }
+    ) {
         guard presentation == .systemMinimize,
               let displayID,
               let screen = DisplayCatalog.screen(withID: displayID),
@@ -1004,7 +1018,7 @@ final class StashSession {
             seamSpaceAvailability = .unavailable
             return
         }
-        seamSpaceAvailability = DisplaySpaceTransport.shared.availability(for: cgDisplayID)
+        seamSpaceAvailability = read(cgDisplayID)
     }
 
     private func failSharedReveal(availability: SeamSpaceAvailability) {
