@@ -29,6 +29,11 @@ That shared-edge path needs macOS 26.4. On an older system, outer edges still wo
 3. Open the app and grant Accessibility (System Settings → Privacy & Security → Accessibility). Settings opens on its own when permission is missing; after you grant it, reopen from the menu-bar item.
 4. If macOS says the developer cannot be verified, Control-click the app and choose Open.
 
+Homebrew distribution is being prepared. A Developer ID-signed, notarized
+release and an installable Cask have not been published yet. See the
+[release guide](docs/distribution.md) for signing setup and the future upgrade
+path. The app itself will continue to work without network access.
+
 ## Use
 
 - Drag a window to a display edge and hold to stash it.
