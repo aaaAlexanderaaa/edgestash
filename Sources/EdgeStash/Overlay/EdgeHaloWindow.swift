@@ -3,7 +3,7 @@ import EdgeStashLogic
 
 /// Settings-only teaching light. Preview, not a strip or beacon.
 final class EdgeHaloWindow: NSPanel {
-    private let band = StashGlassSurface()
+    private let band = StashAppearanceSurface()
 
     init() {
         super.init(

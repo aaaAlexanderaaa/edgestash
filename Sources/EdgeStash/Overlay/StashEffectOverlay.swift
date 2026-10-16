@@ -30,12 +30,12 @@ final class StashEffectOverlay {
         panel.contentView = view
     }
 
-    func playCollapse(edge: DisplayEdge, point: CGPoint, color: NSColor, screen: NSScreen) {
-        present(edge: edge, point: point, color: color, screen: screen, collapsing: true)
+    func playCollapse(edge: DisplayEdge, point: CGPoint, color: NSColor, material: StashMaterial, screen: NSScreen) {
+        present(edge: edge, point: point, color: color, material: material, screen: screen, collapsing: true)
     }
 
-    func playExpand(edge: DisplayEdge, point: CGPoint, color: NSColor, screen: NSScreen) {
-        present(edge: edge, point: point, color: color, screen: screen, collapsing: false)
+    func playExpand(edge: DisplayEdge, point: CGPoint, color: NSColor, material: StashMaterial, screen: NSScreen) {
+        present(edge: edge, point: point, color: color, material: material, screen: screen, collapsing: false)
     }
 
     func stop(immediate: Bool = true) {
@@ -51,6 +51,7 @@ final class StashEffectOverlay {
         edge: DisplayEdge,
         point: CGPoint,
         color: NSColor,
+        material: StashMaterial,
         screen: NSScreen,
         collapsing: Bool
     ) {
@@ -60,7 +61,7 @@ final class StashEffectOverlay {
         let local = CGPoint(x: point.x - screen.frame.minX, y: point.y - screen.frame.minY)
         let accent = color.usingColorSpace(.deviceRGB) ?? color
 
-        layer.addSublayer(makeSheen(edge: edge, local: local, accent: accent, collapsing: collapsing))
+        layer.addSublayer(makeSheen(edge: edge, local: local, accent: accent, material: material, collapsing: collapsing))
 
         panel.orderFront(nil)
         let work = DispatchWorkItem { [weak self] in
@@ -76,6 +77,7 @@ final class StashEffectOverlay {
         edge: DisplayEdge,
         local: CGPoint,
         accent: NSColor,
+        material: StashMaterial,
         collapsing: Bool
     ) -> CALayer {
         let thickness = StashGeometryPolicy.barThickness
@@ -90,7 +92,13 @@ final class StashEffectOverlay {
         let sheen = CALayer()
         sheen.frame = frame
         sheen.cornerRadius = StashGeometryPolicy.barCornerRadius
-        sheen.backgroundColor = accent.withAlphaComponent(collapsing ? 0.55 : 0.4).cgColor
+        let image = NSImage(size: frame.size)
+        image.lockFocus()
+        let bounds = CGRect(origin: .zero, size: frame.size)
+        StashMaterialPainter.paint(bounds, material: material, tint: accent, strength: 1)
+        StashMaterialPainter.highlight(bounds, at: CGPoint(x: bounds.midX, y: bounds.midY))
+        image.unlockFocus()
+        sheen.contents = image.cgImage(forProposedRect: nil, context: nil, hints: nil)
         sheen.opacity = 0
 
         let fade = CAKeyframeAnimation(keyPath: "opacity")

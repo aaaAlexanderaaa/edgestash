@@ -110,6 +110,7 @@ final class StashMergeCoordinator {
                           let member = group.members.first(where: { $0.id == slot.id }) else { return nil }
                     return StashMergeSegmentModel(
                         id: ObjectIdentifier(session), color: Preferences.shared.stripColor(for: session.bundleID),
+                        material: Preferences.shared.appearance(for: session.bundleID).resolvedMaterial,
                         title: member.title, icon: session.applicationIcon,
                         slotRect: slot.slotRect,
                         kind: session.presentation == .systemMinimize ? .seamBeacon : .outerStrip

@@ -252,7 +252,10 @@ final class Preferences: ObservableObject {
     /// appearance, "ivory"/"graphite" are fixed neutrals, wheel tokens map to
     /// generated pastels, and "#RRGGBB" is a user-picked exact color.
     func stripColor(for bundleID: String) -> NSColor {
-        let token = tintKey(for: bundleID)
+        Self.stripColor(token: tintKey(for: bundleID))
+    }
+
+    static func stripColor(token: String) -> NSColor {
         if token == "adaptive" {
             return NSColor(name: nil) { appearance in
                 Self.appearanceIsDark(appearance) ? .white : .black
@@ -331,16 +334,24 @@ final class Preferences: ObservableObject {
     }
 
     func applyAppStash(bundleID: String, stashOn: Bool, tint: String) {
-        let existing = appProfiles[bundleID]
-        appProfiles[bundleID] = AppStashProfile(
-            stashOn: stashOn,
-            tint: tint,
-            alpha: existing?.alpha,
-            sides: Self.normalizeSnapSide(existing?.sides),
-            chord: existing?.chord,
-            chordScope: existing?.chordScope,
-            allStashedDock: existing?.allStashedDock
-        )
+        var profile = appProfiles[bundleID] ?? AppStashProfile(stashOn: stashOn, tint: tint)
+        profile.stashOn = stashOn
+        profile.tint = tint
+        appProfiles[bundleID] = profile
+    }
+
+    func appearance(for bundleID: String) -> StashAppearance {
+        guard let profile = appProfiles[bundleID] else { return .newProfile }
+        return profile.appearance ?? StashAppearance()
+    }
+
+    func applyAppearance(bundleID: String, material: StashMaterial? = nil, motion: StashWindowMotion? = nil) {
+        var profile = appProfiles[bundleID] ?? AppStashProfile(stashOn: false, tint: "adaptive")
+        var appearance = profile.appearance ?? StashAppearance()
+        if let material { appearance.material = material.rawValue }
+        if let motion { appearance.motion = motion.rawValue }
+        profile.appearance = appearance
+        appProfiles[bundleID] = profile
     }
 
     func applyOpacity(bundleID: String, opacity: Double) {
@@ -350,7 +361,7 @@ final class Preferences: ObservableObject {
     }
 
     func applySnapSide(bundleID: String, snapSide: String) {
-        guard var setting = appProfiles[bundleID] else { return }
+        var setting = appProfiles[bundleID] ?? AppStashProfile(stashOn: false, tint: "adaptive")
         setting.sides = Self.normalizeSnapSide(snapSide)
         appProfiles[bundleID] = setting
     }
@@ -478,7 +489,7 @@ final class Preferences: ObservableObject {
     }
 
     func setAllStashedDockAction(_ action: AllStashedDockAction, bundleID: String) {
-        guard var setting = appProfiles[bundleID] else { return }
+        var setting = appProfiles[bundleID] ?? AppStashProfile(stashOn: false, tint: "adaptive")
         setting.allStashedDock = action.rawValue
         appProfiles[bundleID] = setting
     }

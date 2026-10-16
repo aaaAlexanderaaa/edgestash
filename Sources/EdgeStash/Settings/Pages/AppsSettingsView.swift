@@ -1,138 +1,112 @@
+import EdgeStashLogic
 import SwiftUI
 
 struct AppsPage: View {
     @ObservedObject var appCatalog: AppCatalog
     @ObservedObject var preferences: Preferences
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var showsAdaptiveTintNotice = false
-    @State private var noticeDismissJob: DispatchWorkItem?
+    @Environment(\.settingsPageWidth) private var pageWidth
     @State private var searchText = ""
+    @State private var selectedBundleID: String?
+    @State private var showsDefaults = false
 
     private var visibleApps: [AppEntry] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let apps = appCatalog.apps
-        guard !query.isEmpty else { return apps }
-        return apps.filter {
+        guard !query.isEmpty else { return appCatalog.apps }
+        return appCatalog.apps.filter {
             $0.name.localizedStandardContains(query) || $0.id.localizedCaseInsensitiveContains(query)
         }
     }
 
+    private var selectedApp: AppEntry? {
+        visibleApps.first { $0.id == selectedBundleID } ?? visibleApps.first
+    }
+
     var body: some View {
-        SettingsPageScaffold(tab: .apps) {
-            if showsAdaptiveTintNotice {
-                Text(L10n.appsAutoColorNote)
-                    .font(SettingsTheme.TypeRole.job)
-                    .foregroundStyle(.secondary)
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(SettingsTheme.ColorToken.rail.opacity(0.10))
-                    .clipShape(RoundedRectangle(cornerRadius: SettingsTheme.Radius.row, style: .continuous))
+        VStack(alignment: .leading, spacing: 0) {
+            SettingsPageHeader(tab: .apps)
+            DisclosureGroup(isExpanded: $showsDefaults) {
+                StripDefaultsCard(appCatalog: appCatalog, preferences: preferences)
+                    .padding(.top, 8)
+            } label: {
+                Text(L10n.appsDefaultsCard).font(.subheadline.weight(.medium))
             }
+            .padding(.horizontal, SettingsTheme.Space.page)
+            .padding(.bottom, 16)
 
-            StripDefaultsCard(appCatalog: appCatalog, preferences: preferences)
-
-            SettingsCard {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text(L10n.appsListNote)
-                        .font(SettingsTheme.TypeRole.job)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    if !appCatalog.apps.isEmpty {
-                        HStack(spacing: 8) {
-                            Image(systemName: "magnifyingglass")
-                                .foregroundStyle(.secondary)
-                            TextField(L10n.appsSearch, text: $searchText)
-                                .textFieldStyle(.plain)
-                        }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 7)
-                        .background(
-                            RoundedRectangle(cornerRadius: SettingsTheme.Radius.row, style: .continuous)
-                                .fill(Color.primary.opacity(0.05))
-                        )
-                    }
-
-                    if appCatalog.apps.isEmpty {
-                        SettingsEmptyState(
-                            symbol: "square.grid.2x2",
-                            message: L10n.appsEmptyHint
-                        )
-                    } else if visibleApps.isEmpty {
-                        SettingsEmptyState(
-                            symbol: "magnifyingglass",
-                            message: L10n.appsSearchEmpty
-                        )
+            HStack(alignment: .top, spacing: 16) {
+                applicationList
+                    .frame(width: pageWidth < 620 ? 150 : 178)
+                ScrollView {
+                    if let app = selectedApp {
+                        StashAppRow(app: app, preferences: preferences)
+                            .id(app.id)
                     } else {
-                        VStack(spacing: 0) {
-                            ForEach(Array(visibleApps.enumerated()), id: \.element.id) { index, app in
-                                let isEnabled = preferences.stashActive(bundleID: app.id)
-                                let tintToken = preferences.tintKey(for: app.id)
-                                let snapSide = preferences.snapPreference(for: app.id)
-
-                                HStack(alignment: .top, spacing: 12) {
-                                    TickBox(
-                                        isOn: Binding(
-                                            get: { isEnabled },
-                                            set: { preferences.applyAppStash(bundleID: app.id, stashOn: $0, tint: tintToken) }
-                                        )
-                                    )
-                                    .padding(.top, 8)
-
-                                    StashAppRow(
-                                        app: app,
-                                        colorName: tintToken,
-                                        snapSide: snapSide,
-                                        blockedDockSide: preferences.resolvedDockSide(),
-                                        allStashedDock: isEnabled
-                                            ? preferences.allStashedDockAction(for: app.id)
-                                            : nil,
-                                        onColorChange: { newColor in
-                                            preferences.applyAppStash(bundleID: app.id, stashOn: isEnabled, tint: newColor)
-                                            if newColor == "adaptive" {
-                                                raiseAdaptiveTintNotice()
-                                            }
-                                        },
-                                        onSnapSideChange: { newSnapSide in
-                                            preferences.applySnapSide(bundleID: app.id, snapSide: newSnapSide)
-                                        },
-                                        onAllStashedDockChange: { action in
-                                            preferences.setAllStashedDockAction(action, bundleID: app.id)
-                                        }
-                                    )
-                                    .opacity(isEnabled ? 1 : 0.72)
-                                }
-                                .padding(.vertical, 8)
-
-                                if index != visibleApps.count - 1 {
-                                    Divider()
-                                }
-                            }
-                        }
+                        SettingsEmptyState(symbol: "sidebar.left", message: L10n.text("apps.selectApp"))
                     }
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+            .padding(.horizontal, SettingsTheme.Space.page)
+            .padding(.bottom, SettingsTheme.Space.page)
         }
-        .onDisappear {
-            noticeDismissJob?.cancel()
-            noticeDismissJob = nil
+        .onAppear {
+            selectedBundleID = selectedApp?.id
+        }
+        .onChange(of: visibleApps.map(\.id)) { _ in
+            if !visibleApps.contains(where: { $0.id == selectedBundleID }) {
+                selectedBundleID = visibleApps.first?.id
+            }
         }
     }
 
-    /// Picking the adaptive tint is the one choice that behaves differently
-    /// per appearance, so say so once; the notice retires itself.
-    private func raiseAdaptiveTintNotice() {
-        noticeDismissJob?.cancel()
-        let retire = DispatchWorkItem {
-            withAnimation(SettingsMotion.fade(reduceMotion: reduceMotion)) {
-                showsAdaptiveTintNotice = false
+    private var applicationList: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                TextField(L10n.appsSearch, text: $searchText).textFieldStyle(.plain)
             }
+            .font(.subheadline)
+            .padding(8)
+            .background(Color.primary.opacity(0.045))
+            .clipShape(RoundedRectangle(cornerRadius: 7))
+
+            ScrollView {
+                LazyVStack(spacing: 3) {
+                    ForEach(visibleApps) { app in
+                        HStack(spacing: 2) {
+                            TickBox(isOn: Binding(
+                                get: { preferences.stashActive(bundleID: app.id) },
+                                set: { preferences.applyAppStash(bundleID: app.id, stashOn: $0,
+                                                                  tint: preferences.tintKey(for: app.id)) }
+                            ))
+                            .accessibilityLabel(L10n.text("apps.enable") + " " + app.name)
+                            Button { selectedBundleID = app.id } label: {
+                                HStack(spacing: 7) {
+                                    AppIdentityIcon(app: app).frame(width: 22, height: 22)
+                                    Text(app.name).font(.subheadline).lineLimit(1)
+                                    Spacer(minLength: 0)
+                                }
+                                .padding(.vertical, 9)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityAddTraits(selectedApp?.id == app.id ? .isSelected : [])
+                        }
+                        .padding(.horizontal, 5)
+                        .background(selectedApp?.id == app.id ? Color.accentColor.opacity(0.12) : .clear)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                    }
+                    if visibleApps.isEmpty {
+                        SettingsEmptyState(symbol: "magnifyingglass", message: appCatalog.apps.isEmpty
+                            ? L10n.appsEmptyHint : L10n.appsSearchEmpty)
+                    }
+                }
+            }
+            Text(L10n.appsListNote)
+                .font(.caption2).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
-        noticeDismissJob = retire
-        withAnimation(SettingsMotion.fade(reduceMotion: reduceMotion)) {
-            showsAdaptiveTintNotice = true
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 8, execute: retire)
+        .frame(maxHeight: .infinity, alignment: .top)
     }
 }
 
@@ -147,7 +121,7 @@ private struct StripDefaultsCard: View {
         let dockSide = preferences.resolvedDockSide()
         let probedDockSide = Preferences.detectedDockSide()
 
-        SettingsCard(L10n.appsDefaultsCard) {
+        SettingsCard {
             VStack(alignment: .leading, spacing: 16) {
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
@@ -162,7 +136,7 @@ private struct StripDefaultsCard: View {
                     }
                     Spacer()
                     FieldMenu(
-                        title: snapSideLabel(sharedEdgeChoice),
+                        title: edgeState.isMixed ? L10n.text("apps.edgesMixed") : snapSideLabel(sharedEdgeChoice),
                         minWidth: defaultsFieldWidth,
                         leadingImage: edgeGlyphImage(side: sharedEdgeChoice, colorScheme: colorScheme),
                         alignment: .trailing,
@@ -171,7 +145,7 @@ private struct StripDefaultsCard: View {
                             return MenuChoice(
                                 title: snapSideLabel(key),
                                 image: edgeGlyphImage(side: key, colorScheme: colorScheme, enabled: usable),
-                                isSelected: key == sharedEdgeChoice,
+                                isSelected: !edgeState.isMixed && key == sharedEdgeChoice,
                                 isEnabled: usable
                             ) {
                                 preferences.applyGlobalSnapSide(key)

@@ -57,9 +57,11 @@
 		E41000000000000000000025 /* StashMergeStrip.swift in Sources */ = {isa = PBXBuildFile; fileRef = E42000000000000000000025 /* StashMergeStrip.swift */; };
 		E41000000000000000000026 /* StashMergeCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = E42000000000000000000026 /* StashMergeCoordinator.swift */; };
 		E41000000000000000000027 /* StashMultiWindowTip.swift in Sources */ = {isa = PBXBuildFile; fileRef = E42000000000000000000027 /* StashMultiWindowTip.swift */; };
-		E41000000000000000000028 /* StashGlassSurface.swift in Sources */ = {isa = PBXBuildFile; fileRef = E42000000000000000000028 /* StashGlassSurface.swift */; };
+		E41000000000000000000028 /* StashAppearanceSurface.swift in Sources */ = {isa = PBXBuildFile; fileRef = E42000000000000000000028 /* StashAppearanceSurface.swift */; };
 		E41000000000000000000030 /* AppIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = E42000000000000000000030 /* AppIcon.icns */; };
 		E30000000000000000000003 /* EdgeStashLogic in Frameworks */ = {isa = PBXBuildFile; productRef = E30000000000000000000002 /* EdgeStashLogic */; };
+		E51000000000000000000001 /* StashMaterialPainter.swift in Sources */ = {isa = PBXBuildFile; fileRef = E52000000000000000000001 /* StashMaterialPainter.swift */; };
+		E51000000000000000000002 /* StashAppearanceEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = E52000000000000000000002 /* StashAppearanceEditor.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -115,8 +117,10 @@
 		E42000000000000000000025 /* StashMergeStrip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StashMergeStrip.swift; sourceTree = "<group>"; };
 		E42000000000000000000026 /* StashMergeCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StashMergeCoordinator.swift; sourceTree = "<group>"; };
 		E42000000000000000000027 /* StashMultiWindowTip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StashMultiWindowTip.swift; sourceTree = "<group>"; };
-		E42000000000000000000028 /* StashGlassSurface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StashGlassSurface.swift; sourceTree = "<group>"; };
+		E42000000000000000000028 /* StashAppearanceSurface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StashAppearanceSurface.swift; sourceTree = "<group>"; };
 		E42000000000000000000030 /* AppIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = AppIcon.icns; sourceTree = "<group>"; };
+		E52000000000000000000001 /* StashMaterialPainter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StashMaterialPainter.swift; sourceTree = "<group>"; };
+		E52000000000000000000002 /* StashAppearanceEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StashAppearanceEditor.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -149,6 +153,7 @@
 				E23000000000000000000002 /* Settings */,
 				E43000000000000000000001 /* Engine */,
 				E43000000000000000000002 /* Overlay */,
+				E53000000000000000000001 /* Appearance */,
 				E42000000000000000000030 /* AppIcon.icns */,
 			);
 			path = Sources/EdgeStash;
@@ -250,7 +255,6 @@
 		E43000000000000000000002 /* Overlay */ = {
 			isa = PBXGroup;
 			children = (
-				E42000000000000000000028 /* StashGlassSurface.swift */,
 				E42000000000000000000011 /* StashMarkerWindow.swift */,
 				E42000000000000000000012 /* EdgeHaloWindow.swift */,
 				E42000000000000000000013 /* HaloController.swift */,
@@ -261,6 +265,16 @@
 				E42000000000000000000027 /* StashMultiWindowTip.swift */,
 			);
 			path = Overlay;
+			sourceTree = "<group>";
+		};
+		E53000000000000000000001 /* Appearance */ = {
+			isa = PBXGroup;
+			children = (
+				E42000000000000000000028 /* StashAppearanceSurface.swift */,
+				E52000000000000000000001 /* StashMaterialPainter.swift */,
+				E52000000000000000000002 /* StashAppearanceEditor.swift */,
+			);
+			path = Appearance;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -373,7 +387,9 @@
 				E41000000000000000000008 /* StashSessionWatch.swift in Sources */,
 				E41000000000000000000009 /* DisplaySpaceBridge.m in Sources */,
 				E4100000000000000000000A /* DisplaySpaceTransport.swift in Sources */,
-				E41000000000000000000028 /* StashGlassSurface.swift in Sources */,
+				E51000000000000000000001 /* StashMaterialPainter.swift in Sources */,
+				E51000000000000000000002 /* StashAppearanceEditor.swift in Sources */,
+				E41000000000000000000028 /* StashAppearanceSurface.swift in Sources */,
 				E41000000000000000000011 /* StashMarkerWindow.swift in Sources */,
 				E41000000000000000000012 /* EdgeHaloWindow.swift in Sources */,
 				E41000000000000000000013 /* HaloController.swift in Sources */,

@@ -4,6 +4,7 @@ import EdgeStashLogic
 struct StashMergeSegmentModel: Equatable {
     let id: ObjectIdentifier
     let color: NSColor
+    let material: StashMaterial
     let title: String
     let icon: NSImage?
     let slotRect: CGRect
@@ -171,8 +172,9 @@ private final class StashMergeStripView: NSView {
                 let strength: CGFloat = (active ? 1 : (hovered ? 0.75 : 0.5))
                     * (segment.kind == .seamBeacon ? 0.5 : 1)
                 let rail = segment.slotRect.insetBy(dx: 0, dy: 1)
-                StashGlassPainter.paintCapsule(
+                StashMaterialPainter.paint(
                     rail,
+                    material: segment.material,
                     tint: segment.color,
                     strength: strength
                 )

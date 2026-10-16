@@ -4,7 +4,7 @@ status: current
 authority: normative
 implementation: implemented
 verification_status: partial
-last_reconciled: 2026-09-30
+last_reconciled: 2026-10-16
 supersedes: []
 ---
 
@@ -34,7 +34,7 @@ logical display map, edge halo, and seam beacon, and defer later product ideas.
   named-stash activation paths in
   `docs/contracts/screen-set-and-window-life.md`
 - Per-application enablement, appearance, edge selection, and shortcuts
-- Exposed-edge slide-off presentation; shared-edge segments use system
+- Exposed-edge offscreen presentation; shared-edge segments use system
   minimization so a stashed window truly leaves the screen
 - Logical display arrangement map and real-display edge halo
 - Shared-edge seam beacon
@@ -57,6 +57,9 @@ logical display map, edge halo, and seam beacon, and defer later product ideas.
   sessions.
 - `Sources/EdgeStash/Overlay` owns markers, halo, merged strips, pin, and transient
   effects.
+- `Sources/EdgeStash/Appearance` owns shared native material painting and its
+  Settings editor/preview. AppKit-free appearance tokens and presentation plans
+  live in `EdgeStashLogic`; the existing engine executes and commits them.
 - `Sources/EdgeStash/Preferences` owns persisted local settings.
 - `Sources/EdgeStash/Settings` owns the SwiftUI configuration surface.
 - `Tests/EdgeStashLogicTests.swift` verifies the policy layer as a standalone
@@ -68,7 +71,7 @@ logical display map, edge halo, and seam beacon, and defer later product ideas.
 |---|---|---|---|---|
 | `untrusted` | Accessibility is unavailable | Settings remains usable; no window control | permission becomes available | do not start observers |
 | `idle` | trusted engine sees an eligible window | window remains unmanaged | edge capture | no mutation |
-| `collapsed-outer` | window reaches an exposed edge segment | window slides offscreen; outer marker remains | reveal action | restore the saved frame |
+| `collapsed-outer` | window reaches an exposed edge segment | window is parked offscreen at zero opacity after its chosen presentation; outer marker remains | reveal action | restore the saved frame |
 | `collapsed-seam` | window reaches a shared edge segment | macOS minimizes the window so it truly leaves the screen; the seam beacon remains | reveal action | display-set events follow `docs/contracts/screen-set-and-window-life.md`; do not write a stale off-set frame |
 | `collapsed-seam-disabled` | a seam stash's owning display is currently showing a native full-screen or split-full-screen Space | the minimized window stays hidden; its beacon remains visible but disabled | the first encounter explains once; later clicks stay silent; switch the display back to an ordinary user Space | never activate the subject app or pull the user to the stash's former Space |
 | `expanded` | a named-stash action opens a stash (rail, beacon, shortcut, thumbnail, show-all, or the per-app all-stashed setting) | window sits on its owning edge | pointer leaves or user collapses | pinning suppresses automatic collapse |
@@ -85,7 +88,9 @@ logical display map, edge halo, and seam beacon, and defer later product ideas.
   capture, or window-content snapshot APIs.
 - **INV-5 — permission boundary.** Settings does not start Accessibility
   observers. The engine starts only after trust is already present.
-- **INV-6 — geometry safety.** Exposed segments slide offscreen. Shared
+- **INV-6 — geometry safety.** Exposed segments park offscreen at zero opacity;
+  their Slide, Nudge, or Fade presentation follows
+  `docs/design/appearance-and-settings.md`. Shared
   segments use system minimization so the window truly leaves the screen.
   The seam beacon stays wholly inside the owning display. A clipped
   slide-through is not a permitted hide: the window would remain on the

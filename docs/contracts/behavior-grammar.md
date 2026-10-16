@@ -4,7 +4,7 @@ status: current
 authority: normative
 implementation: implemented
 verification_status: partial
-last_reconciled: 2026-10-14
+last_reconciled: 2026-10-16
 ---
 
 # Behavior grammar and the expectation check
@@ -123,6 +123,15 @@ Fresh process hydration preserves screen-set keys but clears their window
 memberships. None of these operations creates a new presentation production.
 
 Session completion requires acknowledgement of the final AX frame writes.
+Exposed-edge Nudge/Fade additionally checks every opacity write: reveal hides
+before preparation and confirms placement before full opacity; collapse checks
+zero opacity before parking. The existing animator executes at most one active
+plan, using the existing 90Hz tick ceiling; Fade omits intermediate AX movement.
+Reduced Motion uses immediate placement. Preparation/finalization failure
+short-circuits to the session's existing recovery. This system mutation is
+per accepted expand/collapse intent, with latest-intent queueing unchanged.
+`Tests/AppearancePresentationTests.swift` (`appearance presentation invariants`)
+exercises plans and injected write rejection, not live AX acknowledgement.
 Rescue completion also requires opacity and deminimization success; idle phase
 or on-desktop geometry alone cannot clear a dossier. A seam reveal checks the
 current destination before deminimization and after its frame write. Its existing
@@ -190,7 +199,7 @@ rescue_needs_accessibility_alert | alert | Sources/EdgeStash/AppDelegate.swift |
 modal_alert_engine | alert | Sources/EdgeStash/AppDelegate.swift | run | on-demand | caller-gated | EdgeAlert.run callers | structural-only
 settings_window | window | Sources/EdgeStash/AppDelegate.swift | showSettings | on-demand | user-invoked | menu, dock reopen, or launch without trust | structural-only
 settings_halo_preview | overlay | Sources/EdgeStash/Overlay/EdgeHaloWindow.swift | show | per-space-preview | HaloPreviewPolicy and settings visibility | Behavior tab edge selection | structural-only
-slide_sheen | overlay | Sources/EdgeStash/Overlay/StashEffectOverlay.swift | present | per-animation | StashMotionPolicy.shouldEmitVisualEffects | slide collapse or expand | structural-only
+slide_sheen | overlay | Sources/EdgeStash/Overlay/StashEffectOverlay.swift | present | per-animation | StashMotionPolicy.shouldEmitVisualEffects | exposed-edge collapse or expand | structural-only
 stash_marker | overlay | Sources/EdgeStash/Overlay/StashMarkerWindow.swift | present | per-session | markerSuppressed and markerHiddenForSpace | session collapse or marker refresh | structural-only
 merge_strip | overlay | Sources/EdgeStash/Overlay/StashMergeStrip.swift | present | per-group | Preferences.mergesStrips and MergeGroupPolicy | merge reconcile | structural-only
 pin_control | overlay | Sources/EdgeStash/Overlay/StashPinWindow.swift | surface | hover-polled | PinControlPolicy.shouldShowControl | 0.1s leave timer while expanded | structural-only
@@ -199,6 +208,14 @@ color_tint_picker | popup | Sources/EdgeStash/Settings/Controls/ColorMenus.swift
 <!-- END grammar-manifest -->
 
 ## Reconciliation log
+
+- **2026-10-16 — accepted appearance target:** per-app materials and three
+  exposed-edge presentation plans use the existing marker, merge, pin, sheen,
+  and animator. No new presentation anchor or cardinality is added. Settings
+  preview is local drawing in the existing window. Nudge/Fade require checked
+  opacity writes and final placement before the existing session commit;
+  seam minimization, queued intent, and recovery retain their contracts. See
+  `docs/design/appearance-and-settings.md`. Native owner review remains open.
 
 - **2026-10-14 — background WindowServer load:** the owner reports persistent
   desktop stutter after stashing on macOS 27. Shared display observations,

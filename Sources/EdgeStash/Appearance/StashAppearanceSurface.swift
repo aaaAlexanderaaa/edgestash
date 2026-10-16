@@ -1,21 +1,22 @@
 import AppKit
 import EdgeStashLogic
 
-enum StashGlassRole: Equatable {
+enum StashAppearanceRole: Equatable {
     case rail(kind: StashOverlayKind, edge: DisplayEdge, enabled: Bool)
     case disc
     case halo(DisplayEdgePreviewKind)
 }
 
-/// Desktop glass host. Thin rails and the Settings halo always paint a
-/// layered tinted plate: `NSGlassEffectView` on a 5pt strip reads as a gray
-/// slab. The 28pt pin disc may embed system Liquid Glass when the class
-/// resolves. Never uses `NSVisualEffectView`.
-final class StashGlassSurface: NSView {
-    private var role: StashGlassRole = .disc
+/// Desktop appearance host. Thin rails and the Settings halo always paint;
+/// only the 28pt Glass pin may embed runtime-gated system glass. A 5pt strip
+/// paints its material inside the existing geometry.
+final class StashAppearanceSurface: NSView {
+    private var role: StashAppearanceRole = .disc
     private var tint = NSColor.controlAccentColor
+    private var material: StashMaterial = .glass
+    private var highlightPoint: CGPoint?
     private var systemGlass: NSView?
-    private var installedRole: StashGlassRole?
+    private var installedRole: StashAppearanceRole?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -31,10 +32,17 @@ final class StashGlassSurface: NSView {
 
     override var isOpaque: Bool { false }
 
-    func apply(role: StashGlassRole, tint: NSColor) {
+    func apply(role: StashAppearanceRole, tint: NSColor, material: StashMaterial = .glass) {
         self.role = role
         self.tint = tint
+        self.material = material
         syncSystemGlass()
+        needsDisplay = true
+    }
+
+    func highlight(at point: CGPoint?) {
+        guard highlightPoint != point else { return }
+        highlightPoint = point
         needsDisplay = true
     }
 
@@ -47,7 +55,11 @@ final class StashGlassSurface: NSView {
         super.draw(dirtyRect)
         effectiveAppearance.performAsCurrentDrawingAppearance {
             if systemGlass == nil {
-                StashGlassPainter.paint(role: role, tint: tint, in: bounds)
+                StashGlassPainter.paint(role: role, tint: tint, in: bounds, material: material)
+                if let highlightPoint {
+                    StashMaterialPainter.highlight(glassFrame, at: highlightPoint)
+                    drawSeamGapIfNeeded()
+                }
                 return
             }
             drawSeamGapIfNeeded()
@@ -66,12 +78,11 @@ final class StashGlassSurface: NSView {
             gap = nil
         }
         guard let gap, gap.height > 0 else { return }
-        NSColor.black.withAlphaComponent(0.22).setFill()
-        NSBezierPath(roundedRect: gap, xRadius: 0.5, yRadius: 0.5).fill()
+        StashGlassPainter.punchGap(gap)
     }
 
     private var usesSystemGlass: Bool {
-        if case .disc = role, #available(macOS 26.0, *) {
+        if case .disc = role, material == .glass, #available(macOS 26.0, *) {
             return NSClassFromString("NSGlassEffectView") != nil
         }
         return false
@@ -154,21 +165,21 @@ final class StashGlassSurface: NSView {
 }
 
 enum StashGlassPainter {
-    static func paint(role: StashGlassRole, tint: NSColor, in bounds: CGRect) {
+    static func paint(role: StashAppearanceRole, tint: NSColor, in bounds: CGRect, material: StashMaterial = .glass) {
         switch role {
         case let .rail(kind, edge, enabled):
             let rail = StashGeometryPolicy.visibleRailRect(kind: kind, edge: edge, in: bounds)
             let strength = StashGeometryPolicy.tintStrength(kind: kind, enabled: enabled)
-            paintCapsule(rail, tint: tint, strength: strength)
+            StashMaterialPainter.paint(rail, material: material, tint: tint, strength: strength)
             if kind == .seamBeacon {
                 punchGap(StashGeometryPolicy.seamInnerGapRect(in: rail))
             }
         case .disc:
-            paintCapsule(bounds.insetBy(dx: 2, dy: 2), tint: tint, strength: 0.92, circular: true)
+            StashMaterialPainter.paint(bounds.insetBy(dx: 2, dy: 2), material: material, tint: tint, strength: 0.92, circular: true)
         case let .halo(kind):
             let band = bounds.insetBy(dx: 0, dy: 4)
             let strength = StashGeometryPolicy.haloTintStrength(kind: kind)
-            paintCapsule(band, tint: tint, strength: strength)
+            StashMaterialPainter.paint(band, material: material, tint: tint, strength: strength)
             if kind == .systemMinimize || kind == .disabled {
                 punchGap(StashGeometryPolicy.seamInnerGapRect(in: band))
             }

@@ -813,7 +813,9 @@ final class StashSession {
             StashFocusReturn.remember(excluding: pid)
         }
         let current = StashAX.frame(of: windowElement) ?? restoreFrame
-        if let windowID {
+        let motion = Preferences.shared.appearance(for: bundleID).resolvedMotion
+        let usesOpacity = motion != .slide && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        if let windowID, !usesOpacity {
             guard StashSurface.setAlpha(windowID: windowID, alpha: 1) else {
                 presentationRequests.cancel()
                 busy = false
@@ -1105,15 +1107,20 @@ final class StashSession {
     ) {
         let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         let height = (StashAX.frame(of: windowElement) ?? restoreFrame)?.height ?? lockedWidth
+        let size = CGSize(width: lockedWidth, height: height)
+        let plan = StashPresentationPlan(
+            motion: Preferences.shared.appearance(for: bundleID).resolvedMotion,
+            origin: start, destination: end, size: size, collapsing: collapsing,
+            edge: edge ?? .left, reduceMotion: reduceMotion, canSetOpacity: windowID != nil
+        )
         busy = true
         animator.begin(
             StashAnimator.Slide(
                 target: windowElement,
-                origin: start,
-                destination: end,
                 span: StashMotionPolicy.span(reduceMotion: reduceMotion, collapsing: collapsing, merged: merged),
-                size: CGSize(width: lockedWidth, height: height),
-                refundsClock: !merged
+                refundsClock: !merged,
+                plan: plan,
+                windowID: windowID
             ),
             onSettled: completion
         )
@@ -1137,10 +1144,11 @@ final class StashSession {
             y: appKit.midY
         )
         let color = Preferences.shared.stripColor(for: bundleID)
+        let material = Preferences.shared.appearance(for: bundleID).resolvedMaterial
         if collapsing {
-            effects.playCollapse(edge: edge, point: point, color: color, screen: screen)
+            effects.playCollapse(edge: edge, point: point, color: color, material: material, screen: screen)
         } else {
-            effects.playExpand(edge: edge, point: point, color: color, screen: screen)
+            effects.playExpand(edge: edge, point: point, color: color, material: material, screen: screen)
         }
     }
 

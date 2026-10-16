@@ -45,9 +45,10 @@ final class StashPinWindow: NSPanel {
         visible: Bool,
         pinned: Bool,
         accent: NSColor,
+        material: StashMaterial = .glass,
         reduceMotion: Bool
     ) {
-        button.apply(pinned: pinned, accent: accent)
+        button.apply(pinned: pinned, accent: accent, material: material)
         if visible {
             surface(frames: frames, reduceMotion: reduceMotion)
         } else {
@@ -124,9 +125,10 @@ private final class StashPinButton: NSView {
     var onToggle: (() -> Void)?
     private var pinned = false
     private var accent = NSColor.systemOrange
+    private var material: StashMaterial = .glass
     private var pressed = false
     private var hovered = false
-    private let glass = StashGlassSurface()
+    private let glass = StashAppearanceSurface()
     private var appliedLabel: String?
 
     override init(frame frameRect: NSRect) {
@@ -149,13 +151,14 @@ private final class StashPinButton: NSView {
         glass.frame = bounds
     }
 
-    func apply(pinned: Bool, accent: NSColor) {
+    func apply(pinned: Bool, accent: NSColor, material: StashMaterial) {
         let label = pinned ? L10n.pinRelease : L10n.pinPlace
-        guard self.pinned != pinned || self.accent != accent || appliedLabel != label else { return }
+        guard self.pinned != pinned || self.accent != accent || self.material != material || appliedLabel != label else { return }
         self.pinned = pinned
         self.accent = accent
+        self.material = material
         appliedLabel = label
-        glass.apply(role: .disc, tint: accent)
+        glass.apply(role: .disc, tint: accent, material: material)
         needsDisplay = true
         setAccessibilityElement(true)
         setAccessibilityRole(.button)
@@ -204,7 +207,15 @@ private final class StashPinButton: NSView {
         let config = NSImage.SymbolConfiguration(pointSize: 14, weight: .semibold)
         guard let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
             .withSymbolConfiguration(config) else { return }
-        let tinted = image.tinted(with: pinned ? NSColor.white : accent)
+        let ink: NSColor
+        if material == .enamel || material == .prism {
+            let rgb = accent.usingColorSpace(.sRGB) ?? accent
+            let light = 0.2126 * rgb.redComponent + 0.7152 * rgb.greenComponent + 0.0722 * rgb.blueComponent
+            ink = light > 0.6 ? .black : .white
+        } else {
+            ink = pinned ? .white : accent
+        }
+        let tinted = image.tinted(with: ink)
         let size = CGSize(width: 14, height: 14)
         let origin = CGPoint(x: bounds.midX - size.width / 2, y: bounds.midY - size.height / 2)
         tinted.draw(in: CGRect(origin: origin, size: size), from: .zero, operation: .sourceOver, fraction: pressed ? 0.7 : 1)

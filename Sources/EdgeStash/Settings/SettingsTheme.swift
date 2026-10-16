@@ -56,7 +56,7 @@ enum SettingsTheme {
 
     enum TypeRole {
         static let railTitle = Font.headline
-        static let pageTitle = Font.headline
+        static let pageTitle = Font.system(size: 23, weight: .semibold)
         static let job = Font.caption
         static let body = Font.body
         static let mono = Font.system(.caption, design: .monospaced)

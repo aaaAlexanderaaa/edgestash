@@ -3,7 +3,7 @@ import CoreVideo
 import EdgeStashLogic
 import Foundation
 
-/// Drives one slide of a foreign window along the display link.
+/// Executes one presentation plan of a foreign window along the display link.
 ///
 /// Everything that describes the motion rides in a single `Slide` value, so
 /// the animator only keeps pacing state: when the next write may go out, how
@@ -16,29 +16,26 @@ final class StashAnimator {
     /// One slide of one window, immutable for its lifetime.
     struct Slide {
         let target: AXUIElement
-        let origin: CGPoint
-        let destination: CGPoint
         let span: TimeInterval
-        let size: CGSize
         /// Refund blocked-write time against the span via
         /// `StashMotionPolicy.stallPause`. Merged strips switch without it:
         /// switching latency matters more there than a finished glide.
         let refundsClock: Bool
+        let plan: StashPresentationPlan
+        let windowID: UInt32?
 
         init(
             target: AXUIElement,
-            origin: CGPoint,
-            destination: CGPoint,
             span: TimeInterval,
-            size: CGSize,
-            refundsClock: Bool
+            refundsClock: Bool,
+            plan: StashPresentationPlan,
+            windowID: UInt32?
         ) {
             self.target = target
-            self.origin = origin
-            self.destination = destination
             self.span = span
-            self.size = size
             self.refundsClock = refundsClock
+            self.plan = plan
+            self.windowID = windowID
         }
     }
 
@@ -59,8 +56,12 @@ final class StashAnimator {
     func begin(_ slide: Slide, onSettled: @escaping (Bool) -> Void) {
         abort()
         finalPlacementSucceeded = false
+        guard perform(slide.plan.preparation, slide: slide) else {
+            onSettled(false)
+            return
+        }
         if slide.span <= 0 {
-            onSettled(StashAX.setFrame(slide.target, CGRect(origin: slide.destination, size: slide.size)))
+            onSettled(perform(slide.plan.completion, slide: slide))
             return
         }
         active = slide
@@ -75,7 +76,7 @@ final class StashAnimator {
 
         var created: CVDisplayLink?
         guard CVDisplayLinkCreateWithActiveCGDisplays(&created) == kCVReturnSuccess, let created else {
-            finalPlacementSucceeded = StashAX.setFrame(slide.target, CGRect(origin: slide.destination, size: slide.size))
+            finalPlacementSucceeded = perform(slide.plan.completion, slide: slide)
             finish()
             return
         }
@@ -127,7 +128,7 @@ final class StashAnimator {
         if finished {
             // Elapsed time is not evidence that AX accepted the destination.
             // Size first, position last: a resize can itself adjust position.
-            finalPlacementSucceeded = StashAX.setFrame(slide.target, CGRect(origin: slide.destination, size: slide.size))
+            finalPlacementSucceeded = perform(slide.plan.completion, slide: slide)
             return true
         }
 
@@ -135,13 +136,16 @@ final class StashAnimator {
         if !finished && now < nextWriteAt { return false }
         nextWriteAt = now + budget
 
-        let eased = StashMotionPolicy.easedProgress(fraction)
-        let position = CGPoint(
-            x: StashMotionPolicy.interpolated(from: slide.origin.x, to: slide.destination.x, eased: eased),
-            y: StashMotionPolicy.interpolated(from: slide.origin.y, to: slide.destination.y, eased: eased)
-        )
+        let sample = slide.plan.sample(fraction)
         let writeBegan = CFAbsoluteTimeGetCurrent()
-        _ = StashAX.setPositionStatus(slide.target, position)
+        if slide.plan.changesOpacity {
+            var writes: [StashPresentationPlan.Write] = []
+            if slide.plan.movesDuringAnimation { writes.append(.position(sample.position)) }
+            writes.append(.alpha(sample.alpha))
+            guard perform(writes, slide: slide) else { return true }
+        } else {
+            _ = StashAX.setPositionStatus(slide.target, sample.position)
+        }
         let writeSeconds = CFAbsoluteTimeGetCurrent() - writeBegan
         if slide.refundsClock {
             clockCredit += StashMotionPolicy.stallPause(
@@ -151,8 +155,8 @@ final class StashAnimator {
                 span: slide.span
             )
         }
-        if StashMotionPolicy.shouldWriteSize(writeIndex: writes, finished: finished) {
-            _ = StashAX.setSize(slide.target, slide.size)
+        if slide.plan.movesDuringAnimation && StashMotionPolicy.shouldWriteSize(writeIndex: writes, finished: finished) {
+            _ = StashAX.setSize(slide.target, slide.plan.size)
         }
         writes += 1
         return finished
@@ -164,6 +168,18 @@ final class StashAnimator {
         let handler = settled
         settled = nil
         handler?(finalPlacementSucceeded)
+    }
+
+    private func perform(_ writes: [StashPresentationPlan.Write], slide: Slide) -> Bool {
+        StashPresentationPlan.perform(writes) { write in
+            switch write {
+            case let .frame(frame): return StashAX.setFrame(slide.target, frame)
+            case let .position(point): return StashAX.setPositionStatus(slide.target, point) == .success
+            case let .alpha(alpha):
+                guard let windowID = slide.windowID else { return false }
+                return StashSurface.setAlpha(windowID: windowID, alpha: Float(alpha))
+            }
+        }
     }
 
     private func abort() {

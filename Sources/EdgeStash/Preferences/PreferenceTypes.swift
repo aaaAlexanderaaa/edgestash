@@ -19,6 +19,7 @@ struct AppStashProfile: Codable, Equatable {
 
     /// Raw value of `AllStashedDockAction`. Nil decodes as leave-closed.
     var allStashedDock: String?
+    var appearance: StashAppearance?
 
     init(
         stashOn: Bool,
@@ -27,7 +28,8 @@ struct AppStashProfile: Codable, Equatable {
         sides: String? = nil,
         chord: AppChord? = nil,
         chordScope: AppShortcutWindowScope? = nil,
-        allStashedDock: String? = nil
+        allStashedDock: String? = nil,
+        appearance: StashAppearance? = .newProfile
     ) {
         self.stashOn = stashOn
         self.tint = tint
@@ -36,6 +38,7 @@ struct AppStashProfile: Codable, Equatable {
         self.chord = chord
         self.chordScope = chordScope
         self.allStashedDock = allStashedDock
+        self.appearance = appearance
     }
 }
 

@@ -128,6 +128,7 @@ extension StashSession {
             kind: kind,
             edge: edge,
             color: color,
+            material: Preferences.shared.appearance(for: bundleID).resolvedMaterial,
             frame: frame,
             title: name,
             enabled: markerEnabled,
@@ -211,6 +212,7 @@ extension StashSession {
             visible: visible,
             pinned: isPinned,
             accent: Preferences.shared.stripColor(for: bundleID),
+            material: Preferences.shared.appearance(for: bundleID).resolvedMaterial,
             reduceMotion: reduceMotion
         )
     }

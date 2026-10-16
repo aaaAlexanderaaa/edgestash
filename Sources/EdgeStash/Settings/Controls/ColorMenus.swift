@@ -1,4 +1,5 @@
 import AppKit
+import EdgeStashLogic
 import SwiftUI
 
 /// Named strip tints. Tokens name the choice ("adaptive", "ivory", …);
@@ -162,10 +163,11 @@ struct FieldMenu: View {
 struct GlassTintPicker: View {
     @Environment(\.colorScheme) private var colorScheme
     let colorName: String
+    var material: StashMaterial = .glass
     let onColorChange: (String) -> Void
 
     var body: some View {
-        HStack(spacing: 6) {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 24), spacing: 6)], alignment: .leading, spacing: 7) {
             ForEach(SnapshotColorPalette.tokens, id: \.key) { entry in
                 glassChipButton(
                     key: entry.key,
@@ -199,7 +201,7 @@ struct GlassTintPicker: View {
         if key == "adaptive" {
             return colorScheme == .dark ? .white : .black
         }
-        return NSColor(SnapshotColorPalette.color(named: key))
+        return Preferences.stripColor(token: key)
     }
 
     private func glassChipButton(
@@ -214,11 +216,14 @@ struct GlassTintPicker: View {
                 tint: tint,
                 selected: selected,
                 colorScheme: colorScheme,
-                customMark: customMark
+                customMark: customMark,
+                material: material
             ))
         }
         .buttonStyle(.plain)
         .accessibilityLabel(key == "custom" ? L10n.tintCustom : SnapshotColorPalette.title(for: key))
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .help(key == "custom" ? L10n.tintCustom : SnapshotColorPalette.title(for: key))
     }
 }
 
@@ -263,7 +268,8 @@ func glassRailChipImage(
     tint: NSColor,
     selected: Bool,
     colorScheme: ColorScheme,
-    customMark: Bool
+    customMark: Bool,
+    material: StashMaterial = .glass
 ) -> NSImage {
     let size = NSSize(width: 22, height: 36)
     let image = NSImage(size: size)
@@ -278,7 +284,7 @@ func glassRailChipImage(
     NSBezierPath(rect: bounds).fill()
 
     let rail = bounds.insetBy(dx: 7, dy: 4)
-    StashGlassPainter.paintCapsule(rail, tint: tint, strength: 1)
+    StashMaterialPainter.paint(rail, material: material, tint: tint, strength: 1)
 
     if customMark {
         let mark = NSBezierPath()

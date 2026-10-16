@@ -11,6 +11,10 @@ supersedes_visual_clauses_of: docs/design/logical-display-and-seam-beacon.md
 
 # Tinted glass signals and a surviving seam session — target surface
 
+The owner-accepted 2026-10-16 [appearance target](appearance-and-settings.md)
+supersedes this document's glass-only styling clauses. Its geometry, surviving
+seam lifecycle, true-hide, and system-minimization requirements remain binding.
+
 ## Purpose and user outcome
 
 The person who stashes windows needs a desktop signal that is easy to find,

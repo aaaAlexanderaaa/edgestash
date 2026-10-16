@@ -2,110 +2,86 @@ import AppKit
 import EdgeStashLogic
 import SwiftUI
 
-/// One managed application inside the Apps page: identity on the first line,
-/// glass-tint chips and snap-side on the second, and an inline note when
-/// the Dock currently blocks part of the chosen coverage.
-struct StashAppRow: View {
-    @Environment(\.colorScheme) private var colorScheme
+struct AppIdentityIcon: View {
     let app: AppEntry
-    let colorName: String
-    let snapSide: String
-    let blockedDockSide: String?
-    let allStashedDock: AllStashedDockAction?
-    let onColorChange: (String) -> Void
-    let onSnapSideChange: (String) -> Void
-    let onAllStashedDockChange: (AllStashedDockAction) -> Void
+    var body: some View {
+        Group {
+            if let icon = app.icon { Image(nsImage: icon).resizable() }
+            else { Image(systemName: "app.dashed").resizable().foregroundStyle(.secondary) }
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+/// Stable detail editor; switching enablement never reorders the app list.
+struct StashAppRow: View {
+    let app: AppEntry
+    @ObservedObject var preferences: Preferences
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var showsBehavior = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 11) {
-                appBadge
-
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(app.name)
-                        .font(SettingsTheme.TypeRole.body)
-                        .lineLimit(1)
-                    Text(app.id)
-                        .font(SettingsTheme.TypeRole.mono)
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 10) {
+                AppIdentityIcon(app: app).frame(width: 34, height: 34)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(app.name).font(.system(size: 17, weight: .semibold)).lineLimit(1)
+                    Text(app.id).font(SettingsTheme.TypeRole.mono).foregroundStyle(.secondary)
+                        .lineLimit(1).truncationMode(.middle)
                 }
-
-                Spacer(minLength: 8)
-
-                FieldMenu(
-                    title: snapSideLabel(snapSide),
-                    minWidth: snapFieldWidth,
-                    leadingImage: edgeGlyphImage(side: snapSide, colorScheme: colorScheme),
-                    alignment: .trailing,
-                    choices: snapSideChoices.map { key in
-                        let usable = edgeIsFree(key, dockSide: blockedDockSide)
-                        return MenuChoice(
-                            title: snapSideLabel(key),
-                            image: edgeGlyphImage(side: key, colorScheme: colorScheme, enabled: usable),
-                            isSelected: key == snapSide,
-                            isEnabled: usable
-                        ) {
-                            onSnapSideChange(key)
-                        }
-                    }
-                )
+                Spacer(minLength: 0)
+                Toggle(L10n.text("apps.enable"), isOn: Binding(
+                    get: { preferences.stashActive(bundleID: app.id) },
+                    set: { preferences.applyAppStash(bundleID: app.id, stashOn: $0,
+                                                      tint: preferences.tintKey(for: app.id)) }
+                ))
+                .toggleStyle(.switch)
+                .labelsHidden()
             }
-
-            VStack(alignment: .leading, spacing: 6) {
-                GlassTintPicker(colorName: colorName, onColorChange: onColorChange)
-
-                if let allStashedDock {
-                    HStack(alignment: .center, spacing: 12) {
-                        Text(L10n.appsAllStashedDock)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Spacer(minLength: 8)
-                        FieldMenu(
-                            title: allStashedDockLabel(allStashedDock),
-                            minWidth: allStashedDockFieldWidth,
-                            alignment: .trailing,
-                            choices: AllStashedDockAction.allCases.map { action in
-                                MenuChoice(
-                                    title: allStashedDockLabel(action),
-                                    isSelected: action == allStashedDock
-                                ) {
-                                    onAllStashedDockChange(action)
-                                }
-                            }
-                        )
-                    }
-                }
-
-                if let note = dockConflictNote(for: snapSide, dockSide: blockedDockSide) {
-                    Label {
-                        Text(note)
-                            .font(.caption)
-                            .foregroundStyle(SettingsTheme.ColorToken.rail)
-                    } icon: {
-                        Image(systemName: "exclamationmark.triangle")
-                            .font(.caption)
-                            .foregroundStyle(SettingsTheme.ColorToken.rail)
-                    }
+            StashAppearanceEditor(app: app, preferences: preferences)
+            SettingsCard {
+                DisclosureGroup(isExpanded: $showsBehavior) {
+                    behaviorFields.padding(.top, 12)
+                } label: {
+                    Text(L10n.text("apps.behaviorDetails")).font(.subheadline.weight(.medium))
                 }
             }
-            .padding(.leading, 41)
         }
+        .padding(.bottom, 2)
     }
 
-    private var appBadge: some View {
-        Group {
-            if let icon = app.icon {
-                Image(nsImage: icon)
-                    .resizable()
-            } else {
-                Image(systemName: "app.dashed")
-                    .resizable()
-                    .foregroundStyle(.secondary)
+    private var behaviorFields: some View {
+        let side = preferences.snapPreference(for: app.id)
+        let dockSide = preferences.resolvedDockSide()
+        let action = preferences.allStashedDockAction(for: app.id)
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text(L10n.text("apps.stashEdges")).font(.subheadline)
+                Spacer(minLength: 8)
+                FieldMenu(title: snapSideLabel(side), minWidth: snapFieldWidth,
+                          leadingImage: edgeGlyphImage(side: side, colorScheme: colorScheme),
+                          alignment: .trailing,
+                          choices: snapSideChoices.map { key in
+                    MenuChoice(title: snapSideLabel(key),
+                               image: edgeGlyphImage(side: key, colorScheme: colorScheme,
+                                                     enabled: edgeIsFree(key, dockSide: dockSide)),
+                               isSelected: key == side, isEnabled: edgeIsFree(key, dockSide: dockSide)) {
+                        preferences.applySnapSide(bundleID: app.id, snapSide: key)
+                    }
+                })
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                Text(L10n.appsAllStashedDock).font(.subheadline)
+                FieldMenu(title: allStashedDockLabel(action), minWidth: allStashedDockFieldWidth,
+                          choices: AllStashedDockAction.allCases.map { choice in
+                    MenuChoice(title: allStashedDockLabel(choice), isSelected: choice == action) {
+                        preferences.setAllStashedDockAction(choice, bundleID: app.id)
+                    }
+                })
+            }
+            if let note = dockConflictNote(for: side, dockSide: dockSide) {
+                Text(note).font(.caption).foregroundStyle(.secondary)
             }
         }
-        .frame(width: 30, height: 30)
     }
 }

@@ -32,6 +32,7 @@ final class StashMarkerWindow: NSPanel {
         let kind: StashOverlayKind
         let edge: DisplayEdge
         let color: NSColor
+        let material: StashMaterial
         let frame: CGRect
         let title: String
         let enabled: Bool
@@ -81,6 +82,7 @@ final class StashMarkerWindow: NSPanel {
         kind: StashOverlayKind,
         edge: DisplayEdge,
         color: NSColor,
+        material: StashMaterial = .glass,
         frame: CGRect,
         title: String,
         enabled: Bool,
@@ -88,7 +90,7 @@ final class StashMarkerWindow: NSPanel {
         reduceMotion: Bool
     ) {
         let next = Presentation(
-            kind: kind, edge: edge, color: color, frame: frame,
+            kind: kind, edge: edge, color: color, material: material, frame: frame,
             title: title, enabled: enabled, explanation: disabledExplanation
         )
         let arriving = !presented || !isVisible
@@ -102,7 +104,7 @@ final class StashMarkerWindow: NSPanel {
         interactionEnabled = enabled
         self.disabledExplanation = disabledExplanation
         currentEdge = edge
-        markView.apply(kind: kind, edge: edge, color: color, title: title, enabled: enabled)
+        markView.apply(kind: kind, edge: edge, color: color, material: material, title: title, enabled: enabled)
         if self.frame != frame { setFrame(frame, display: true) }
         if arriving {
             fade(visible: true, reduceMotion: reduceMotion)
@@ -112,6 +114,7 @@ final class StashMarkerWindow: NSPanel {
 
     func dismiss(reduceMotion: Bool) {
         pointerInside = false
+        markView.highlight(at: nil)
         dismissExplanation()
         guard presented else { return }
         presented = false
@@ -123,11 +126,17 @@ final class StashMarkerWindow: NSPanel {
         }
     }
 
-    override func mouseEntered(with event: NSEvent) { reconcilePointer(inside: true) }
-    override func mouseMoved(with event: NSEvent) { reconcilePointer(inside: true) }
+    override func mouseEntered(with event: NSEvent) { highlight(event); reconcilePointer(inside: true) }
+    override func mouseMoved(with event: NSEvent) { highlight(event); reconcilePointer(inside: true) }
 
     override func mouseExited(with event: NSEvent) {
+        markView.highlight(at: nil)
         reconcilePointer(inside: false)
+    }
+
+    private func highlight(_ event: NSEvent) {
+        guard interactionEnabled else { return }
+        markView.highlight(at: markView.convert(event.locationInWindow, from: nil))
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -261,7 +270,7 @@ private final class StashMarkerView: NSView {
     private var fill = NSColor.white
     private var title = ""
     private var enabled = true
-    private let glass = StashGlassSurface()
+    private let glass = StashAppearanceSurface()
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -283,7 +292,7 @@ private final class StashMarkerView: NSView {
         glass.frame = bounds
     }
 
-    func apply(kind: StashOverlayKind, edge: DisplayEdge, color: NSColor, title: String, enabled: Bool) {
+    func apply(kind: StashOverlayKind, edge: DisplayEdge, color: NSColor, material: StashMaterial, title: String, enabled: Bool) {
         self.kind = kind
         self.edge = edge
         self.fill = color
@@ -293,9 +302,12 @@ private final class StashMarkerView: NSView {
         setAccessibilityRole(.button)
         setAccessibilityLabel(title)
         setAccessibilityEnabled(enabled)
-        glass.apply(role: .rail(kind: kind, edge: edge, enabled: enabled), tint: color)
+        glass.apply(role: .rail(kind: kind, edge: edge, enabled: enabled), tint: color, material: material)
+        if !enabled { glass.highlight(at: nil) }
         needsDisplay = true
     }
+
+    func highlight(at point: CGPoint?) { glass.highlight(at: point) }
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
