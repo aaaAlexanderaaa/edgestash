@@ -1,0 +1,60 @@
+{
+  "averageCPUPercent" : {
+    "598" : 36.67466450725825,
+    "16948" : 0
+  },
+  "elapsed" : 4.0943932496011257,
+  "requestedSeconds" : 4,
+  "samples" : [
+    {
+      "elapsed" : 0.039143186993896961,
+      "processes" : [
+        {
+          "cpuSeconds" : 1433116.8600000001,
+          "pid" : 598,
+          "state" : "Ss"
+        },
+        {
+          "cpuSeconds" : 156.19999999999999,
+          "pid" : 16948,
+          "state" : "S"
+        }
+      ]
+    },
+    {
+      "elapsed" : 2.1241291873157024,
+      "processes" : [
+        {
+          "cpuSeconds" : 1433117.6399999999,
+          "intervalCPUPercent" : 37.410323123259367,
+          "pid" : 598,
+          "state" : "Rs"
+        },
+        {
+          "cpuSeconds" : 156.19999999999999,
+          "intervalCPUPercent" : 0,
+          "pid" : 16948,
+          "state" : "S"
+        }
+      ]
+    },
+    {
+      "elapsed" : 4.0473598120734096,
+      "processes" : [
+        {
+          "cpuSeconds" : 1433118.3300000001,
+          "intervalCPUPercent" : 35.877132533903939,
+          "pid" : 598,
+          "state" : "Ss"
+        },
+        {
+          "cpuSeconds" : 156.19999999999999,
+          "intervalCPUPercent" : 0,
+          "pid" : 16948,
+          "state" : "S"
+        }
+      ]
+    }
+  ],
+  "units" : "100% = one CPU core; cumulative CPU deltas divided by monotonic elapsed time"
+}

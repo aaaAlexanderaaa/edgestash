@@ -1,0 +1,132 @@
+{
+  "limitations" : "Synthetic app-owned windows; neither foreign-app behavior nor CPU causality is proved.",
+  "os" : "Version 15.7.9 (Build 24G830)",
+  "stages" : [
+    {
+      "actualFrame" : {
+        "height" : 400,
+        "width" : 600,
+        "x" : -598,
+        "y" : 340
+      },
+      "appkitVisible" : true,
+      "expectedFrame" : {
+        "height" : 400,
+        "width" : 600,
+        "x" : -598,
+        "y" : 340
+      },
+      "geometryMatches" : true,
+      "minimized" : false,
+      "occlusionVisible" : true,
+      "onScreenListFlag" : true,
+      "serverAlpha" : 0,
+      "stage" : "cgs-zero-lip"
+    },
+    {
+      "actualFrame" : {
+        "height" : 400,
+        "width" : 600,
+        "x" : -598,
+        "y" : 340
+      },
+      "appkitVisible" : true,
+      "expectedFrame" : {
+        "height" : 400,
+        "width" : 600,
+        "x" : -598,
+        "y" : 340
+      },
+      "geometryMatches" : true,
+      "minimized" : false,
+      "occlusionVisible" : true,
+      "onScreenListFlag" : true,
+      "serverAlpha" : 0,
+      "stage" : "appkit-zero-lip"
+    },
+    {
+      "actualFrame" : {
+        "height" : 400,
+        "width" : 600,
+        "x" : -660,
+        "y" : 340
+      },
+      "appkitVisible" : true,
+      "expectedFrame" : {
+        "height" : 400,
+        "width" : 600,
+        "x" : -660,
+        "y" : 340
+      },
+      "geometryMatches" : true,
+      "minimized" : false,
+      "occlusionVisible" : false,
+      "onScreenListFlag" : true,
+      "serverAlpha" : 1,
+      "stage" : "opaque-fully-offscreen"
+    },
+    {
+      "actualFrame" : {
+        "height" : 400,
+        "width" : 600,
+        "x" : -660,
+        "y" : 340
+      },
+      "appkitVisible" : true,
+      "expectedFrame" : {
+        "height" : 400,
+        "width" : 600,
+        "x" : -660,
+        "y" : 340
+      },
+      "geometryMatches" : true,
+      "minimized" : false,
+      "occlusionVisible" : false,
+      "onScreenListFlag" : true,
+      "serverAlpha" : 0,
+      "stage" : "zero-fully-offscreen"
+    },
+    {
+      "actualFrame" : {
+        "height" : 400,
+        "width" : 600,
+        "x" : -660,
+        "y" : 340
+      },
+      "appkitVisible" : false,
+      "expectedFrame" : {
+        "height" : 400,
+        "width" : 600,
+        "x" : -660,
+        "y" : 340
+      },
+      "geometryMatches" : true,
+      "minimized" : false,
+      "occlusionVisible" : false,
+      "onScreenListFlag" : false,
+      "serverAlpha" : null,
+      "stage" : "ordered-out"
+    },
+    {
+      "actualFrame" : {
+        "height" : 400,
+        "width" : 600,
+        "x" : -598,
+        "y" : 340
+      },
+      "appkitVisible" : false,
+      "expectedFrame" : {
+        "height" : 400,
+        "width" : 600,
+        "x" : -598,
+        "y" : 340
+      },
+      "geometryMatches" : true,
+      "minimized" : true,
+      "occlusionVisible" : false,
+      "onScreenListFlag" : false,
+      "serverAlpha" : null,
+      "stage" : "minimized"
+    }
+  ]
+}
