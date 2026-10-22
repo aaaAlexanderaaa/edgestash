@@ -8,7 +8,34 @@ func CGSMainConnectionID() -> CInt
 @_silgen_name("CGSSetWindowAlpha")
 func CGSSetWindowAlpha(_ cid: CInt, _ wid: CInt, _ alpha: Float) -> CGError
 
+struct StashRecoverySurface {
+    let windowID: UInt32
+    let pid: pid_t
+    let alpha: Float?
+}
+
 enum StashSurface {
+    /// A nil inventory is unavailable, not a successful empty user session.
+    static func allWindows() -> [StashRecoverySurface]? {
+        guard let list = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID)
+            as? [[String: Any]] else { return nil }
+        return recoveryWindows(from: list)
+    }
+
+    static func recoveryWindows(from list: [[String: Any]]) -> [StashRecoverySurface]? {
+        var windows: [StashRecoverySurface] = []
+        for info in list {
+            guard let id = info[kCGWindowNumber as String] as? UInt32,
+                  let pid = info[kCGWindowOwnerPID as String] as? pid_t else { return nil }
+            // Ownership must not disappear just because a minimized window
+            // cannot export bounds. Unknown alpha is not an observed value 1.
+            let alpha = (info[kCGWindowAlpha as String] as? NSNumber)?.floatValue
+            windows.append(StashRecoverySurface(windowID: id, pid: pid,
+                                                 alpha: alpha.flatMap { $0.isFinite ? $0 : nil }))
+        }
+        return windows
+    }
+
     static func belongsToProcess(windowID: UInt32, pid: pid_t) -> Bool {
         let list = CGWindowListCopyWindowInfo(.optionIncludingWindow, windowID) as? [[String: Any]] ?? []
         return list.contains {
@@ -49,7 +76,12 @@ enum StashSurface {
 
     @discardableResult
     static func setAlpha(windowID: UInt32, alpha: Float) -> Bool {
-        CGSSetWindowAlpha(CGSMainConnectionID(), CInt(windowID), alpha) == .success
+        let status = CGSSetWindowAlpha(CGSMainConnectionID(), CInt(windowID), alpha)
+        if status != .success {
+            StashDiagnostics.record("surface.alpha-failed", ["window": windowID, "alpha": alpha, "error": status.rawValue],
+                                    throttleKey: "alpha:\(windowID):\(status.rawValue)")
+        }
+        return status == .success
     }
 
     /// Whether the window is on the currently active Space of its display.

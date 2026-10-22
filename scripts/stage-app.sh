@@ -3,28 +3,40 @@
 #   dist/EdgeStash.app
 #   dist/EdgeStash.zip
 #   dist/CURRENT.txt
-# Usage: ./scripts/stage-app.sh [Release|Debug] [--distribution]
+# Usage: ./scripts/stage-app.sh [Release|Debug] [--distribution] [--diagnostics]
 # Default is a local, ad-hoc-signed Release. Distribution requires Developer ID
 # signing and notarization; see docs/distribution.md for one-time setup.
 
 set -euo pipefail
 
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
-configuration="${1:-Release}"
+configuration=Release
 distribution=false
-if [ "$#" -gt 2 ] || { [ "$#" -eq 2 ] && [ "$2" != --distribution ]; }; then
-  echo "usage: $0 [Release|Debug] [--distribution]" >&2
-  exit 2
-fi
-case "$configuration" in
-  Release|Debug) ;;
-  *)
-    echo "usage: $0 [Release|Debug] [--distribution]" >&2
-    exit 2
-    ;;
-esac
-if [ "${2:-}" = --distribution ]; then
-  distribution=true
+diagnostics=false
+configuration_given=false
+for argument in "$@"; do
+  case "$argument" in
+    Release|Debug)
+      if "$configuration_given"; then echo "configuration specified twice" >&2; exit 2; fi
+      configuration="$argument"
+      configuration_given=true
+      ;;
+    --distribution)
+      if "$distribution"; then echo "distribution specified twice" >&2; exit 2; fi
+      distribution=true
+      ;;
+    --diagnostics)
+      if "$diagnostics"; then echo "diagnostics specified twice" >&2; exit 2; fi
+      diagnostics=true
+      ;;
+    *)
+      echo "usage: $0 [Release|Debug] [--distribution] [--diagnostics]" >&2
+      exit 2
+      ;;
+  esac
+done
+if [ "$configuration" = Debug ]; then diagnostics=true; fi
+if "$distribution"; then
   if [ "$configuration" != Release ]; then
     echo "distribution requires the Release configuration" >&2
     exit 2
@@ -121,6 +133,12 @@ fi
 
 app="$staged/$app_name"
 ditto "$product" "$app"
+# Apply package metadata before signing. Optimization and local diagnostics
+# are independent: an explicit diagnostic Release retains all Release flags.
+/usr/libexec/PlistBuddy -c 'Delete :EdgeStashRuntimeDiagnostics' "$app/Contents/Info.plist" 2>/dev/null || true
+/usr/libexec/PlistBuddy -c "Add :EdgeStashRuntimeDiagnostics bool $diagnostics" "$app/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c 'Delete :EdgeStashBuildConfiguration' "$app/Contents/Info.plist" 2>/dev/null || true
+/usr/libexec/PlistBuddy -c "Add :EdgeStashBuildConfiguration string $configuration" "$app/Contents/Info.plist"
 mode="development"
 signing="ad-hoc (not a distribution identity)"
 notarization="not requested"
@@ -173,6 +191,7 @@ architecture=$(xcrun lipo -archs "$app/Contents/MacOS/EdgeStash")
   echo "open: $dist/$app_name"
   echo "zip: $dist/EdgeStash.zip"
   echo "configuration: $configuration"
+  echo "diagnostics: $diagnostics"
   echo "toolchain: $toolchain"
   echo "mode: $mode"
   echo "version: $version ($build)"

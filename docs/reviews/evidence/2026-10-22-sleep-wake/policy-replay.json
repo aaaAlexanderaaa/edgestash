@@ -1,0 +1,14 @@
+{
+  "afterLiveManagedMembers" : 0,
+  "afterRememberedMembers" : 0,
+  "beforeRememberedMembers" : 3,
+  "expandedSameDisplaySystemMoveWithoutDrag" : "detach",
+  "injectedCachedReferencesInvalid" : true,
+  "layoutChanged" : false,
+  "nonInvalidRoleKeepsSession" : true,
+  "processesStillRunning" : true,
+  "remainingRetries" : 0,
+  "sameLayoutWakeRefreshes" : 0,
+  "sameLayoutWakeRestores" : 0,
+  "scope" : "policy replay only; cached AX invalidity is injected, not an observed macOS wake"
+}

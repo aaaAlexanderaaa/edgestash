@@ -4,7 +4,7 @@ status: current
 authority: normative
 implementation: implemented
 verification_status: partial
-last_reconciled: 2026-10-16
+last_reconciled: 2026-10-22
 ---
 
 # Behavior grammar and the expectation check
@@ -112,13 +112,21 @@ unchanged; these timeline checks do not claim real AX completion evidence.
 
 | Effect | Trigger and guards | Action and cardinality | Suppression / owner |
 |---|---|---|---|
-| screen-set placement | settled complete display observation, including display-only wake; awake and a usable display exists | `ScreenSetCoordinator.apply` restores each target member, releases extras, refreshes retained members; one initial attempt plus at most three retries at 1/2/4s for failed targets, with an on-desktop fallback after a failed write | `ScreenSetMemoryCoordinator` returns complete target sets; `ScreenSetPowerState` distinguishes display power from real sleep; `ScreenSetRestorationRetry` bounds retries and replaces stale destinations; synchronous writes stay under `isApplying`; old animation callbacks are cancelled; a successful expanded unpinned refresh restarts the leave watcher with a fresh dwell |
+| screen-set placement | settled complete display observation, including display-only wake even with an identical layout; verified window control, awake and a usable display exists | `ScreenSetCoordinator.apply` restores each target member, releases extras, inspects retained members and skips placement writes when appearance already matches; one initial attempt plus at most three retries at 1/2/4s for failed targets, with an on-desktop fallback after a failed write | `ScreenSetMemoryCoordinator` returns complete target sets and explicit wake repairs every connected retained member; `ScreenSetPowerState` distinguishes display power from real sleep; `ScreenSetRestorationRetry` bounds retries and replaces stale destinations; synchronous writes stay under `isApplying`; old binding/lifecycle callbacks are rejected; unavailable control waits on existing discovery without spending or rearming the write budget; fallback retains original appearance, pin and geometry; a successful expanded unpinned refresh restarts the leave watcher with a fresh dwell |
 | screen-set memory update | deliberate changed window membership/display/edge; observation settled and not mirrored | update that window in the selected memory; an unchanged reveal/pin/collapse writes no configuration | `ScreenSetMemoryCoordinator.recording` compares the window's placement; environment transitions never snapshot their result |
-| screen-set memory removal | drag out of stash, or window death/app termination/app disable | drag removes from current set; death/disable removes from every set | `ScreenSetMemoryCoordinator.forgetting`; reflow, scale and projection are not removal triggers |
+| screen-set memory removal | drag out of stash or its visible recovery fallback, or confirmed window death/app termination/app disable | drag removes from current set; death/disable removes from every set | `ScreenSetMemoryCoordinator.forgetting`; reflow, scale, projection and AX transport errors are not removal triggers |
 
 Duplicate observations of an unchanged selected memory retain each failed
 target's budget; successful targets are removed from the retry queue. A quiet
 increment skips unaffected placements while resuming any paused leave watcher.
+`Tests/WindowRecoveryTests.swift` adds shared-policy timelines for transport
+failure, exact identity, stale notifications, read-only healthy wake, retained
+pin/geometry, and a write budget that discovery cannot reset. Invalid AX and
+missing metadata alone cannot remove memory; positive fresh same-window
+identity can replace the reference. A pending fallback dragged or recaptured
+by the user cancels its old automatic target. New screen-set decisions cancel
+superseded recovery targets. Control-unavailable visible fallback writes wait
+for a verified binding. These tests do not prove native AX completion.
 Fresh process hydration preserves screen-set keys but clears their window
 memberships. None of these operations creates a new presentation production.
 
@@ -208,6 +216,23 @@ color_tint_picker | popup | Sources/EdgeStash/Settings/Controls/ColorMenus.swift
 <!-- END grammar-manifest -->
 
 ## Reconciliation log
+
+- **2026-10-22 — window identity across wake:** implemented the accepted
+  transport/identity distinction, exact reference replacement, retained
+  fallback intent and bounded control waits. Healthy wake avoids placement
+  writes. Explicit diagnostic Release logging adds no presentation production.
+  The twelve presentation anchors and their coverage status stay unchanged;
+  this entry changes the declared system-mutation guards and evidence, not
+  popup cardinalities. macOS 27 physical wake acceptance remains open.
+
+- **2026-10-21 — unchanged-layout wake repair:** made the already-declared
+  display-only/system wake reconciliation explicit for equal geometry. The
+  shared coordinator's `screen_set unchanged-layout wake repairs presentation`
+  timeline covers retained, missing, restored, and later duplicate members.
+  Periodic AX discovery pauses while sleep/wake enumeration is quiet. Debug
+  diagnostic writes are local and bounded; they add no presentation primitive.
+  The manifest and presentation cardinalities remain unchanged. Native
+  sleep/wake success and the owner's reported membership loss remain unproved.
 
 - **2026-10-16 — accepted appearance target:** per-app materials and three
   exposed-edge presentation plans use the existing marker, merge, pin, sheen,

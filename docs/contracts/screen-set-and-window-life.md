@@ -4,7 +4,7 @@ status: target
 authority: normative
 implementation: implemented
 verification_status: partial
-last_reconciled: 2026-09-30
+last_reconciled: 2026-10-22
 supersedes_clauses_of: docs/contracts/edgestash.md
 ---
 
@@ -283,6 +283,27 @@ stash. Exiting full screen does not put it back on the edge.
 
 ## Required behaviors
 
+- Owner accepted the 2026-10-22 sleep/wake recovery implementation: an invalid
+  AX reference is not window death. Rebind only a unique fresh standard-window
+  reference with the same process launch identity, exact window number, and
+  confirmed WindowServer owner. Destruction is confirmed by process death,
+  changed ownership, or a destruction notification corroborated by successful
+  complete fresh enumeration and absent server ownership. Unavailable process
+  metadata is not a changed launch identity; missing workspace membership needs
+  independent process-exit evidence. Missing/failed observations
+  alone retain intent. Old binding and pre-environment callbacks cannot end a
+  newer binding. No title/geometry matching or cross-launch membership reuse.
+- Same-layout wake inspects each retained window before rewriting it. A matching
+  hidden/minimized/expanded presentation needs no placement write; an expanded
+  unpinned member still resumes its leave watcher. During recovery, unsolicited
+  geometry cannot be interpreted as a user detach without gesture evidence.
+- Visibility fallback and restoration intent are separate: preserve the target
+  display/edge, expanded/collapsed appearance, pin, and original geometry across
+  a failed environment write. A visible fallback is idle, not falsely collapsed.
+  Waiting for a verified control binding uses the existing discovery pass and
+  spends no write attempts. Becoming controllable resumes the same initial plus
+  three 1/2/4-second write budget; it cannot reset an exhausted budget. A drag of
+  the fallback, deliberate recapture, death, disable, or quit cancels the target.
 - Persist stash placement per configured screen set, locally, in the
   existing preferences document family. Do not add network or capture
   APIs.
@@ -319,6 +340,10 @@ stash. Exiting full screen does not put it back on the edge.
   Pinned sessions continue to suppress automatic collapse.
 - Display-only power-off pauses window reactions too. Every screens-did-wake
   reconciles the settled displays, even without system sleep notifications.
+  An identical pre/post-wake layout still repairs every connected retained
+  stash's hidden or expanded presentation and resumes its leave watcher;
+  unchanged geometry alone is not proof that window presentation survived.
+  Periodic AX discovery/liveness checks pause with the unsettled environment.
   Only actual system sleep authorizes the closed-lid wake hold; display-only
   wake follows ordinary drop rules after enumeration. Empty enumeration does
   not consume the wake baseline.
@@ -387,6 +412,23 @@ do not.
   and that lid-sleep does not move stashes.
 
 ## Reconciliation log
+
+- **2026-10-22 — owner accepted recovery repair:** implements the researched
+  identity/rebinding boundary, retained appearance intent, observed wake repair,
+  stale callback rejection, and Release-capable local diagnostics. This does not
+  authorize automatic permission grants, unlimited write retries, or membership
+  restoration after an EdgeStash restart. Native owner verification remains open.
+
+- **2026-10-21 — unchanged-layout wake:** the owner reports losing automatic
+  hiding after screen/system sleep, with shortcuts recovering windows one by
+  one. Wake previously reused the geometry-only unchanged-observation gate,
+  so stable retained sessions could receive no presentation repair. Explicit
+  wake now refreshes connected retained members even when geometry is equal;
+  ordinary duplicate observations and quiet increments still skip unaffected
+  writes. Periodic discovery pauses during sleep/enumeration. Debug-only local
+  event evidence is described in `docs/runtime-diagnostics.md`. The new logic
+  timeline proves repair selection, not the owner's native failure cause;
+  real sleep/wake and multi-display review remain open.
 
 - **2026-09-30 — live size and recent-window repair:** expanded resize
   notifications update accepted size, rescue, and overlay geometry after

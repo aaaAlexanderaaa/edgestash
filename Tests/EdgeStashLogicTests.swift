@@ -188,7 +188,7 @@ struct EdgeStashLogicTests {
                 stashActive: false,
                 isTemporary: false,
                 processStillRunning: true,
-                windowRoleInvalid: false
+                windowConfirmedGone: false
             ) == .appDisabled,
             "periodic sync must drop a disabled non-temporary session"
         )
@@ -197,7 +197,7 @@ struct EdgeStashLogicTests {
                 stashActive: false,
                 isTemporary: true,
                 processStillRunning: true,
-                windowRoleInvalid: false
+                windowConfirmedGone: false
             ) == nil,
             "periodic sync must keep a temporary session of a disabled app"
         )
@@ -206,7 +206,7 @@ struct EdgeStashLogicTests {
                 stashActive: true,
                 isTemporary: false,
                 processStillRunning: false,
-                windowRoleInvalid: false
+                windowConfirmedGone: false
             ) == .appTerminated,
             "periodic sync must drop a session whose process is gone"
         )
@@ -215,16 +215,16 @@ struct EdgeStashLogicTests {
                 stashActive: true,
                 isTemporary: false,
                 processStillRunning: true,
-                windowRoleInvalid: true
+                windowConfirmedGone: true
             ) == .windowDestroyed,
-            "periodic sync must drop a session whose AX window is gone"
+            "periodic sync must drop a session whose window death has been confirmed"
         )
         expect(
             SessionLifecyclePolicy.syncEndEvent(
                 stashActive: true,
                 isTemporary: false,
                 processStillRunning: true,
-                windowRoleInvalid: false
+                windowConfirmedGone: false
             ) == nil,
             "periodic sync must keep a live, enabled, still-valid session"
         )
@@ -233,7 +233,7 @@ struct EdgeStashLogicTests {
                 stashActive: false,
                 isTemporary: false,
                 processStillRunning: false,
-                windowRoleInvalid: true
+                windowConfirmedGone: true
             ) == .appDisabled,
             "periodic sync classifies before it ends, so disable wins over gone-process"
         )
@@ -3106,6 +3106,7 @@ struct EdgeStashLogicTests {
 
         runScreenSetMemoryTests { condition, message in expect(condition, message) }
         runStateMachineBoundaryTests { condition, message in expect(condition, message) }
+        runWindowRecoveryTests { condition, message in expect(condition, message) }
         runInteractionContinuityTests { condition, message in expect(condition, message) }
         runBackgroundObservationTests { condition, message in expect(condition, message) }
         runAppearancePresentationTests { condition, message in expect(condition, message) }

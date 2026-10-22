@@ -74,7 +74,7 @@ public enum SessionLifecyclePolicy {
         stashActive: Bool,
         isTemporary: Bool,
         processStillRunning: Bool,
-        windowRoleInvalid: Bool
+        windowConfirmedGone: Bool
     ) -> Event? {
         if !stashActive, !isTemporary {
             return .appDisabled
@@ -82,7 +82,7 @@ public enum SessionLifecyclePolicy {
         if !processStillRunning {
             return .appTerminated
         }
-        if windowRoleInvalid {
+        if windowConfirmedGone {
             return .windowDestroyed
         }
         return nil

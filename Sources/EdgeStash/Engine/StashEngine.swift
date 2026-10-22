@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import Darwin
 import EdgeStashLogic
 
 /// Live stash coordinator. Starts only after Accessibility is already trusted.
@@ -42,12 +43,14 @@ final class StashEngine {
         guard !isRunning else { return }
         guard AccessibilityGrant.isTrusted(prompt: false) else { return }
         isRunning = true
+        StashDiagnostics.record("engine.start")
         StashRescue.recoverPending(reason: "engine-start")
         screenSets.captureBaseline { [weak self] in self?.sessions ?? [] }
-        screenSets.onSettled = { [weak self] in
+        screenSets.onSettled = { [weak self] validateBindings in
             guard let self else { return }
             let current = self.sessions
             current.forEach { $0.resumeAfterScreenSetChange() }
+            if validateBindings { self.syncSessions() }
             self.approachTargetID = nil
             self.approachSuppressedIDs.formUnion(current.filter(\.isCollapsed).map(\.mergeID))
             self.merged.reconcile(sessions: self.sessions)
@@ -86,6 +89,7 @@ final class StashEngine {
 
     func suspendTrustLost() {
         guard isRunning else { return }
+        StashDiagnostics.record("engine.trust-lost")
         StashMultiWindowTip.shared.hideForEngineSuspension()
         endSessions(sessions.map { ($0, .accessibilityLost) })
         merged.tearDown()
@@ -304,7 +308,7 @@ final class StashEngine {
         )
         let displays = DisplayCatalog.adjacencyGeometries(screens: screens)
         let segments = sessions.compactMap { session -> SeamApproachSegment? in
-            guard session.isCollapsed,
+            guard session.isCollapsed, !session.awaitingWindowControl, !session.recoveryEpochActive,
                   !session.markerSuppressed,
                   session.presentation == .systemMinimize,
                   session.canBeginSeamReveal,
@@ -413,7 +417,7 @@ final class StashEngine {
             return
         }
         sessions.filter { $0.pid == hit.pid }.forEach { $0.noteDirectInteraction() }
-        let idle = sessions.filter { $0.isIdle || $0.isExpanded }
+        let idle = sessions.filter { $0.isIdle || $0.isExpanded || ($0.awaitingWindowControl && $0.pendingScreenSetRecovery != nil) }
         let candidates = idle.map {
             StashSessionPolicy.CaptureHit(windowID: $0.windowID, pid: $0.pid)
         }
@@ -450,6 +454,7 @@ final class StashEngine {
             self.captureGesture = nil
             return
         }
+        captureGesture.session.noteFallbackDrag(from: captureGesture.initialFrame)
         attemptCapture(captureGesture, attempt: 0, generation: generation)
     }
 
@@ -537,32 +542,48 @@ final class StashEngine {
             suspendTrustLost()
             return
         }
+        // AX/discovery is not a window-death authority while displays are
+        // asleep or enumerating. Resume the normal poll after wake settles.
+        guard !ScreenSetCoordinator.blocksUserGeometry else {
+            StashDiagnostics.record("engine.sync-paused", throttleKey: "engine.sync-paused")
+            return
+        }
         let runningApps = NSWorkspace.shared.runningApplications
         let pids = Set(runningApps.map(\.processIdentifier))
         var doomed: [(StashSession, SessionLifecyclePolicy.Event)] = []
         for session in sessions {
             let stashActive = Preferences.shared.stashActive(bundleID: session.bundleID)
-            let processStillRunning = pids.contains(session.pid)
-            let roleInvalid: Bool
-            if (stashActive || session.isTemporary), processStillRunning {
-                roleInvalid = StashAX.roleAlive(session.windowElement) == .invalidUIElement
-            } else {
-                roleInvalid = false
-            }
+            let listed = runningApps.first { $0.processIdentifier == session.pid }
+            let app = listed ?? NSRunningApplication(processIdentifier: session.pid)
+            let exists: Bool?
+            if listed != nil { exists = true }
+            else if kill(session.pid, 0) == 0 { exists = true }
+            else { exists = errno == ESRCH ? false : errno == EPERM ? true : nil }
+            let bundleMatches = app?.bundleIdentifier.map { $0 == session.bundleID }
+            let launchMatches = session.processLaunchDate.flatMap { recorded in app?.launchDate.map { $0 == recorded } }
+            let processGone = WindowRecoveryPolicy.processConfirmedGone(
+                exists: exists, terminated: app?.isTerminated == true,
+                bundleMatches: bundleMatches, launchMatches: launchMatches
+            )
             if let event = SessionLifecyclePolicy.syncEndEvent(
-                stashActive: stashActive,
-                isTemporary: session.isTemporary,
-                processStillRunning: processStillRunning,
-                windowRoleInvalid: roleInvalid
+                stashActive: stashActive, isTemporary: session.isTemporary,
+                processStillRunning: !processGone, windowConfirmedGone: false
             ) {
                 doomed.append((session, event))
+            } else if !session.awaitingWindowControl {
+                let status = StashAX.roleAlive(session.windowElement)
+                if status != .success {
+                    session.diagnose("session.role-check-failed", ["error": status.rawValue])
+                    session.markWindowControlUnavailable()
+                }
             }
         }
         endSessions(doomed)
         for app in runningApps {
             guard let bundleID = app.bundleIdentifier,
                   app.activationPolicy == .regular,
-                  Preferences.shared.stashActive(bundleID: bundleID) else {
+                  Preferences.shared.stashActive(bundleID: bundleID)
+                    || sessions.contains(where: { $0.pid == app.processIdentifier && $0.isTemporary }) else {
                 continue
             }
             discover(app: app, bundleID: bundleID)
@@ -582,23 +603,96 @@ final class StashEngine {
     }
 
     private func discover(app: NSRunningApplication, bundleID: String) {
+        guard !ScreenSetCoordinator.blocksUserGeometry else { return }
         let pid = app.processIdentifier
         let appElement = AXUIElementCreateApplication(pid)
         watchFocusedWindow(pid: pid, appElement: appElement)
-        var windows = StashAX.windows(of: appElement)
-        if let focused = StashAX.focusedWindow(of: appElement) {
-            windows.append(focused)
+        let enumeration = StashAX.windowsResult(of: appElement)
+        var windows = enumeration.value ?? []
+        if let focused = StashAX.focusedWindow(of: appElement),
+           !windows.contains(where: { CFEqual($0, focused) }) { windows.append(focused) }
+        var standard: [AXUIElement] = []
+        var enumerationComplete = enumeration.status == .success
+        for window in windows {
+            guard let subrole = StashAX.string(window, kAXSubroleAttribute as String) else {
+                enumerationComplete = false
+                continue
+            }
+            guard subrole == kAXStandardWindowSubrole else { continue }
+            if !standard.contains(where: { CFEqual($0, window) }) { standard.append(window) }
         }
-        for window in windows where StashAX.isStandardWindow(window) {
-            if sessions.contains(where: { $0.sameWindow(as: window) }) { continue }
-            let session = StashSession(
-                appElement: appElement,
-                windowElement: window,
-                pid: pid,
-                bundleID: bundleID
+        let numbered = standard.map { window -> (AXUIElement, UInt32?) in
+            if let known = sessions.first(where: { $0.pid == pid && !$0.awaitingWindowControl && $0.sameWindow(as: window) }) {
+                return (window, known.windowID)
+            }
+            return (window, StashAX.windowID(of: window))
+        }
+        if numbered.contains(where: { $0.1 == nil }) { enumerationComplete = false }
+        // Metadata is needed only for a disputed binding, never as a sole
+        // death signal. Minimized and off-Space absences remain inconclusive.
+        var inventory: [StashRecoverySurface]?
+        var inventoryRead = false
+        let current = sessions.filter { $0.pid == pid && $0.bundleID == bundleID }
+        for session in current {
+            let matches = numbered.filter { $0.1 != nil && $0.1 == session.windowID }.map { $0.0 }
+            let replacement = matches.contains { !session.sameWindow(as: $0) }
+            if replacement && !session.awaitingWindowControl { session.markWindowControlUnavailable() }
+            guard session.awaitingWindowControl else { continue }
+            if !inventoryRead { inventory = StashSurface.allWindows(); inventoryRead = true }
+            let owners = inventory?.filter { $0.windowID == session.windowID }
+            let owner: WindowOwnerObservation
+            if let owners {
+                owner = owners.contains(where: { $0.pid != pid }) ? .differentProcess : owners.isEmpty ? .absent : .owned
+            } else { owner = .unavailable }
+            let decision = WindowRecoveryPolicy.bindingDecision(
+                sameProcessLifetime: session.processLaunchDate != nil && session.processLaunchDate == app.launchDate,
+                enumerationSucceeded: enumerationComplete,
+                matchingReferences: matches.count, owner: owner,
+                destructionNotified: session.destructionNotified
             )
+            session.diagnose("session.binding-check", ["decision": String(describing: decision),
+                "enumerationError": enumeration.status.rawValue, "matches": matches.count,
+                "enumerationComplete": enumerationComplete,
+                "freshLaunch": app.launchDate?.timeIntervalSince1970 ?? -1,
+                "owner": String(describing: owner), "destroyedNotification": session.destructionNotified])
+            switch decision {
+            case .confirmedGone:
+                session.shutdown(event: .windowDestroyed)
+            case .rebind:
+                guard let window = matches.first,
+                      owners?.first(where: { $0.pid == pid })?.alpha != nil,
+                      let minimized = StashAX.isMinimized(window),
+                      minimized || StashAX.frame(of: window) != nil else { continue }
+                session.rebindWindow(appElement: appElement, windowElement: window)
+            case .wait:
+                break
+            }
+        }
+        for (window, number) in numbered {
+            if sessions.contains(where: { $0.sameWindow(as: window) }) { continue }
+            // A new wrapper for an unresolved number cannot become a second
+            // idle session and steal the old window's shortcut/capture path.
+            if let number, sessions.contains(where: { $0.pid == pid && $0.windowID == number }) { continue }
+            let session = StashSession(appElement: appElement, windowElement: window, pid: pid, bundleID: bundleID)
             attach(session)
             sessions.append(session)
+            screenSets.controlBecameReady(session)
+        }
+    }
+
+    private func queueControlValidation(_ session: StashSession) {
+        guard !ScreenSetCoordinator.blocksUserGeometry, !session.controlValidationQueued else { return }
+        session.controlValidationQueued = true
+        DispatchQueue.main.async { [weak self, weak session] in
+            guard let self, let session else { return }
+            session.controlValidationQueued = false
+            guard self.isRunning, !ScreenSetCoordinator.blocksUserGeometry,
+                  session.awaitingWindowControl,
+                  self.sessions.contains(where: { $0 === session }),
+                  AccessibilityGrant.isTrusted(prompt: false),
+                  let app = NSRunningApplication(processIdentifier: session.pid),
+                  app.launchDate == session.processLaunchDate else { return }
+            self.discover(app: app, bundleID: session.bundleID)
         }
     }
 
@@ -612,6 +706,13 @@ final class StashEngine {
     }
 
     private func attach(_ session: StashSession) {
+        session.onControlUnavailable = { [weak self] waiting in
+            self?.screenSets.waitForControl(of: waiting)
+            self?.queueControlValidation(waiting)
+        }
+        session.onControlReady = { [weak self] ready in
+            self?.screenSets.controlBecameReady(ready)
+        }
         session.onEnded = { [weak self] ended, _ in
             self?.sessions.removeAll { $0 === ended }
             self?.approachSuppressedIDs.remove(ended.mergeID)
@@ -687,11 +788,16 @@ final class StashEngine {
     private func handleAppShortcut(_ bundleID: String) {
         discoverEnabledWindows(bundleID: bundleID)
         let group = sessions.filter { $0.bundleID == bundleID }
+        StashDiagnostics.record("shortcut.app", ["app": bundleID, "idle": group.filter(\.isIdle).count,
+                                                  "collapsed": group.filter(\.isCollapsed).count,
+                                                  "expanded": group.filter(\.isExpanded).count])
         if AppShortcutPolicy.shouldCaptureIdleFrontWindow(
             hasIdleWindow: group.contains(where: \.isIdle),
             hasManagedWindow: group.contains(where: \.isManaged)
         ), let idle = preferredIdle(in: group, bundleID: bundleID) {
-            if idle.captureNearestAllowed() {
+            let succeeded = idle.captureNearestAllowed()
+            idle.diagnose("shortcut.capture-idle", ["succeeded": succeeded])
+            if succeeded {
                 lastPreferredSession[bundleID] = ObjectIdentifier(idle)
             }
             merged.reconcile(sessions: sessions)

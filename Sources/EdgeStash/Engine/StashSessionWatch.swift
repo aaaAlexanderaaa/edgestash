@@ -2,6 +2,17 @@ import AppKit
 import ApplicationServices
 import EdgeStashLogic
 
+/// Retained by the installed observer's session and by queued deliveries.
+/// A replaced binding never inherits its predecessor's notifications.
+final class StashWindowObserverContext {
+    weak var session: StashSession?
+    let generation: UInt
+    init(session: StashSession, generation: UInt) {
+        self.session = session
+        self.generation = generation
+    }
+}
+
 extension StashSession {
     func reconcileMinimized(
         now: Date = Date(),
@@ -9,7 +20,7 @@ extension StashSession {
             DisplaySpaceTransport.shared.availability(for: $0)
         }
     ) {
-        guard !ScreenSetCoordinator.blocksUserGeometry else { return }
+        guard !ScreenSetCoordinator.blocksUserGeometry, !awaitingWindowControl, !recoveryEpochActive else { return }
         guard usingSharedMinimize, phase == .collapsed, !restoringShared else { return }
         guard now.timeIntervalSince(lastMinimizeCheck) >= 0.5 else { return }
         lastMinimizeCheck = now
@@ -31,7 +42,7 @@ extension StashSession {
     }
 
     func beginHoverReveal() {
-        guard !ScreenSetCoordinator.blocksUserGeometry else { return }
+        guard !ScreenSetCoordinator.blocksUserGeometry, !awaitingWindowControl, !recoveryEpochActive else { return }
         guard HoverRevealPolicy.shouldBegin(
             phase: phase, isBusy: busy, markerSuppressed: markerSuppressed,
             clickLocked: clickCollapseLockActive, buttonPressed: NSEvent.pressedMouseButtons != 0
@@ -87,10 +98,11 @@ extension StashSession {
         leaveTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
             self?.checkLeaveToCollapse()
         }
+        diagnoseLeaveGate("watch-started")
     }
 
     func showMarker(windowQuartz: CGRect) {
-        guard let edge, !markerSuppressed, !markerHiddenForSpace else {
+        guard let edge, !awaitingWindowControl, !markerSuppressed, !markerHiddenForSpace else {
             hideMarker()
             return
         }
@@ -181,7 +193,8 @@ extension StashSession {
 
     func refreshPinControl() {
         let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        guard PinControlPolicy.shouldShowControl(isExpanded: isExpanded, isPinned: isPinned, isBusy: busy),
+        guard !awaitingWindowControl,
+              PinControlPolicy.shouldShowControl(isExpanded: isExpanded, isPinned: isPinned, isBusy: busy),
               let restoreFrame,
               let edge else {
             pinWindow.conceal()
@@ -221,14 +234,29 @@ extension StashSession {
         var observer: AXObserver?
         let callback: AXObserverCallback = { _, element, notification, context in
             guard let context else { return }
-            let session = Unmanaged<StashSession>.fromOpaque(context).takeUnretainedValue()
+            let binding = Unmanaged<StashWindowObserverContext>.fromOpaque(context).takeUnretainedValue()
+            guard let session = binding.session else { return }
+            let lifecycle = session.lifecycleGeneration
             let name = notification as String
             DispatchQueue.main.async {
+                guard WindowRecoveryPolicy.acceptsCallback(
+                    binding: binding.generation, currentBinding: session.windowBindingGeneration,
+                    lifecycle: lifecycle, currentLifecycle: session.lifecycleGeneration
+                ) else {
+                    session.diagnose("session.stale-ax-callback", ["notification": name])
+                    return
+                }
                 session.handleNotification(name, element: element)
             }
         }
-        guard AXObserverCreate(pid, callback, &observer) == .success, let observer else { return }
-        let refcon = Unmanaged.passUnretained(self).toOpaque()
+        let status = AXObserverCreate(pid, callback, &observer)
+        guard status == .success, let observer else {
+            diagnose("session.observer-create-failed", ["error": status.rawValue])
+            return
+        }
+        let context = StashWindowObserverContext(session: self, generation: windowBindingGeneration)
+        observerContext = context
+        let refcon = Unmanaged.passUnretained(context).toOpaque()
         for note in [
             kAXUIElementDestroyedNotification as String,
             kAXWindowMiniaturizedNotification as String,
@@ -236,7 +264,10 @@ extension StashSession {
             kAXMovedNotification as String,
             kAXResizedNotification as String
         ] {
-            _ = AXObserverAddNotification(observer, windowElement, note as CFString, refcon)
+            let result = AXObserverAddNotification(observer, windowElement, note as CFString, refcon)
+            if result != .success {
+                diagnose("session.observer-notification-failed", ["notification": note, "error": result.rawValue])
+            }
         }
         let source = AXObserverGetRunLoopSource(observer)
         CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .defaultMode)
@@ -250,21 +281,25 @@ extension StashSession {
         }
         observerSource = nil
         observer = nil
+        observerContext = nil
+        windowBindingGeneration &+= 1
     }
 
     private func checkLeaveToCollapse() {
-        guard !ScreenSetCoordinator.blocksUserGeometry else { return }
+        guard !ScreenSetCoordinator.blocksUserGeometry else { diagnoseLeaveGate("environment-quiet"); return }
+        guard !awaitingWindowControl, !recoveryEpochActive else { diagnoseLeaveGate("window-control-wait"); return }
         refreshPinControl()
-        guard phase == .expanded, !busy else { return }
+        guard phase == .expanded, !busy else { diagnoseLeaveGate("phase-or-busy"); return }
         let mouse = NSEvent.mouseLocation
         let screens = NSScreen.screens
         let primaryHeight = DisplayCatalog.primaryHeight(screens: screens)
-        guard let frame = StashAX.frame(of: windowElement) ?? restoreFrame else { return }
+        guard let frame = StashAX.frame(of: windowElement) ?? restoreFrame else { diagnoseLeaveGate("no-frame"); return }
         let windowAppKit = StashGeometryPolicy.appKitRect(fromQuartz: frame, primaryHeight: primaryHeight)
-        guard PinControlPolicy.shouldAutoCollapse(isPinned: isPinned) else { return }
-        if usingSharedMinimize { return }
+        guard PinControlPolicy.shouldAutoCollapse(isPinned: isPinned) else { diagnoseLeaveGate("pinned"); return }
+        if usingSharedMinimize { diagnoseLeaveGate("owned-minimize"); return }
         let now = Date()
         if NSEvent.pressedMouseButtons != 0 {
+            diagnoseLeaveGate("mouse-button")
             outsideSince = nil
             return
         }
@@ -308,13 +343,17 @@ extension StashSession {
             lastSiblingInteractionAt: lastSiblingInteractionAt,
             now: now
         ) else {
+            diagnoseLeaveGate("outside-dwell")
             if outsideSince == nil { outsideSince = now }
             if LeaveCollapsePolicy.shouldCollapse(outsideSince: outsideSince, now: now) {
                 outsideSince = nil
-                _ = collapse()
+                let accepted = collapse()
+                diagnose("session.auto-collapse", ["accepted": accepted])
             }
             return
         }
+        diagnoseLeaveGate(!geometricallyOutside ? "inside-window-or-pin"
+            : pointerInSibling ? "sibling-pointer" : siblingFocused ? "sibling-focused" : "sibling-grace")
         outsideSince = nil
     }
 
@@ -330,10 +369,11 @@ extension StashSession {
 
     private func handleNotification(_ name: String, element: AXUIElement) {
         if name == kAXUIElementDestroyedNotification as String {
-            shutdown(event: .windowDestroyed)
+            diagnose("session.ax-destroyed")
+            markWindowControlUnavailable(destruction: true)
             return
         }
-        if ignoringGeometryNotifications || ScreenSetCoordinator.blocksUserGeometry { return }
+        if ignoringGeometryNotifications || ScreenSetCoordinator.blocksUserGeometry || awaitingWindowControl { return }
         let minimizeNotification: ManagedMinimizeNotification?
         switch name {
         case kAXWindowMiniaturizedNotification as String:
@@ -344,14 +384,21 @@ extension StashSession {
             minimizeNotification = nil
         }
         if let minimizeNotification {
+            let observedMinimized = StashAX.isMinimized(element)
+            guard observedMinimized != nil else { markWindowControlUnavailable(); return }
+            // Environment recovery owns presentation until it has verified
+            // the saved appearance. A delayed miniaturize cannot release it.
+            guard !recoveryEpochActive else { return }
             let action = ManagedMinimizeNotificationPolicy.action(
                 for: minimizeNotification,
                 phase: phase,
                 ownsCollapsedMinimize: usingSharedMinimize,
                 revealInFlight: restoringShared,
-                observedMinimized: StashAX.isMinimized(element),
+                observedMinimized: observedMinimized,
                 presentation: presentation
             )
+            diagnose("session.ax-minimize", ["notification": name, "action": String(describing: action),
+                                               "observedMinimized": observedMinimized.map { $0 as Any } ?? "unknown"])
             switch action {
             case .ignore:
                 break
@@ -372,8 +419,15 @@ extension StashSession {
     }
 
     func finishManagedGeometryGesture(from initialFrame: CGRect) {
-        guard isManaged, let frame = StashAX.frame(of: windowElement),
+        guard isManaged, let frame = captureGestureFrame,
               StashSessionPolicy.isWindowDrag(from: initialFrame, to: frame) else { return }
+        if awaitingWindowControl {
+            // Pointer ownership and fresh server geometry can prove a real
+            // drag even while the old AX wrapper is unreadable.
+            restoreFrame = frame
+            shutdown(event: .detachedFromEdge)
+            return
+        }
         externalGeometryWasDragged = true
         scheduleDeferredGeometryReconciliation()
     }
@@ -400,18 +454,22 @@ extension StashSession {
     }
 
     private func reconcileExternalGeometry() {
-        guard !ScreenSetCoordinator.blocksUserGeometry, !busy else { return }
+        guard !ScreenSetCoordinator.blocksUserGeometry, !awaitingWindowControl, !busy else { return }
         if ScreenSetCoordinator.active?.reconcileUnannouncedTopology() == true { return }
         let wasDragged = externalGeometryWasDragged
         externalGeometryWasDragged = false
+        if wasDragged { cancelPendingRecovery() }
         guard let edge, let displayID, let frame = StashAX.frame(of: windowElement) else { return }
         let displays = DisplayCatalog.adjacencyGeometries()
         let action = StashSessionPolicy.externalGeometryAction(
             phase: phase, presentation: presentation, frame: frame,
             displayID: displayID, edge: edge, displays: displays,
             wasDragged: wasDragged, isBusy: busy,
-            screenSetQuiet: ScreenSetCoordinator.blocksUserGeometry
+            screenSetQuiet: ScreenSetCoordinator.blocksUserGeometry,
+            recovering: recoveryEpochActive
         )
+        diagnose("session.external-geometry", ["action": String(describing: action), "dragged": wasDragged,
+                                               "observedFrame": [Double(frame.minX), Double(frame.minY), Double(frame.width), Double(frame.height)]])
         switch action {
         case .none:
             if phase == .expanded, frame != restoreFrame,
@@ -421,7 +479,13 @@ extension StashSession {
         case .detach:
             shutdown(event: .detachedFromEdge)
         case .repairHidden:
-            if !refreshCollapsePresentation() { shutdown(event: .miniaturized) }
+            if recoveryEpochActive {
+                // The existing coordinator owns this target and its budget.
+                // A late AXMoved must not bypass it with another write.
+                onControlReady?(self)
+                return
+            }
+            if !refreshCollapsePresentation(), !awaitingWindowControl { shutdown(event: .miniaturized) }
         case let .rebind(destinationID, side):
             guard let display = displays.first(where: { $0.id == destinationID }) else { return }
             adoptExternalPlacement(frame: frame, display: display, edge: side)

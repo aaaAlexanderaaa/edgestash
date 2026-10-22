@@ -32,6 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var trustTimer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        StashDiagnostics.start()
         NSApp.setActivationPolicy(.accessory)
         installTextEditingChords()
         updateStatusBarVisibility()
@@ -90,6 +91,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         HaloController.shared.clear()
         engine?.shutdown()
         engine = nil
+        StashDiagnostics.record("app.stop")
+        StashDiagnostics.flush()
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -161,18 +164,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     @objc private func macWillSleep() {
+        StashDiagnostics.record("workspace.system-will-sleep", ["enginePresent": engine != nil])
         engine?.noteMacWillSleep()
     }
 
     @objc private func macDidWake() {
+        StashDiagnostics.record("workspace.system-did-wake", ["enginePresent": engine != nil])
         engine?.noteMacDidWake()
     }
 
     @objc private func macScreensDidWake() {
+        StashDiagnostics.record("workspace.screens-did-wake", ["enginePresent": engine != nil])
         engine?.noteMacScreensDidWake()
     }
 
     @objc private func macScreensDidSleep() {
+        StashDiagnostics.record("workspace.screens-did-sleep", ["enginePresent": engine != nil])
         engine?.noteMacScreensDidSleep()
     }
 

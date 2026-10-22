@@ -38,10 +38,11 @@ public enum StashSessionPolicy {
         phase: StashSessionPhase, presentation: StashCollapsePresentation?,
         frame: CGRect, displayID: String, edge: DisplayEdge,
         displays: [DisplayGeometry], wasDragged: Bool,
-        isBusy: Bool = false, screenSetQuiet: Bool = false
+        isBusy: Bool = false, screenSetQuiet: Bool = false, recovering: Bool = false
     ) -> ManagedGeometryAction {
         guard !isBusy, !screenSetQuiet else { return .none }
         guard let source = displays.first(where: { $0.id == displayID }) else { return .none }
+        if recovering, !wasDragged, phase == .expanded { return .repairHidden }
         func alignedSide(on display: DisplayGeometry) -> DisplayEdge? {
             ([edge] + DisplayEdge.allCases.filter { $0 != edge }).first {
                 abs($0 == .left ? frame.minX - display.frame.minX : frame.maxX - display.frame.maxX) <= 20

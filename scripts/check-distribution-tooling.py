@@ -183,6 +183,44 @@ class DistributionToolingTests(unittest.TestCase):
         self.assertEqual(self.snapshot(), before)
         self.assertFalse(self.log.exists())
 
+    def test_diagnostic_release_keeps_release_configuration_and_signed_metadata(self):
+        result = self.run_script("stage-app.sh", "Release", "--diagnostics")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        app = self.root / "dist/EdgeStash.app/Contents/Info.plist"
+        metadata = plistlib.loads(app.read_bytes())
+        self.assertIs(metadata["EdgeStashRuntimeDiagnostics"], True)
+        self.assertEqual(metadata["EdgeStashBuildConfiguration"], "Release")
+        current = (self.root / "dist/CURRENT.txt").read_text()
+        self.assertIn("configuration: Release", current)
+        self.assertIn("diagnostics: true", current)
+        with zipfile.ZipFile(self.root / "dist/EdgeStash.zip") as archive:
+            self.assertEqual(archive.read("EdgeStash.app/Contents/Info.plist"), app.read_bytes())
+        calls = [json.loads(line) for line in self.log.read_text().splitlines()]
+        for call in calls:
+            if call[:2] == ["xcrun", "swiftc"]:
+                self.assertIn("-O", call)
+                self.assertNotIn("-Onone", call)
+                self.assertNotIn("DEBUG", call)
+            if call[0] == "xcodebuild":
+                self.assertEqual(call[call.index("-configuration") + 1], "Release")
+
+    def test_ordinary_release_disables_diagnostics_even_after_diagnostic_stage(self):
+        for arguments, expected in [(("Debug",), True), (("Release", "--diagnostics"), True), (("Release",), False)]:
+            with self.subTest(arguments=arguments):
+                result = self.run_script("stage-app.sh", *arguments)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                metadata = plistlib.loads((self.root / "dist/EdgeStash.app/Contents/Info.plist").read_bytes())
+                self.assertIs(metadata["EdgeStashRuntimeDiagnostics"], expected)
+
+    def test_invalid_stage_options_preserve_previous_outputs(self):
+        for arguments in [("--unknown",), ("Debug", "Release"), ("Release", "--diagnostics", "--diagnostics")]:
+            with self.subTest(arguments=arguments):
+                before = self.snapshot()
+                result = self.run_script("stage-app.sh", *arguments)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(self.snapshot(), before)
+                self.assertFalse(self.log.exists())
+
     def test_failed_release_does_not_replace_previous_outputs(self):
         for failure in ("sign", "runtime", "timestamp", "notary", "notary-command", "staple", "gatekeeper"):
             with self.subTest(failure=failure):

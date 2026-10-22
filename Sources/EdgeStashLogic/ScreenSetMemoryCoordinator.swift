@@ -93,7 +93,8 @@ public struct ScreenSetMemoryCoordinator {
         on current: ScreenSetObservation,
         configurations: [ScreenSetConfiguration],
         live: [ScreenSetPlacement],
-        keepMissingDisplay: String? = nil
+        keepMissingDisplay: String? = nil,
+        afterWake: Bool = false
     ) -> ScreenSetTransition {
         let previous = observation
         let sameIDs = previous.fingerprint.displayIDs == current.fingerprint.displayIDs
@@ -154,7 +155,7 @@ public struct ScreenSetMemoryCoordinator {
                 event: event,
                 restore: target.slots,
                 release: Set(live.filter { !keys.contains($0.key) }.map(\.key)),
-                live: live, previous: previous
+                live: live, previous: previous, afterWake: afterWake
             )
         }
 
@@ -164,12 +165,13 @@ public struct ScreenSetMemoryCoordinator {
         let returning = current.mirroring || target != nil ? [] : displaced.values.filter {
             present.contains($0.displayID) && !managed.contains($0.key)
         }.sorted { $0.windowNumber < $1.windowNumber }
-        return transition(event: event, restore: returning, release: Set(gone.map(\.key)), live: live, previous: previous)
+        return transition(event: event, restore: returning, release: Set(gone.map(\.key)),
+                          live: live, previous: previous, afterWake: afterWake)
     }
 
     private mutating func transition(
         event: ScreenSetEvent, restore: [ScreenSetPlacement], release: Set<ScreenSetWindowKey>,
-        live: [ScreenSetPlacement], previous: ScreenSetObservation
+        live: [ScreenSetPlacement], previous: ScreenSetObservation, afterWake: Bool
     ) -> ScreenSetTransition {
         lastPlacements = Dictionary(uniqueKeysWithValues: live.filter { !release.contains($0.key) }.map { ($0.key, $0) })
         for slot in restore { lastPlacements[slot.key] = slot }
@@ -177,6 +179,10 @@ public struct ScreenSetMemoryCoordinator {
         let present = Set(observation.fingerprint.displayIDs)
         let refresh = Set(live.filter { slot in
             guard present.contains(slot.displayID), !release.contains(slot.key), !restoring.contains(slot.key) else { return false }
+            // Display power and system sleep can invalidate the live hidden
+            // presentation without changing a single display metric. Wake is
+            // an explicit repair boundary; a duplicate awake observation isn't.
+            if afterWake { return true }
             guard let before = previous.displays.first(where: { $0.id == slot.displayID }),
                   let after = observation.displays.first(where: { $0.id == slot.displayID }),
                   let edge = DisplayEdge(rawValue: slot.edge) else { return true }

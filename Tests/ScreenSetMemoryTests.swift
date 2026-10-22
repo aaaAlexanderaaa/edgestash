@@ -19,6 +19,41 @@ func runScreenSetMemoryTests(_ expect: (Bool, String) -> Void) {
     let laptopConfig = ScreenSetConfiguration(fingerprint: laptop.fingerprint, slots: [aLaptop])
 
     // MARK: screen_set round-trip membership and memory invariants.
+    // MARK: screen_set unchanged-layout wake repairs presentation.
+    do {
+        var memory = ScreenSetMemoryCoordinator(baseline: desk)
+        let live = [aDesk, b]
+        let quiet = memory.settle(on: desk, configurations: [deskConfig], live: live)
+        expect(quiet.refresh.isEmpty, "an ordinary duplicate observation does not rewrite stable windows")
+        for systemWake in [false, true] {
+            var power = ScreenSetPowerState()
+            power.screensDidSleep()
+            if systemWake { power.systemWillSleep() }
+            power.didWake(systemWake: systemWake)
+            let wake = memory.settle(on: desk, configurations: [deskConfig], live: live, afterWake: power.isWaking)
+            expect(wake.event == .none && wake.refresh == Set(live.map(\.key)),
+                   "display-only and system wake repair every retained stash even when the layout is identical")
+            expect(wake.restore.isEmpty && wake.release.isEmpty && memory.memoryFingerprint == desk.fingerprint,
+                   "wake repairs presentation without recapturing, opening, or forgetting a stash")
+            power.settled()
+            let duplicate = memory.settle(on: desk, configurations: [deskConfig], live: live, afterWake: power.isWaking)
+            expect(duplicate.refresh.isEmpty, "awake duplicate notifications do not repeat the wake repair")
+        }
+        var held = ScreenSetMemoryCoordinator(baseline: desk)
+        let externalOnly = ScreenSetObservation(displays: desk.displays.filter { $0.id == "external" })
+        let closedLid = held.settle(on: externalOnly, configurations: [deskConfig], live: live,
+                                   keepMissingDisplay: "laptop", afterWake: true)
+        expect(closedLid.refresh == [aDesk.key] && closedLid.release.isEmpty,
+               "wake only refreshes connected members while the missing-display sleep hold survives")
+        var dropping = ScreenSetMemoryCoordinator(baseline: desk)
+        let drop = dropping.settle(on: laptop, configurations: [deskConfig], live: live, afterWake: true)
+        expect(drop.release == [aDesk.key] && drop.refresh == [b.key],
+               "wake drop scatters the absent display's window and repairs the surviving stash")
+        var returning = ScreenSetMemoryCoordinator(baseline: laptop)
+        let restore = returning.settle(on: desk, configurations: [deskConfig], live: [b], afterWake: true)
+        expect(Set(restore.restore.map(\.key)) == Set(live.map(\.key)) && restore.refresh.isEmpty,
+               "configured wake restore does not also refresh the same target twice")
+    }
     do {
         // Screen-only sleep must quiet geometry and subsequently reconcile,
         // without borrowing the system-sleep clamshell exception.

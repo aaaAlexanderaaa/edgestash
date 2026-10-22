@@ -4,7 +4,7 @@ import Foundation
 /// failed targets, at 1/2/4 seconds, then leave the usable fallback and memory.
 /// A new environment replaces this queue; deliberate capture/death cancels a key.
 public struct ScreenSetRestorationRetry {
-    private var failures: [ScreenSetWindowKey: (slot: ScreenSetPlacement, count: Int, dueAt: Date?)] = [:]
+    private var failures: [ScreenSetWindowKey: (intent: ScreenSetRecoveryIntent, count: Int, dueAt: Date?, waiting: Bool)] = [:]
     private static let delays: [TimeInterval] = [1, 2, 4]
 
     public init() {}
@@ -18,32 +18,56 @@ public struct ScreenSetRestorationRetry {
         if !retainingPending { failures.removeAll() }
         return slots.filter { slot in
             guard let failed = failures[slot.key] else { return true }
-            return failed.slot != slot
+            return failed.intent.placement != slot
         }.sorted { ($0.bundleID, $0.windowNumber) < ($1.bundleID, $1.windowNumber) }
     }
 
     public var pending: [ScreenSetPlacement] {
-        failures.values.filter { $0.dueAt != nil }.map(\.slot).sorted {
+        failures.values.filter { $0.dueAt != nil || $0.waiting }.map { $0.intent.placement }.sorted {
             ($0.bundleID, $0.windowNumber) < ($1.bundleID, $1.windowNumber)
         }
     }
 
     public func due(now: Date = Date()) -> [ScreenSetPlacement] {
         pending.filter { slot in
-            failures[slot.key]?.dueAt.map { $0 <= now } == true
+            guard let entry = failures[slot.key], !entry.waiting else { return false }
+            return entry.dueAt.map { $0 <= now } == true
         }
     }
 
     public func nextDelay(now: Date = Date()) -> TimeInterval? {
-        failures.values.compactMap(\.dueAt).min().map { max(0, $0.timeIntervalSince(now)) }
+        failures.values.filter { !$0.waiting }.compactMap(\.dueAt).min().map { max(0, $0.timeIntervalSince(now)) }
     }
 
-    public mutating func failed(_ slot: ScreenSetPlacement, now: Date = Date()) {
-        let count = failures[slot.key].map { $0.slot == slot ? $0.count : 0 } ?? 0
+    public func intent(for key: ScreenSetWindowKey) -> ScreenSetRecoveryIntent? { failures[key]?.intent }
+
+    public func writeAttemptsRemaining(for key: ScreenSetWindowKey) -> Int? {
+        failures[key].map { max(0, Self.delays.count + 1 - $0.count) }
+    }
+
+    public mutating func waitForControl(_ slot: ScreenSetPlacement, intent: ScreenSetRecoveryIntent, now: Date = Date()) {
+        let previous = failures[slot.key].flatMap { $0.intent.placement == slot ? $0 : nil }
+        let count = previous?.count ?? 0
+        failures[slot.key] = (previous?.intent ?? intent, count, previous?.dueAt, count <= Self.delays.count)
+    }
+
+    /// Only the existing read-only discovery pass wakes a control wait. This
+    /// resumes its budget, including the initial attempt; it does not rearm an
+    /// exhausted target or create an extra polling clock.
+    public mutating func controlBecameReady(_ key: ScreenSetWindowKey, now: Date = Date()) {
+        guard var entry = failures[key], entry.waiting, entry.count <= Self.delays.count else { return }
+        entry.waiting = false
+        entry.dueAt = max(entry.dueAt ?? now, now)
+        failures[key] = entry
+    }
+
+    public mutating func failed(_ slot: ScreenSetPlacement, intent: ScreenSetRecoveryIntent? = nil, now: Date = Date()) {
+        let previous = failures[slot.key].flatMap { $0.intent.placement == slot ? $0 : nil }
+        let count = previous?.count ?? 0
         let nextCount = count + 1
         let dueAt = nextCount <= Self.delays.count
             ? now.addingTimeInterval(Self.delays[nextCount - 1]) : nil
-        failures[slot.key] = (slot, nextCount, dueAt)
+        failures[slot.key] = (intent ?? previous?.intent ?? ScreenSetRecoveryIntent(placement: slot), nextCount, dueAt, false)
     }
 
     public mutating func remove(_ key: ScreenSetWindowKey) {

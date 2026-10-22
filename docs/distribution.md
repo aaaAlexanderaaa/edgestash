@@ -10,6 +10,15 @@ successive versions a stable identity. Apple notarization handles Gatekeeper's
 distribution checks. Accessibility remains a permission the person grants.
 The app itself still makes no network requests.
 
+## Diagnostic test releases
+
+The owner-requested v0.1.8 GitHub prerelease uses the existing ad-hoc package
+path, with `./scripts/stage-app.sh Release --diagnostics`. It is a Release
+optimized build with bounded local runtime logging enabled. Its notes state
+the CLT build evidence, unavailable full Xcode-project check, pending physical
+sleep/wake acceptance, and ad-hoc signing. It is not the Developer ID and
+notarization workflow below and does not generate an installable Cask.
+
 ## One-time signing setup
 
 1. Enroll in the [Apple Developer Program](https://developer.apple.com/programs/enroll/).
@@ -58,7 +67,7 @@ Debug validation gate. Before changing the app target, validate that gate on
 a Mac with full Xcode.
 
 After changing release tools, run `python3 scripts/check-distribution-tooling.py`
-on macOS. Its seven tests use fake signing/notarization tools, real ZIP/plist
+on macOS. Its ten tests use fake signing/notarization tools, real ZIP/plist
 handling, and Apple's requirement parser to check failure isolation and archive
 consistency. If Homebrew is installed they also evaluate the generated Cask's
 DSL without installing anything. They do not replace a real signed release or

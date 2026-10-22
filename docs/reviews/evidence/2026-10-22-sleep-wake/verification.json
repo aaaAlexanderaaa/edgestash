@@ -1,0 +1,19 @@
+{
+  "date": "2026-10-22",
+  "version": "0.1.8 (9)",
+  "configuration": "Release",
+  "runtimeDiagnostics": true,
+  "signing": "local ad-hoc; not notarized",
+  "architecture": "arm64",
+  "archiveSHA256": "593fb3b7f31e22d06743c3c69d820404f0a59d15da0b5ed4be1c17abea6fc1d0",
+  "binaryUUID": "ECFE6B24-C441-3094-B453-C4D8679E772A",
+  "expectationCheck": "passed; 12 presentation anchors, 1 executable and 11 structural-only cardinalities",
+  "logicRegressions": "passed, including WindowRecoveryTests",
+  "packagingToolTests": "10 passed; fake signing/notarization services",
+  "nativeBuilds": "Debug and Release passed with Apple CLT",
+  "archiveVerification": "staged and freshly extracted ZIP signatures, executable and Info.plist match",
+  "metadataDecoderProbe": "passed; missing geometry retains identity, unknown alpha stays unknown, malformed identity unavailable",
+  "diagnosticProbes": "optimized package flags on/off, ordinary Release lazy snapshots, optimized writer, bounded rotation, JSON, permissions and throttling passed in workspace",
+  "xcodeProjectDebugGate": "unavailable; full Xcode not installed",
+  "physicalMacOS27WakeAcceptance": "pending on owner machine"
+}

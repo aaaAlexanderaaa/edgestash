@@ -4,7 +4,7 @@ status: current
 authority: normative
 implementation: implemented
 verification_status: partial
-last_reconciled: 2026-10-14
+last_reconciled: 2026-10-22
 ---
 
 # Local-first operation
@@ -41,6 +41,12 @@ This contract owns the capability ban.
 3. No cross-app IPC files or distributed notifications for product features.
 4. Launch at login defaults to off.
 5. Accessibility is optional for opening Settings.
+6. Owner-run Debug and explicitly marked diagnostic Release builds may keep bounded, machine-local runtime diagnostics
+   for sleep/wake investigation: power/display observations, per-window stash
+   state, process/window identifiers, geometry, and API failure codes. No
+   window titles, contents, keystrokes, screenshots, or automatic upload. The
+   ordinary Release disables the writer and snapshot evaluation; this is diagnostic
+   evidence, not usage telemetry. See `docs/runtime-diagnostics.md`.
 
 ## Failure, recovery, and intervention
 
@@ -61,6 +67,16 @@ If a new file imports a network or capture API, revert it.
 None.
 
 ## Reconciliation log
+
+- **2026-10-22:** owner accepted the recovery implementation and an optimized
+  Release diagnostic package for the other physical Mac. The explicit package
+  flag is applied before signing; ordinary Release keeps diagnostics off.
+  Bounds, privacy and no-network/no-capture capabilities remain unchanged.
+
+- **2026-10-21:** documented Debug-only local runtime evidence in response to
+  the owner's sleep/wake failure and logging request. Two rotating files are
+  capped at 2 MiB each, written on a serial utility queue; repeated identical
+  AX failures are rate-limited. Release has no runtime diagnostic writer.
 
 - **2026-10-14:** corrected the metadata-use inventory to include the existing
   pointer, Space-visibility, focus-return, and rescue checks. Sharing metadata
