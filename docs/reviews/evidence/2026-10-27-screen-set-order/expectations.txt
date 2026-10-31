@@ -1,0 +1,14 @@
+Structural conformance OK: 12 presentation anchors, all declared.
+Cardinality coverage: 1 executable, 11 structural-only.
+Running behavioral property tests (swift run EdgeStashLogicTests)…
+[0/1] Planning build
+Building for debugging...
+[0/3] Write swift-version--1AB21518FC5DEDBE.txt
+[2/4] Emitting module EdgeStashLogic
+[3/5] Emitting module EdgeStashLogicTests
+Build of product 'EdgeStashLogicTests' complete! (0.73s)
+Screen-set order: 18432 configured round-trip timelines, passed
+Screen-set order: 1512 singleton/pair/triple return timelines, passed
+All tests passed
+Behavioral conformance OK.
+Expectation check PASSED.

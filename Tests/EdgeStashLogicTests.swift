@@ -3105,6 +3105,7 @@ struct EdgeStashLogicTests {
         }
 
         runScreenSetMemoryTests { condition, message in expect(condition, message) }
+        runScreenSetOrderTests { condition, message in expect(condition, message) }
         runStateMachineBoundaryTests { condition, message in expect(condition, message) }
         runWindowRecoveryTests { condition, message in expect(condition, message) }
         runInteractionContinuityTests { condition, message in expect(condition, message) }
