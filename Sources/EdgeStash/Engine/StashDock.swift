@@ -4,15 +4,20 @@ import CoreGraphics
 import EdgeStashLogic
 
 enum StashDock {
-    private static var lastDown: (at: Date, inDock: Bool, bundleID: String?, windowTitle: String?)?
+    private static var lastDown: (at: Date, inDock: Bool, bundleID: String?, windowTitle: String?, focusedBefore: UInt32?)?
     private static let intentWindow: TimeInterval = 0.8
 
     static func noteMouseDown(at point: CGPoint) {
         let inDock = isDockPoint(point)
         if inDock, let hit = hit(at: point) {
-            lastDown = (Date(), true, hit.bundleID, hit.windowTitle)
+            let focusedBefore: UInt32?
+            if hit.windowTitle != nil, let front = NSWorkspace.shared.frontmostApplication,
+               let focused = StashAX.focusedWindow(of: AXUIElementCreateApplication(front.processIdentifier)) {
+                focusedBefore = StashAX.windowID(of: focused)
+            } else { focusedBefore = nil }
+            lastDown = (Date(), true, hit.bundleID, hit.windowTitle, focusedBefore)
         } else {
-            lastDown = (Date(), inDock, nil, nil)
+            lastDown = (Date(), inDock, nil, nil, nil)
         }
     }
 
@@ -27,6 +32,16 @@ enum StashDock {
 
     static func clickedWindowTitle() -> String? {
         lastDown?.windowTitle
+    }
+
+    static func focusedWindowBeforeClick() -> UInt32? { lastDown?.focusedBefore }
+
+    static func bindThumbnail(to bundleID: String) -> Bool {
+        guard var click = lastDown, click.windowTitle != nil else { return false }
+        guard click.bundleID == nil || click.bundleID == bundleID else { return false }
+        click.bundleID = bundleID
+        lastDown = click
+        return true
     }
 
     static func consumeRecentClick() {
@@ -70,7 +85,7 @@ enum StashDock {
             case .applicationIcon:
                 return (matchedApp?.bundleIdentifier, nil)
             case .windowThumbnail:
-                return (matchedApp?.bundleIdentifier, title)
+                return (nil, title)
             case .other:
                 break
             }

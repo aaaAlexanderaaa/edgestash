@@ -30,6 +30,13 @@ public enum ManagedGeometryAction: Equatable {
 /// AppKit-free stash session rules. The live engine (Task 5+) applies these
 /// outcomes; this type does not talk to Accessibility or move windows.
 public enum StashSessionPolicy {
+    public static func mayCapture(isStandard: Bool, minimized: Bool?, fullScreen: Bool?,
+                                  hasWindowNumber: Bool, frame: CGRect?) -> Bool {
+        guard isStandard, minimized == false, fullScreen == false, hasWindowNumber,
+              let frame, frame.width > 0, frame.height > 0 else { return false }
+        return frame.minX.isFinite && frame.minY.isFinite && frame.width.isFinite && frame.height.isFinite
+    }
+
     /// AXMoved describes a physical change, not necessarily a user decision.
     /// Hidden windows moved by the system retain membership. Visible user
     /// drags may leave stash or change sides; a system move to another display

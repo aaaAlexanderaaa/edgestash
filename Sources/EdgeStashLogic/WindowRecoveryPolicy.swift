@@ -12,6 +12,13 @@ public enum WindowBindingDecision: Equatable {
 /// A failed transport is not a dead window. Missing metadata alone is never
 /// positive death evidence, including for minimized or off-Space windows.
 public enum WindowRecoveryPolicy {
+    public static func requiresSpacePreparation(expanded: Bool, minimized: Bool,
+        previous: StashCollapsePresentation?, next: StashCollapsePresentation,
+        ownsMinimize: Bool) -> Bool {
+        minimized && (expanded || next == .slideOffscreen)
+            && (previous == .systemMinimize || ownsMinimize || next == .systemMinimize)
+    }
+
     public static func processConfirmedGone(exists: Bool?, terminated: Bool,
                                             bundleMatches: Bool?, launchMatches: Bool?) -> Bool {
         exists == false || terminated || bundleMatches == false || launchMatches == false

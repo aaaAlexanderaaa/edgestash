@@ -21,6 +21,23 @@ struct AppStashProfile: Codable, Equatable {
     var allStashedDock: String?
     var appearance: StashAppearance?
 
+    private enum CodingKeys: String, CodingKey {
+        case stashOn, tint, alpha, sides, chord, chordScope, allStashedDock, appearance
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        stashOn = try values.decode(Bool.self, forKey: .stashOn)
+        tint = try values.decode(String.self, forKey: .tint)
+        alpha = try? values.decodeIfPresent(Double.self, forKey: .alpha)
+        sides = try? values.decodeIfPresent(String.self, forKey: .sides)
+        chord = try? values.decodeIfPresent(AppChord.self, forKey: .chord)
+        let rawScope = try? values.decodeIfPresent(String.self, forKey: .chordScope)
+        chordScope = rawScope.flatMap(AppShortcutWindowScope.init(rawValue:))
+        allStashedDock = try? values.decodeIfPresent(String.self, forKey: .allStashedDock)
+        appearance = try? values.decodeIfPresent(StashAppearance.self, forKey: .appearance)
+    }
+
     init(
         stashOn: Bool,
         tint: String,

@@ -187,6 +187,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSApp.terminate(nil)
     }
 
+    @objc private func expandAllStashes() { engine?.expandAllStashes() }
+
     @objc private func handleMenuBarVisibilityChange() {
         updateStatusBarVisibility()
     }
@@ -223,6 +225,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func makeStatusMenu() -> NSMenu {
         let menu = NSMenu()
         menu.addItem(NSMenuItem(title: L10n.menuSettings, action: #selector(showSettings), keyEquivalent: ","))
+        menu.addItem(NSMenuItem(title: L10n.text("menu.expandAll"), action: #selector(expandAllStashes), keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: L10n.menuQuit, action: #selector(quitApp), keyEquivalent: "q"))
         return menu

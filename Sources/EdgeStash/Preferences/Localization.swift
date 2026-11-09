@@ -130,9 +130,11 @@ enum L10n {
 
         // Shortcuts
         "shortcut.stashFront": "收起当前窗口",
-        "shortcut.stashFront.note": "键盘焦点所在的那个窗口。",
-        "shortcut.scopeAll": "这个应用的窗口一起收",
-        "shortcut.scopeAll.note": "关掉则只动最近那个窗口。",
+        "shortcut.stashFront.note": "键盘焦点所在的普通窗口，不收纳对话框、全屏或最小化窗口。",
+        "shortcut.scopeAll": "切换全部已收纳窗口",
+        "shortcut.scopeAll.note": "关掉则只切换最近的收纳。没有收纳时，快捷键收起一个普通窗口。",
+        "menu.expandAll": "展开所有收纳窗口",
+        "system.persistenceFailure": "无法完整读取或保存本机配置／恢复信息。无法保存恢复信息时，窗口会保持可见；请检查可用磁盘空间和 EdgeStash 配置目录权限。",
         "shortcut.taken": "这组按键已经给了「%@」。",
         "shortcut.systemClash": "系统和 %@ 用了同一组按键，可能会打架。",
 
@@ -350,9 +352,11 @@ enum L10n {
 
         // Shortcuts
         "shortcut.stashFront": "Stash the current window",
-        "shortcut.stashFront.note": "The window that has keyboard focus.",
-        "shortcut.scopeAll": "Stash every window of this app",
-        "shortcut.scopeAll.note": "When off, only the most recent window moves.",
+        "shortcut.stashFront.note": "The ordinary window with keyboard focus. Dialogs, full-screen and minimized windows are excluded.",
+        "shortcut.scopeAll": "Toggle all stashed windows",
+        "shortcut.scopeAll.note": "When off, toggle the most recent stash. With no stash, the shortcut captures an ordinary window.",
+        "menu.expandAll": "Expand All Stashed Windows",
+        "system.persistenceFailure": "Local settings or recovery information could not be fully read or saved. Windows stay visible when recovery information cannot be saved. Check available disk space and permissions for the EdgeStash settings directory.",
         "shortcut.taken": "That shortcut is already used by “%@”.",
         "shortcut.systemClash": "The system also uses %@ on this shortcut. They may clash.",
 

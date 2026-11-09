@@ -479,8 +479,8 @@ enum KeyGlyphs {
         // Home row and friends, physical order.
         let letterRows: [(codes: [UInt16], glyphs: [Character])] = [
             ([12, 13, 14, 15, 17, 16, 32, 34, 31, 35], Array("QWERTYUIOP")),
-            ([0, 1, 2, 3, 5, 4, 6, 7, 8, 9], Array("ASDFHGZXCV")),
-            ([38, 40, 37, 11, 45, 46], Array("JKL;NM"))
+            ([0, 1, 2, 3, 5, 4, 6, 7, 8, 9], Array("ASDFGHZXCV")),
+            ([38, 40, 37, 11, 45, 46], Array("JKLBNM"))
         ]
         for row in letterRows where row.codes.count == row.glyphs.count {
             for (code, glyph) in zip(row.codes, row.glyphs) {

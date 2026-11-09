@@ -1,9 +1,23 @@
 # 休眠与自动隐藏：Release 诊断包
 
+0.1.9 (10) 延续优化 Release 的显式本地诊断。`blockedSpace` 表示环境恢复被
+当前 Space 安全门拒绝：窗口保持最小化，保留原展开／固定恢复意图，并使用原有
+有限重试预算。它不会走取消最小化的桌面回退。跨 Space 准备完成后继续同一预算，
+没有增加后台轮询时钟。真实 macOS 27 多屏睡醒与 WindowServer 故障仍需现场验证。
+`waitingForPersistence` 表示当前外观已经正确，但救援更新未获保存确认；恢复意图
+保留并沿用同一有限重试预算，不误报完成，也不触发可见桌面回退。
+
+恢复记录现在优先读取 `~/Library/Application Support/EdgeStash/rescues.json`，
+损坏时读取有效的 `rescues.previous.json`；普通设置仍是 `store.json`。
+两个 rescue 文件在每次成功确认前都保存同一完整集合；副本不会少掉最近一次新增的
+隐藏窗口。主设置和 rescue 的错误状态分别保留，互相成功不会掩盖另一个失败。
+旧版本的记录仅在独立 journal 不存在时迁入。请保留这些本机文件，避免手工覆盖
+或删除尚未完成的救援记录；它们不包含窗口标题、内容或截图。
+
 此前发行包没有完整的休眠、收纳会话与自动收回事件日志，不能回溯安装前的故障。
 [v0.1.8 测试版](https://github.com/aaaAlexanderaaa/edgestash/releases/tag/v0.1.8)
 提供启动即记录的 app，无需下载独立诊断工具。
-本次 0.1.8 (9) 将诊断开关与优化配置分开：
+自 0.1.8 (9) 起，诊断开关与优化配置分开：
 
 ```bash
 ./scripts/stage-app.sh Release --diagnostics

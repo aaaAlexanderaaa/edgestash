@@ -10,6 +10,12 @@ struct SystemSettingsView: View {
         SettingsPageScaffold(tab: .system) {
             SettingsCard(L10n.systemCardGeneral) {
                 VStack(alignment: .leading, spacing: 14) {
+                    if preferences.persistenceFailed {
+                        Text(L10n.text("system.persistenceFailure"))
+                            .font(.callout)
+                            .foregroundStyle(.red)
+                            .accessibilityAddTraits(.isStaticText)
+                    }
                     Toggle(L10n.systemLaunchAtLogin, isOn: $preferences.openAtLogin)
                         .toggleStyle(.switch)
 

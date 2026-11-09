@@ -64,6 +64,12 @@ final class StashMarkerWindow: NSPanel {
         // sweeping it aside during full-screen transitions.
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         contentView = markView
+        markView.onPress = { [weak self] in
+            guard let self else { return false }
+            if self.interactionEnabled { self.onClicked?() }
+            else { self.showDisabledExplanation() }
+            return true
+        }
         markView.autoresizingMask = [.width, .height]
         markView.addTrackingArea(
             NSTrackingArea(
@@ -265,6 +271,7 @@ private final class StashLimitationPlateView: NSView {
 }
 
 private final class StashMarkerView: NSView {
+    var onPress: (() -> Bool)?
     private var kind: StashOverlayKind = .outerStrip
     private var edge: DisplayEdge = .left
     private var fill = NSColor.white
@@ -308,6 +315,8 @@ private final class StashMarkerView: NSView {
     }
 
     func highlight(at point: CGPoint?) { glass.highlight(at: point) }
+
+    override func accessibilityPerformPress() -> Bool { onPress?() ?? false }
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)

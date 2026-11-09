@@ -39,6 +39,15 @@ path. The app itself will continue to work without network access.
 - Drag a window to a display edge and hold to stash it.
 - Hover or click the marker to restore it.
 - The menu-bar item opens Settings for apps, edges, appearance, and shortcuts.
+- An app shortcut toggles its existing stashes first. It captures an ordinary
+  window only when that app has no stash.
+- Use the menu's **Expand All Stashed Windows** command to open every stash.
+  Automatic expansion from system Mission Control, gestures, hot corners, and
+  Dock Show All Windows is not currently guaranteed.
+
+New hides require an acknowledged local rescue save. On failure the window
+stays visible and System settings shows the error. Rescue records are stored
+independently so a damaged ordinary setting cannot discard recovery information.
 
 ## Privacy
 
@@ -47,7 +56,8 @@ Everything stays on this Mac. No network, no telemetry, no screen capture. Acces
 ## Build from source
 
 ```bash
-swift run EdgeStashLogicTests
+./scripts/check-expectations.sh
+./scripts/check-native-adapters.sh
 ./scripts/stage-app.sh
 ```
 

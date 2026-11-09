@@ -1679,11 +1679,11 @@ struct EdgeStashLogicTests {
         )
 
         expect(
-            AppShortcutPolicy.shouldCaptureIdleFrontWindow(
+            !AppShortcutPolicy.shouldCaptureIdleFrontWindow(
                 hasIdleWindow: true,
                 hasManagedWindow: true
             ),
-            "a shortcut must still stash an idle window when another is already managed"
+            "an existing stash owns the shortcut even with ordinary windows present"
         )
         expect(
             !AppShortcutPolicy.shouldCaptureIdleFrontWindow(
@@ -2809,32 +2809,6 @@ struct EdgeStashLogicTests {
             "a rail, beacon, or shortcut reveal must not open sibling stashes"
         )
         expect(
-            ShowAllWindowsKeyPolicy.matchesShowAll(
-                keyCode: ShowAllWindowsKeyPolicy.downArrow,
-                control: true,
-                command: false,
-                option: false
-            ),
-            "Control-Down is show-all for the frontmost app"
-        )
-        expect(
-            ShowAllWindowsKeyPolicy.frontmostAppOnly(keyCode: ShowAllWindowsKeyPolicy.downArrow),
-            "Control-Down addresses only the frontmost app"
-        )
-        expect(
-            !ShowAllWindowsKeyPolicy.frontmostAppOnly(keyCode: ShowAllWindowsKeyPolicy.upArrow),
-            "Control-Up is Mission Control and addresses every app with a stash"
-        )
-        expect(
-            !ShowAllWindowsKeyPolicy.matchesShowAll(
-                keyCode: ShowAllWindowsKeyPolicy.downArrow,
-                control: true,
-                command: true,
-                option: false
-            ),
-            "Command-Control-Down is not show-all"
-        )
-        expect(
             DockItemPolicy.kind(
                 subrole: DockItemPolicy.applicationSubrole,
                 title: "Terminal",
@@ -3110,6 +3084,7 @@ struct EdgeStashLogicTests {
         runInteractionContinuityTests { condition, message in expect(condition, message) }
         runBackgroundObservationTests { condition, message in expect(condition, message) }
         runAppearancePresentationTests { condition, message in expect(condition, message) }
+        runReliabilityTests { condition, message in expect(condition, message) }
 
         if failed > 0 {
             fputs("\(failed) test(s) failed\n", stderr)

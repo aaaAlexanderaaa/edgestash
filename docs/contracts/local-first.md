@@ -4,7 +4,7 @@ status: current
 authority: normative
 implementation: implemented
 verification_status: partial
-last_reconciled: 2026-10-22
+last_reconciled: 2026-11-09
 ---
 
 # Local-first operation
@@ -41,6 +41,11 @@ This contract owns the capability ban.
 3. No cross-app IPC files or distributed notifications for product features.
 4. Launch at login defaults to off.
 5. Accessibility is optional for opening Settings.
+   The existing settings directory also contains the independent rescue journal
+   and validated recovery copies. Failed writes never authorize new hides.
+   The expectation check continuously rejects the selected network, capture,
+   and distributed-notification API imports/calls; this is a static guard,
+   not a claim of exhaustive capability proof.
 6. Owner-run Debug and explicitly marked diagnostic Release builds may keep bounded, machine-local runtime diagnostics
    for sleep/wake investigation: power/display observations, per-window stash
    state, process/window identifiers, geometry, and API failure codes. No

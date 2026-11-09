@@ -84,8 +84,8 @@ final class StashMergeStrip: NSPanel {
             || (model.showsLabels && labelPanel.frame != model.labelWindowFrame)
         guard self.model != model || !isVisible || frame != model.windowFrame || labelsChanged else { return }
         self.model = model
-        content.model = model
         if frame != model.windowFrame { setFrame(model.windowFrame, display: true) }
+        content.model = model
         if !isVisible { orderFront(nil) }
         if model.showsLabels {
             labels.model = model
@@ -117,10 +117,31 @@ final class StashMergeStrip: NSPanel {
 
 private final class StashMergeStripView: NSView {
     var model: StashMergeStripModel? {
-        didSet { needsDisplay = true }
+        didSet { needsDisplay = true; updateAccessibilitySegments() }
     }
     var onHover: ((ObjectIdentifier?) -> Void)?
     var onClick: ((ObjectIdentifier) -> Void)?
+    private var accessibleSegments: [ObjectIdentifier: StashMergeAccessibilityElement] = [:]
+
+    private func updateAccessibilitySegments() {
+        guard let model else { setAccessibilityChildren([]); accessibleSegments.removeAll(); return }
+        setAccessibilityElement(true)
+        setAccessibilityRole(.group)
+        let old = accessibleSegments
+        accessibleSegments.removeAll()
+        let children = model.segments.enumerated().map { index, segment in
+            let element = old[segment.id] ?? StashMergeAccessibilityElement()
+            element.setAccessibilityRole(.button)
+            element.setAccessibilityLabel("\(segment.title) \(index + 1)")
+            element.setAccessibilityParent(self)
+            let local = convert(segment.slotRect, to: nil)
+            element.setAccessibilityFrame(window?.convertToScreen(local) ?? .zero)
+            element.onPress = { [weak self] in self?.onClick?(segment.id) }
+            accessibleSegments[segment.id] = element
+            return element
+        }
+        setAccessibilityChildren(children)
+    }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -198,6 +219,15 @@ private final class StashMergeStripView: NSView {
         return model.segments.min {
             abs($0.slotRect.midY - point.y) < abs($1.slotRect.midY - point.y)
         }?.id
+    }
+}
+
+private final class StashMergeAccessibilityElement: NSAccessibilityElement {
+    var onPress: (() -> Void)?
+    override func accessibilityPerformPress() -> Bool {
+        guard let onPress else { return false }
+        onPress()
+        return true
     }
 }
 

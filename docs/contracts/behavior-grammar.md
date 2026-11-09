@@ -102,6 +102,24 @@ contract, the coordinator transitions, and their evidence together.
 
 ## Screen-set system mutations
 
+The 2026-11-09 [recovery/input contract](reliability-and-input-sources.md)
+adds acknowledged independent rescue storage before new hides. An expanded
+seam recovery migrates while minimized and uses the same ordered commit and
+compensation executor as a named reveal. Space refusal consumes the existing
+bounded attempt budget but retains a minimized disabled beacon and the original
+expanded/pinned intent; it does not use desktop fallback to bypass refusal.
+Its asynchronous preparation resumes the existing retry owner and creates no
+new polling timer. Shared failure injection is in `Tests/ReliabilityTests.swift`;
+actual storage rejection and native accessibility actions are checked by
+`scripts/check-native-adapters.sh`. These checks do not promote the manifest's
+presentation cardinality coverage.
+
+The explicit menu expand-all action uses the existing stash-marker production.
+System overview input is not inferred from Control-arrow or Space changes.
+Persistence failure text lives inside the existing Settings window. Marker,
+pin and merged-segment accessibility actions invoke their existing actions;
+no new presentation anchor or popup is introduced.
+
 The screen-set contract also declares the non-presentation effects below.
 The presentation scanner does not discover AX writes or preference saves;
 these are verified by the shared headless coordinator's timeline suite in
