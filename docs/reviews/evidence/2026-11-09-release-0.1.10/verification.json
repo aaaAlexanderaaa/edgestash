@@ -1,0 +1,43 @@
+{
+  "appSourcesDigestMethod": "sorted unique git-listed Sources, EdgeStash.xcodeproj and Package.swift paths; concatenate path NUL and raw SHA256(file), then SHA256",
+  "appSourcesSHA256": "ad1a896c86653638d93ebb18e9be3a89d4748ac0cfade9aeb66b05af70c5ece7",
+  "architecture": "arm64",
+  "archiveSHA256": "00e0992b3ce6d0c0ee2659cd23d49bf008b528c95d59dcee34433e885a354324",
+  "archiveVerification": {
+    "allAppEntriesIdentical": true,
+    "appFileEntries": 8,
+    "strictSignatures": "passed for staged and freshly extracted app"
+  },
+  "binaryUUID": "9383FEAB-24DC-39B1-A7C0-1EEFFF7330CD",
+  "checks": {
+    "coordinatorReplay": "67 timelines, 298 assertions passed; live coordinator with injected session/AX boundaries",
+    "distributionTools": "10 passed; signing/notarization services simulated",
+    "expectationCheck": "passed; 12 anchors, 1 executable and 11 structural-only cardinalities",
+    "localBuilds": "CLT Debug and diagnostic Release passed",
+    "logicRegressions": "passed; 18432 configured round trips, 1512 subset return paths and full existing suite",
+    "nativeAdapters": "passed; actual persistence corruption/failure/concurrency, real Preferences save/reload preserving legacy language metadata and rescues, and own AppKit accessibility actions",
+    "projectLanguage": "passed; 181 catalog entries; README_cn.md exception; Chinese rejection through expectation entry point and missing-copy negative probes passed",
+    "shellSyntax": "passed",
+    "whitespace": "passed"
+  },
+  "ciEvidence": "Full Xcode-project Debug must pass in the Verify GitHub Actions run for the release commit; final run URL and status are recorded in GitHub release notes.",
+  "configuration": "Release",
+  "date": "2026-11-09T21:48:55.594300-08:00",
+  "historicalEvidence": "Original October 27 adapter-result.json and historical release package verification were preserved.",
+  "hostMacOS": "15.7.9",
+  "localXcodeProjectDebug": "unavailable: full Xcode is not installed; CLT builds do not close this gate",
+  "mergedCommits": {
+    "local": "ad8d782",
+    "remote": "19862b3"
+  },
+  "minimumMacOS": "12.0",
+  "physicalAcceptance": "macOS 27 multi-display, native cross-app AX/input and owner perceptual acceptance remain open",
+  "releaseChannel": "owner-requested diagnostic prerelease",
+  "runtimeDiagnostics": true,
+  "sdkVersion": "26.0",
+  "signing": "local ad-hoc; not notarized",
+  "stagedManifest": "configuration: Release\ndiagnostics: true\ntoolchain: Apple Command Line Tools (Xcode project validation unavailable)\nmode: development\nversion: 0.1.10 (11)\narchitecture: arm64\nsigning: ad-hoc (not a distribution identity)\nnotarization: not requested\nbuilt: 2026-11-09 21:48:00 -0800\n",
+  "tag": "v0.1.10",
+  "toolchain": "Apple Command Line Tools",
+  "version": "0.1.10 (11)"
+}

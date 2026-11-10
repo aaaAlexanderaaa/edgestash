@@ -4,11 +4,19 @@ status: current
 authority: normative
 implementation: implemented
 verification_status: partial
-last_reconciled: 2026-10-16
+last_reconciled: 2026-11-09
 supersedes: []
 ---
 
 # EdgeStash
+
+Recovery persistence, capture admission, and input-source precedence are further
+specified by [Recovery safety and input identity](reliability-and-input-sources.md),
+accepted by the owner on 2026-11-09.
+
+The interface and project text use English under the owner-requested
+[project language policy](project-language.md). `README_cn.md` is the sole
+Chinese-language exception.
 
 ## Purpose
 

@@ -30,7 +30,7 @@ enum StashDiagnostics {
     static func record(_ event: String, _ fields: [String: Any]) {}
 }
 
-enum ScreenSetApplicationResult: Equatable { case succeeded, waitingForControl, failed }
+enum ScreenSetApplicationResult: Equatable { case succeeded, waitingForControl, waitingForPersistence, blockedSpace, failed }
 
 final class StashSession {
     let windowID: UInt32?
@@ -40,12 +40,15 @@ final class StashSession {
     var pendingVisibleFallbackOrigin: CGPoint?
     var needsScreenSetRepair = false
     var awaitingWindowControl = false
+    var usingSharedMinimize = false
     var restoreFrame: CGRect? = CGRect(x: 80, y: 80, width: 640, height: 480)
     var rescueDisplayFrame: CGRect? = CGRect(x: 0, y: 0, width: 1920, height: 1080)
     var outcome: ScreenSetApplicationResult = .succeeded
     var attempts = 0
     var scatters = 0
+    var shutdowns = 0
     var isManaged: Bool { screenSetSlot != nil }
+    var isIdle: Bool { !isManaged }
     var recoveryIntent: ScreenSetRecoveryIntent? {
         pendingScreenSetRecovery ?? screenSetSlot.map { ScreenSetRecoveryIntent(placement: $0) }
     }
@@ -57,6 +60,11 @@ final class StashSession {
     }
 
     func prepareForScreenSetChange() {}
+    func shutdown(event: SessionLifecyclePolicy.Event) {
+        shutdowns += 1
+        screenSetSlot = nil
+        usingSharedMinimize = false
+    }
     func retainRecoveryIntent(_ intent: ScreenSetRecoveryIntent) { pendingScreenSetRecovery = intent; needsScreenSetRepair = true }
     func cancelPendingRecovery() {
         pendingScreenSetRecovery = nil
@@ -66,6 +74,9 @@ final class StashSession {
     func completePendingVisibleFallback() { pendingVisibleFallbackOrigin = nil }
     func reconcileScreenSetPresentation(inspectFirst: Bool) -> ScreenSetApplicationResult {
         attempts += 1
+        if outcome == .blockedSpace || outcome == .waitingForPersistence, let intent = recoveryIntent {
+            retainRecoveryIntent(intent)
+        }
         if outcome == .succeeded { pendingScreenSetRecovery = nil; needsScreenSetRepair = false }
         return outcome
     }
@@ -75,6 +86,7 @@ final class StashSession {
             screenSetSlot = ScreenSetPlacement(windowNumber: windowID, bundleID: bundleID,
                                               displayID: displayID, edge: edge.rawValue)
         }
+        if outcome == .blockedSpace || outcome == .waitingForPersistence { retainRecoveryIntent(intent) }
         if outcome == .succeeded { pendingScreenSetRecovery = nil; needsScreenSetRepair = false }
         return outcome
     }
@@ -305,7 +317,82 @@ struct AdapterReplay {
         retryTimelines += 1
         failedCoordinator.invalidate()
 
+
+        // Reliability integration evidence: exercise the unmodified live
+        // coordinator's handling of the two new outcomes. Session/AX remains
+        // an injected boundary; no claim of native Space or storage completion.
+        var reliabilityTimelines = 0
+        for outcome in [ScreenSetApplicationResult.blockedSpace, .waitingForPersistence] {
+            for retained in [false, true] {
+                DisplayCatalog.show(retained ? displays : [displays[0]])
+                Preferences.shared.storedScreenSets = [full]
+                let sessions = allSlots.map { StashSession($0, managed: retained) }
+                let coordinator = ScreenSetCoordinator()
+                coordinator.captureBaseline { sessions }
+                sessions[1].outcome = outcome
+                coordinator.replayApply(displays, afterWake: retained)
+                let key = allSlots[1].key
+                check(sessions[1].attempts == 1 && coordinator.replayBudget(key) == 3,
+                      "new outcome spends exactly one initial attempt: \(outcome), retained=\(retained)")
+                check(sessions[1].pendingScreenSetRecovery?.placement == allSlots[1]
+                    && sessions[1].screenSetSlot == allSlots[1] && sessions[1].scatters == 0,
+                      "new outcome preserves logical membership/intent without scatter")
+                let siblings = [sessions[0].attempts, sessions[2].attempts]
+                for _ in 0..<3 { coordinator.replayApply(displays) }
+                check(sessions[1].attempts == 1 && coordinator.replayBudget(key) == 3,
+                      "duplicate observations cannot spend the new outcome's retry budget")
+                if retained {
+                    for (delay, remaining) in [(1.05, 2), (2.05, 1), (4.05, 0)] {
+                        Thread.sleep(forTimeInterval: delay)
+                        coordinator.replayRetry()
+                        check(coordinator.replayBudget(key) == remaining && sessions[1].scatters == 0,
+                              "blocked/persistence retry consumes bounded budget without desktop fallback")
+                    }
+                    check(sessions[1].attempts == 4 && coordinator.replayPending.isEmpty
+                        && sessions[1].pendingScreenSetRecovery?.placement == allSlots[1],
+                          "exhaustion retains intent with no extra scheduled retry")
+                    check(Preferences.shared.storedScreenSets == [full], "exhaustion keeps configured memory")
+                    sessions[1].outcome = .succeeded
+                    coordinator.replayApply([displays[0]])
+                    coordinator.replayApply(displays)
+                    check(Dictionary(uniqueKeysWithValues: sessions.compactMap(\.screenSetSlot).map { ($0.key, $0) })
+                        == Dictionary(uniqueKeysWithValues: allSlots.map { ($0.key, $0) })
+                        && sessions.allSatisfy { $0.pendingScreenSetRecovery == nil }
+                        && coordinator.replayPending.isEmpty && coordinator.replayBudget(key) == nil,
+                          "later configured return restores exact placement and clears exhausted intent/budget")
+                } else {
+                    sessions[1].outcome = .succeeded
+                    Thread.sleep(forTimeInterval: 1.05)
+                    coordinator.replayRetry()
+                    check(coordinator.replayPending.isEmpty && coordinator.replayBudget(key) == nil
+                        && sessions[1].pendingScreenSetRecovery == nil,
+                          "successful retry clears new outcome queue and retained intent")
+                    check([sessions[0].attempts, sessions[2].attempts] == siblings && sessions[1].scatters == 0,
+                          "new outcome retry leaves successful siblings and hidden target in place")
+                }
+                reliabilityTimelines += 1
+                coordinator.invalidate()
+            }
+        }
+        for hasIntent in [false, true] {
+            DisplayCatalog.show(displays)
+            Preferences.shared.storedScreenSets = [full]
+            let session = StashSession(allSlots[0], managed: false)
+            session.usingSharedMinimize = true
+            if hasIntent { session.retainRecoveryIntent(ScreenSetRecoveryIntent(placement: allSlots[0])) }
+            let coordinator = ScreenSetCoordinator()
+            coordinator.captureBaseline { [session] }
+            coordinator.controlBecameReady(session)
+            check(session.shutdowns == (hasIntent ? 0 : 1) && !session.isManaged,
+                  "ready control releases only a failed capture's debt and cannot recapture")
+            check(hasIntent ? session.pendingScreenSetRecovery != nil : !session.usingSharedMinimize,
+                  "ready control preserves a real recovery intent instead of releasing it")
+            reliabilityTimelines += 1
+            coordinator.invalidate()
+        }
+
         let result: [String: Any] = [
+            "reliabilityTimelines": reliabilityTimelines,
             "scope": "unmodified live ScreenSetCoordinator with injected display/session boundaries; no physical cable or native AX claim",
             "roundTripTimelines": timelines,
             "retryTimelines": retryTimelines,

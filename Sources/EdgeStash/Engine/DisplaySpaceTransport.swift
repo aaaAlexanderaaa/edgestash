@@ -97,7 +97,7 @@ final class DisplaySpaceTransport {
                 windowID: windowID,
                 displayID: displayID,
                 targetSpaceID: targetSpaceID,
-                deadline: Date().addingTimeInterval(Self.confirmationTimeout),
+                deadline: ProcessInfo.processInfo.systemUptime + Self.confirmationTimeout,
                 completion: completion
             )
         }
@@ -107,7 +107,7 @@ final class DisplaySpaceTransport {
         windowID: UInt32,
         displayID: CGDirectDisplayID,
         targetSpaceID: UInt64,
-        deadline: Date,
+        deadline: TimeInterval,
         completion: @escaping (Result<UInt64, DisplaySpacePreparationError>) -> Void
     ) {
         let membership = ESWindowSpaceMembership(windowID, targetSpaceID)
@@ -128,7 +128,7 @@ final class DisplaySpaceTransport {
             completion(.failure(.membershipUnreadable))
             return
         }
-        guard Date() < deadline else {
+        guard ProcessInfo.processInfo.systemUptime < deadline else {
             completion(.failure(.confirmationTimedOut))
             return
         }

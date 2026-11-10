@@ -3,230 +3,10 @@ import Foundation
 /// EdgeStash's copy catalog.
 ///
 /// Copy is addressed by stable dotted identifiers rather than by product
-/// strings, so wording can be revised freely in either language without
-/// touching call sites. Chinese and English text are both authored entries;
-/// there is no fallback chain beyond the two tables.
+/// strings, so English wording can be revised without touching call sites.
+/// The app always uses this catalog, including when a legacy language setting
+/// or the system locale selected another language.
 enum L10n {
-    private static let zh: [String: String] = [
-        "apps.edgesMixed": "分别设置",
-        "apps.behaviorDetails": "收纳方向与切换应用",
-        "apps.selectApp": "选择一个应用，调整它的收纳方式与外观。",
-        "apps.enable": "启用贴边收纳",
-        "apps.stashEdges": "收纳方向",
-        "appearance.title": "外观与动效",
-        "appearance.material": "信号条样式",
-        "appearance.tint": "强调色",
-        "appearance.motion": "窗口动效",
-        "appearance.seamNote": "窗口动效用于屏幕外侧；接缝仍使用系统最小化。",
-        "appearance.preview": "预览",
-        "appearance.desktop": "切换预览桌面的明暗",
-        "appearance.scene": "预览场景",
-        "appearance.outer": "屏幕外侧",
-        "appearance.seam": "屏幕接缝",
-        "appearance.reduced": "系统已启用减少动态效果。",
-        "appearance.previewNote": "仅演示当前应用的外观。",
-        "appearance.replay": "播放一次",
-        "material.glass": "玻璃",
-        "material.glass.detail": "透明底色与细微反光，保留桌面的层次。",
-        "material.enamel": "瓷面",
-        "material.enamel.detail": "更饱满的颜色，细亮边缘，安静而清晰。",
-        "material.glow": "柔光",
-        "material.glow.detail": "柔和透光的中心，向两侧轻轻散开。",
-        "material.prism": "棱镜",
-        "material.prism.detail": "以强调色为底，叠加克制的双色折光。",
-        "motion.slide": "滑动",
-        "motion.slide.detail": "沿原路径完整滑入或滑出。",
-        "motion.nudge": "轻推",
-        "motion.nudge.detail": "短距离位移配合淡入淡出，轻巧收放。",
-        "motion.fade": "淡入",
-        "motion.fade.detail": "保持原位，平静地淡入或淡出。",
-
-        // Tabs
-        "tab.apps": "应用",
-        "tab.behavior": "行为",
-        "tab.system": "系统",
-        "tab.about": "关于",
-        "tab.apps.summary": "选择应用，调整收纳方式、信号条样式与窗口动效。",
-        "tab.behavior.summary": "什么时候收、什么时候展开，以及哪些屏幕边能用。",
-        "tab.system.summary": "开机启动、语言、辅助功能权限。",
-        "tab.about.summary": "EdgeStash 是做什么的。",
-
-        // Apps page
-        "apps.autoColorNote": "「随系统」浅色用黑，深色用白。",
-        "apps.emptyHint": "先打开要收纳的应用，打开后会出现在这里。",
-        "apps.search": "搜索应用",
-        "apps.searchEmpty": "没有叫这个名字的已打开应用。",
-        "apps.listNote": "只列出当前已打开的应用。没打开的加不进来。已经勾选过的关掉后也会留着。",
-        "apps.defaultsCard": "默认",
-        "apps.uniformEdges": "默认收纳方向",
-        "apps.uniformEdges.note": "左右可以分开选。程序坞占着的那一侧会自动停用。",
-        "apps.uniformEdges.apply": "下面已勾选的应用都改成这个方向。",
-        "apps.avoidDock": "避开程序坞",
-        "apps.avoidDock.note": "程序坞在哪一侧，那一侧就不收。",
-        "apps.allStashedDock": "窗口全收着时点程序坞",
-        "apps.allStashedDock.leaveClosed": "只带到前台",
-        "apps.allStashedDock.openMostRecent": "打开最近一个",
-        "apps.allStashedDock.openOnPointerDisplay": "打开当前这块屏上的",
-        "apps.allStashedDock.openAll": "全部打开",
-
-        // Sides
-        "side.leftOnly": "仅左侧收纳",
-        "side.rightOnly": "仅右侧收纳",
-        "side.both": "两侧均收纳",
-
-        // Dock
-        "dock.blockedLeft": "程序坞在左边，左侧先不收",
-        "dock.blockedRight": "程序坞在右边，右侧先不收",
-        "dock.sideLeft": "左侧",
-        "dock.sideRight": "右侧",
-        "dock.sideBottom": "底部",
-        "dock.unknown": "没找到",
-        "dock.autoLabel": "自动",
-        "dock.autoDetected": "自动 · %@",
-        "dock.atLeft": "程序坞在左",
-        "dock.atRight": "程序坞在右",
-        "dock.atBottom": "程序坞在底",
-
-        // Behavior page
-        "behavior.cardGuard": "误触",
-        "behavior.revealDelay": "展开延迟",
-        "behavior.revealDelay.note": "鼠标在边上停这么久才展开。停的时候点了鼠标，这次不算。",
-        "behavior.bufferX": "横向缓冲",
-        "behavior.bufferX.note": "鼠标要横着离开窗口这么远，才会收起来。",
-        "behavior.bufferY": "纵向缓冲",
-        "behavior.bufferY.note": "鼠标要竖着离开窗口这么远，才会收起来。",
-        "behavior.cardShortcuts": "键盘快捷键",
-        "behavior.shortcutsEmpty": "先到「应用」里勾选一个。",
-        "hover.reset": "重置",
-        "hover.instant": "立刻",
-        "hover.previewTitle": "缓冲预览",
-        "hover.previewCaption": "虚线是加上缓冲之后的范围",
-        "hover.sampleWindow": "窗口",
-
-        // Display boundaries
-        "display.card": "屏幕边界",
-        "display.intro": "勾选每台显示器左右哪一侧可以收纳。两台屏幕挨着的那一侧，窗口会最小化。",
-        "display.none": "没有显示器",
-        "display.sharedNote": "挨着的那一侧用窗口最小化",
-        "display.sharedUnavailable": "这台 Mac 还不能在屏幕接缝处收纳（需要 macOS 26.4 或更高）。外侧不受影响。",
-        "display.sharedHowTo": "最小化之后如果程序坞里多出一个窗口缩略图，到「系统设置 → 桌面与程序坞」打开「将窗口最小化成应用程序图标」。",
-        "display.openDockPane": "打开「桌面与程序坞」",
-        "display.primary": "主屏",
-        "display.safeDefaults": "恢复默认",
-        "display.leftEdge": "左边",
-        "display.rightEdge": "右边",
-        "display.outerEdge": "外侧",
-        "display.partialShared": "部分共用 · 窗口在哪一段就按哪一段处理",
-        "display.fullyShared": "完全共用 · 只最小化窗口",
-        "display.partialSharedUnavailable": "部分共用 · 现在只有外侧能收",
-        "display.fullySharedUnavailable": "完全共用 · 现在不能收",
-
-        // Arrangement map
-        "map.card": "显示器排列",
-        "map.intro": "按系统里的逻辑大小画。点左右边，真屏上会亮出那一侧怎么收。",
-        "map.stateOff": "已关掉",
-        "map.stateOuter": "外侧滑出",
-        "map.stateSeam": "接缝最小化",
-
-        // Shortcuts
-        "shortcut.stashFront": "收起当前窗口",
-        "shortcut.stashFront.note": "键盘焦点所在的那个窗口。",
-        "shortcut.scopeAll": "这个应用的窗口一起收",
-        "shortcut.scopeAll.note": "关掉则只动最近那个窗口。",
-        "shortcut.taken": "这组按键已经给了「%@」。",
-        "shortcut.systemClash": "系统和 %@ 用了同一组按键，可能会打架。",
-
-        // System page
-        "system.cardGeneral": "通用",
-        "system.launchAtLogin": "登录时启动",
-        "system.menuBarIcon": "保留菜单栏图标",
-        "system.menuBarIcon.note": "图标收起后，在访达里重新打开 EdgeStash 就能回到这个窗口。",
-        "system.language": "界面语言",
-        "system.lang.system": "跟随系统",
-        "system.lang.zh": "简体中文",
-        "system.lang.en": "English",
-        "system.cardAccess": "权限",
-        "system.ax": "辅助功能",
-        "system.granted": "已授权",
-        "system.grant": "去授权",
-        "system.access.note": "收纳别的应用的窗口需要辅助功能。没授权时设置还能用，只是不碰别人的窗口。启动不弹窗，不截屏，不联网。",
-
-        // Motion / merge (shown on Behavior)
-        "system.effects": "展开与收起的动画",
-        "system.effects.note": "收放时边上闪一下高光。",
-        "system.merged": "合并玻璃侧边条",
-        "system.merged.note": "同一条边上叠在一起的，会收成一条，可以分段点。",
-        "merged.note.flourish": "合并时不放高光，切换更快。",
-        "merged.note.speed": "不同应用收放速度会差一点。",
-        "merged.note.tint": "颜色不一样，合并之后才分得清是谁。",
-        "merged.overload.title": "这条边上收的窗口太多，连着切会卡。",
-        "merged.overload.body": "少堆几个会顺一些。",
-        "merged.overload.ok": "知道了",
-
-        // Alerts & menu
-        "alert.rescue.title": "需要「辅助功能」权限",
-        "alert.rescue.body": "上次退出时有窗口留在了屏幕外。EdgeStash 已经把它们重新显示出来；要放回原位，还差辅助功能权限。",
-        "alert.rescue.openSettings": "打开系统设置",
-        "alert.rescue.later": "先不管",
-        "menu.settings": "EdgeStash 设置…",
-        "menu.quit": "退出 EdgeStash",
-
-        // Multi-window tip
-        "multiwindow.title": "这个应用有多个窗口收着",
-        "multiwindow.body": "「%@」收了不止一个窗口。点程序坞图标只放出最近那个。应用快捷键能收全部还是只收最近一个，在设置里改。",
-        "multiwindow.later": "等会再说",
-        "multiwindow.mute": "别再提醒",
-
-        // Seam availability — first-time only; everyday words, no invented nouns.
-        "seam.limitation.title": "现在打不开这个窗口",
-        "seam.fullscreenDisabled": "窗口还在边上。这台屏幕正在全屏；现在打开会把你从全屏里拉出来。退出全屏后，再把鼠标放到这条边上就可以打开。",
-        "seam.revealFailed": "窗口还在边上。这台屏幕现在不能把它移过来，常见原因是正在全屏。退出全屏，或滑回平时那一页之后，再把鼠标放到这条边上就可以打开。",
-
-        // Pin
-        "pin.release": "取消固定",
-        "pin.place": "固定这个窗口",
-
-        // About
-        "about.tagline": "把窗口收到屏幕边上。",
-        "about.offlineLine": "不联网，不截屏。",
-        "about.cardPrivacy": "隐私",
-        "about.privacy.body": "全部只在这台 Mac 上运行。不上传窗口内容，也不记你怎么用。",
-        "about.privacy.ax": "要动别的应用的窗口，得开辅助功能。授不授都在「系统」页。启动不弹窗。",
-
-        // Palette labels (accessibility only; chips have no visible names)
-        "tint.adaptive": "随系统",
-        "tint.ivory": "白",
-        "tint.graphite": "黑",
-        "tint.amber": "黄",
-        "tint.gold": "金",
-        "tint.azure": "蓝",
-        "tint.moss": "绿",
-        "tint.crimson": "红",
-        "tint.violet": "紫",
-        "tint.rose": "粉",
-        "tint.custom": "自定颜色",
-
-        // System chord reference (glyphs lead; terms follow macOS zh-CN wording)
-        "chord.undo": "还原",
-        "chord.redo": "重做",
-        "chord.cut": "剪切",
-        "chord.copy": "拷贝",
-        "chord.paste": "粘贴",
-        "chord.selectAll": "全选",
-        "chord.find": "查找",
-        "chord.close": "关闭窗口",
-        "chord.minimize": "最小化",
-        "chord.hide": "隐藏应用",
-        "chord.quit": "退出应用",
-        "chord.switchApp": "切换应用",
-        "chord.switchWindow": "切换窗口",
-        "chord.spotlight": "聚焦搜索",
-        "chord.screenshotFull": "屏幕快照",
-        "chord.screenshotArea": "区域快照",
-        "chord.screenshotPanel": "快照与录屏",
-        "chord.forceQuit": "强制退出",
-    ]
-
     private static let en: [String: String] = [
         "apps.edgesMixed": "Set individually",
         "apps.behaviorDetails": "Stash edges & app switching",
@@ -268,7 +48,7 @@ enum L10n {
         "tab.about": "About",
         "tab.apps.summary": "Choose apps, then tune their stash behavior, signal style, and motion.",
         "tab.behavior.summary": "When windows stash and expand, and which screen edges are allowed.",
-        "tab.system.summary": "Launch at login, language, and Accessibility.",
+        "tab.system.summary": "Launch at login and Accessibility.",
         "tab.about.summary": "What EdgeStash does.",
 
         // Apps page
@@ -350,9 +130,11 @@ enum L10n {
 
         // Shortcuts
         "shortcut.stashFront": "Stash the current window",
-        "shortcut.stashFront.note": "The window that has keyboard focus.",
-        "shortcut.scopeAll": "Stash every window of this app",
-        "shortcut.scopeAll.note": "When off, only the most recent window moves.",
+        "shortcut.stashFront.note": "The ordinary window with keyboard focus. Dialogs, full-screen and minimized windows are excluded.",
+        "shortcut.scopeAll": "Toggle all stashed windows",
+        "shortcut.scopeAll.note": "When off, toggle the most recent stash. With no stash, the shortcut captures an ordinary window.",
+        "menu.expandAll": "Expand All Stashed Windows",
+        "system.persistenceFailure": "Local settings or recovery information could not be fully read or saved. Windows stay visible when recovery information cannot be saved. Check available disk space and permissions for the EdgeStash settings directory.",
         "shortcut.taken": "That shortcut is already used by “%@”.",
         "shortcut.systemClash": "The system also uses %@ on this shortcut. They may clash.",
 
@@ -361,10 +143,6 @@ enum L10n {
         "system.launchAtLogin": "Launch at login",
         "system.menuBarIcon": "Keep the menu bar icon",
         "system.menuBarIcon.note": "If the icon is hidden, reopen EdgeStash in Finder to get this window back.",
-        "system.language": "Language",
-        "system.lang.system": "Follow system",
-        "system.lang.zh": "简体中文",
-        "system.lang.en": "English",
         "system.cardAccess": "Access",
         "system.ax": "Accessibility",
         "system.granted": "Granted",
@@ -447,23 +225,10 @@ enum L10n {
         "chord.forceQuit": "Force Quit",
     ]
 
-    /// English wins unless the reader asked for Chinese (explicitly or via a
-    /// zh system locale).
-    private static var prefersEnglish: Bool {
-        switch InterfaceLanguage(rawValue: Preferences.shared.language) ?? .system {
-        case .chinese:
-            return false
-        case .english:
-            return true
-        case .system:
-            guard let first = Locale.preferredLanguages.first else { return true }
-            return !first.hasPrefix("zh")
-        }
+    static func text(_ id: String) -> String {
+        en[id] ?? id
     }
 
-    static func text(_ id: String) -> String {
-        prefersEnglish ? (en[id] ?? zh[id] ?? id) : (zh[id] ?? en[id] ?? id)
-    }
 }
 
 /// Named accessors so call sites read as prose and typos fail at compile time.
@@ -565,10 +330,6 @@ extension L10n {
     static var systemLaunchAtLogin: String { text("system.launchAtLogin") }
     static var systemMenuBarIcon: String { text("system.menuBarIcon") }
     static var systemMenuBarIconNote: String { text("system.menuBarIcon.note") }
-    static var systemLanguage: String { text("system.language") }
-    static var systemLangSystem: String { text("system.lang.system") }
-    static var systemLangZh: String { text("system.lang.zh") }
-    static var systemLangEn: String { text("system.lang.en") }
     static var systemCardAccess: String { text("system.cardAccess") }
     static var systemAx: String { text("system.ax") }
     static var systemGranted: String { text("system.granted") }

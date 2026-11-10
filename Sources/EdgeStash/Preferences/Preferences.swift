@@ -97,10 +97,6 @@ final class Preferences: ObservableObject {
         didSet { persistUserChange() }
     }
 
-    @Published var language: Int = 0 {
-        didSet { persistUserChange(notify: PreferenceSignal.languageDidChange) }
-    }
-
     @Published var dockClearanceRawValue: String = DockClearanceMode.automatic.rawValue {
         didSet { persistUserChange(notify: PreferenceSignal.didChange) }
     }
@@ -122,16 +118,20 @@ final class Preferences: ObservableObject {
     }
 
     @Published private(set) var displayTopologyRevision: UInt = 0
+    @Published private(set) var persistenceFailed = false
 
     /// `didSet` on loaded fields must not notify while `shared` is still
     /// inside `dispatch_once`.
     private var isHydrating = false
+    // Preserve the retired field through ordinary saves without using it for copy.
+    private var legacyLanguageID: Int?
 
     private init() {
         isHydrating = true
         defer { isHydrating = false }
         PreferenceStore.sweepStaleDefaultKeys(in: .standard)
         let stored = PreferenceStore.load()
+        legacyLanguageID = stored.languageID
 
         let loadedProfiles = stored.apps.mapValues { profile in
             var normalized = profile
@@ -145,6 +145,7 @@ final class Preferences: ObservableObject {
             return normalized
         }
         self.appProfiles = loadedProfiles
+        persistenceFailed = PreferenceStore.lastSaveFailed || PreferenceStore.rescueSaveFailed
 
         if let savedWidth = stored.approachWidth, savedWidth > 0 {
             self.gateSpanX = Self.bounded(savedWidth, ceiling: Self.maxGateSpanX)
@@ -178,11 +179,6 @@ final class Preferences: ObservableObject {
         }
         if let muted = stored.mutedMultiWindowAdvice {
             self.mutedMultiWindowAdvice = muted
-        }
-        if let savedLanguage = stored.languageID {
-            self.language = savedLanguage
-        } else {
-            self.language = InterfaceLanguage.system.rawValue
         }
         if let rawMode = stored.dockClearance, DockClearanceMode(rawValue: rawMode) != nil {
             self.dockClearanceRawValue = rawMode
@@ -225,7 +221,7 @@ final class Preferences: ObservableObject {
         stored.advisedStripOverload = advisedStripOverload
         stored.advisedSeamRevealLimitation = advisedSeamRevealLimitation
         stored.mutedMultiWindowAdvice = mutedMultiWindowAdvice
-        stored.languageID = language
+        stored.languageID = legacyLanguageID
         stored.dockClearance = dockClearanceRawValue
         stored.edgeMap = displayEdgePreferences
         stored.ghosts = ghostedWindowIDs
@@ -236,6 +232,7 @@ final class Preferences: ObservableObject {
 
     private func save() {
         PreferenceStore.save(snapshot())
+        persistenceFailed = PreferenceStore.lastSaveFailed || PreferenceStore.rescueSaveFailed
     }
 
     private func persistUserChange(notify name: Notification.Name? = nil) {
@@ -295,21 +292,29 @@ final class Preferences: ObservableObject {
         ghostedWindowIDs.removeAll { $0 == record }
     }
 
-    func upsertRescueDossier(_ dossier: RescueDossier) {
-        if let index = rescueDossiers.firstIndex(where: {
+    @discardableResult
+    func upsertRescueDossier(_ dossier: RescueDossier) -> Bool {
+        var next = rescueDossiers
+        if let index = next.firstIndex(where: {
             $0.subject.processID == dossier.subject.processID
                 && $0.subject.windowNumber == dossier.subject.windowNumber
         }) {
-            rescueDossiers[index] = dossier
+            next[index] = dossier
         } else {
-            rescueDossiers.append(dossier)
+            next.append(dossier)
         }
+        guard PreferenceStore.saveRescues(next, replacing: rescueDossiers) else { persistenceFailed = true; return false }
+        rescueDossiers = next
+        return true
     }
 
     func removeRescueDossier(processID: pid_t, windowNumber: UInt32) {
-        rescueDossiers.removeAll {
-            $0.subject.processID == processID && $0.subject.windowNumber == windowNumber
+        let next = rescueDossiers.filter {
+            !($0.subject.processID == processID && $0.subject.windowNumber == windowNumber)
         }
+        guard next != rescueDossiers else { return }
+        guard PreferenceStore.saveRescues(next, replacing: rescueDossiers) else { persistenceFailed = true; return }
+        rescueDossiers = next
         removeGhostedWindowID(pid: processID, windowID: windowNumber)
     }
 

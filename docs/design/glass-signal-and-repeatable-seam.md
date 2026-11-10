@@ -30,9 +30,11 @@ implemented.
 
 ## Raw layer
 
+The owner quotations below are English translations of the original Chinese.
+
 ### raw[1] — 2026-08-30
 
-> 我是在那个接缝的地方的信号条不见了，但是我外侧的条都是可见的。
+> The signal at the shared seam disappeared, while the outer-edge strips remained visible.
 
 Context: after a seam reveal and re-collapse the seam placeholder is gone;
 exposed-edge strips remain. This is the INV-10 session-drop, not a default
@@ -40,9 +42,7 @@ hide.
 
 ### raw[2] — 2026-08-30
 
-> 我可以允许接缝的信标和外侧条一样的宽，5PT也可以，10PT都可以。我觉得现在
-> 的信号条所有都太丑了。它不像 Mac OS 那么的现代优雅，也不像 Mac OS 26一样
-> 有透明玻璃质感的视觉效果。
+> The seam beacon can be as wide as the outer strip; 5pt or 10pt would be acceptable. The current signals are unattractive. They do not have modern, elegant macOS chrome or the transparent glass appearance of macOS 26.
 
 Context: the owner accepted a shared 10-point thickness and asked every
 visible desktop signal to use macOS 26 glass language.
@@ -160,15 +160,14 @@ leave a visible `seam-rail` in `glass-painted` (or `glass-system` on the pin).
 ### Design direction and content
 
 - Subject: desktop stash chrome on current macOS.
-- Thesis: one tinted-glass rail family; density and an inner gap tell seam
-  from outer; hide strategy does not change.
-- Anchors: painted translucent plate + specular + app-color wash; INV-6
-  inset; `NSGlassEffectView` only on the 28pt pin disc.
-- Rejected: 2pt quiet beacon as the findable signal; `NSVisualEffectView`;
-  `NSGlassEffectView` on a 5–10pt rail (reads as a gray slab); making seam
-  and outer identical objects; using glass on Settings pages; capturing
-  pixels to fake glass.
-- Vocabulary: 玻璃轨 / 外侧密度 / 接缝密度 / 内侧缝.
+- Thesis: one tinted-glass rail family; density and an inner gap distinguish seam
+  from outer, with unchanged hide strategy.
+- Anchors: painted translucent plate, specular, app-color wash, INV-6 inset, and
+  `NSGlassEffectView` only on the 28pt pin disc.
+- Rejected: a 2pt quiet beacon as the findable signal; `NSVisualEffectView`; system
+  glass on a 5–10pt rail that reads as a gray slab; identical seam and outer
+  signals; glass Settings pages; captured pixels to fake glass.
+- Vocabulary: glass rail / outer density / seam density / inner gap.
 - Reduced motion: 120ms fade on rails and halo; no flourish sheen.
 - from: raw[2], raw[3]
 

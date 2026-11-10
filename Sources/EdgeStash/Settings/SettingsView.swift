@@ -37,7 +37,6 @@ struct SettingsView: View {
             pageHost
         }
         .frame(minHeight: 580, idealHeight: 640)
-        .id(preferences.language)
         .onAppear {
             HaloController.shared.settingsVisibilityChanged(isVisible: true)
             HaloController.shared.settingsTabChanged(selectedTab)

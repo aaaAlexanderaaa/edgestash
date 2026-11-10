@@ -35,14 +35,13 @@ public enum AppShortcutPolicy {
         return nil
     }
 
-    /// An idle window can still be captured even when another window of the
-    /// same app is already stashed. Otherwise a chord only toggles the old
-    /// stash and the front window looks like the shortcut did nothing.
+    /// Existing stashes own the application chord. Capture is its first-use
+    /// action only when that application has no managed window.
     public static func shouldCaptureIdleFrontWindow(
         hasIdleWindow: Bool,
-        hasManagedWindow _: Bool
+        hasManagedWindow: Bool
     ) -> Bool {
-        hasIdleWindow
+        hasIdleWindow && !hasManagedWindow
     }
 }
 

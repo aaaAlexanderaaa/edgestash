@@ -30,6 +30,18 @@ problem() { printf 'DEVIATION: %s\n' "$*" >&2; fail=1; }
 [ -f "$grammar" ] || { echo "missing grammar: $grammar" >&2; exit 2; }
 [ -d "$src" ] || { echo "missing source tree: $src" >&2; exit 2; }
 
+python3 scripts/check-project-language.py
+
+# Selected capability boundaries are continuous checks, independently of the
+# presentation manifest. This is not a substitute for source/privacy review.
+forbidden='URLSession|SCStream|CGWindowListCreateImage|CGDisplayCreateImage|DistributedNotificationCenter|import (Network|ScreenCaptureKit)'
+if grep -rnE --include='*.swift' --include='*.m' "$forbidden" Sources/EdgeStash; then
+  problem "forbidden network, capture, or distributed-notification capability"
+fi
+if grep -rnE '^import (AppKit|SwiftUI|ApplicationServices)' Sources/EdgeStashLogic; then
+  problem "native framework imported into the AppKit-free policy layer"
+fi
+
 # --- Parse and validate the machine-readable manifest -----------------------
 manifest=$(awk '
   function trim(v) { gsub(/^[ \t]+|[ \t]+$/, "", v); return v }

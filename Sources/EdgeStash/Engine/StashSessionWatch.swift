@@ -375,12 +375,11 @@ extension StashSession {
         }
         if ignoringGeometryNotifications || ScreenSetCoordinator.blocksUserGeometry || awaitingWindowControl { return }
         let minimizeNotification: ManagedMinimizeNotification?
-        switch name {
-        case kAXWindowMiniaturizedNotification as String:
+        if name == kAXWindowMiniaturizedNotification as String {
             minimizeNotification = .miniaturized
-        case kAXWindowDeminiaturizedNotification as String:
+        } else if name == kAXWindowDeminiaturizedNotification as String {
             minimizeNotification = .deminiaturized
-        default:
+        } else {
             minimizeNotification = nil
         }
         if let minimizeNotification {
@@ -459,6 +458,12 @@ extension StashSession {
         let wasDragged = externalGeometryWasDragged
         externalGeometryWasDragged = false
         if wasDragged { cancelPendingRecovery() }
+        if pendingScreenSetRecovery != nil {
+            // A late system move must not refresh a blocked seam independently
+            // and clear its original expanded/pinned target or retry budget.
+            onControlReady?(self)
+            return
+        }
         guard let edge, let displayID, let frame = StashAX.frame(of: windowElement) else { return }
         let displays = DisplayCatalog.adjacencyGeometries()
         let action = StashSessionPolicy.externalGeometryAction(

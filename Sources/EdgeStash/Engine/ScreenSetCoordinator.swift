@@ -133,6 +133,12 @@ final class ScreenSetCoordinator {
 
     func controlBecameReady(_ session: StashSession) {
         guard let number = session.windowID else { return }
+        if session.isIdle, session.usingSharedMinimize,
+           session.pendingScreenSetRecovery == nil, session.pendingVisibleFallbackOrigin == nil {
+            // A failed first capture can leave a visibility debt after its
+            // disputed AX binding is replaced. Finish release, never re-stash.
+            session.shutdown(event: .miniaturized)
+        }
         if session.pendingVisibleFallbackOrigin != nil {
             let applying = Self.isApplying
             Self.isApplying = true
@@ -347,6 +353,8 @@ final class ScreenSetCoordinator {
             case .waitingForControl:
                 session.retainRecoveryIntent(intent)
                 restorationRetry.waitForControl(slot, intent: intent)
+            case .blockedSpace, .waitingForPersistence:
+                restorationRetry.failed(slot, intent: intent)
             case .failed:
                 restorationRetry.failed(slot, intent: intent)
                 toScatter.append(session)
@@ -366,6 +374,8 @@ final class ScreenSetCoordinator {
             case .waitingForControl:
                 session.retainRecoveryIntent(intent)
                 restorationRetry.waitForControl(slot, intent: intent)
+            case .blockedSpace, .waitingForPersistence:
+                restorationRetry.failed(slot, intent: intent)
             case .failed:
                 restorationRetry.failed(slot, intent: intent)
                 toScatter.append(session)
@@ -379,7 +389,8 @@ final class ScreenSetCoordinator {
                                         slot: ScreenSetPlacement, result: ScreenSetApplicationResult) {
         session.diagnose(event, ["result": String(describing: result),
             "remainingAttempts": restorationRetry.writeAttemptsRemaining(for: slot.key) ?? -1])
-        if result == .failed, restorationRetry.writeAttemptsRemaining(for: slot.key) == 0 {
+        if (result == .failed || result == .blockedSpace || result == .waitingForPersistence),
+           restorationRetry.writeAttemptsRemaining(for: slot.key) == 0 {
             session.diagnose("session.recovery-exhausted")
         }
     }
@@ -426,6 +437,8 @@ final class ScreenSetCoordinator {
             case .waitingForControl:
                 session.retainRecoveryIntent(intent)
                 restorationRetry.waitForControl(slot, intent: intent)
+            case .blockedSpace, .waitingForPersistence:
+                restorationRetry.failed(slot, intent: intent)
             case .failed:
                 restorationRetry.failed(slot, intent: intent)
                 failures.append(session)

@@ -176,7 +176,9 @@ enum StashAX {
             }
             return observed == minimized
         }
-        return true
+        // An accepted write with an unreadable result is not evidence of the
+        // visibility state required by collapse, compensation, or rescue.
+        return false
     }
 
     static func roleAlive(_ element: AXUIElement) -> AXError {

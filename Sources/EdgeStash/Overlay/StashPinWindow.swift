@@ -161,8 +161,15 @@ private final class StashPinButton: NSView {
         glass.apply(role: .disc, tint: accent, material: material)
         needsDisplay = true
         setAccessibilityElement(true)
-        setAccessibilityRole(.button)
+        setAccessibilityRole(.checkBox)
         setAccessibilityLabel(label)
+        setAccessibilityValue(pinned)
+    }
+
+    override func accessibilityPerformPress() -> Bool {
+        guard let onToggle else { return false }
+        onToggle()
+        return true
     }
 
     override func updateTrackingAreas() {

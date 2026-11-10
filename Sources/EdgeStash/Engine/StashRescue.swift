@@ -9,12 +9,13 @@ enum RescueTrigger {
 }
 
 enum StashRescue {
-    static func persist(session: StashSession) {
+    @discardableResult
+    static func persist(session: StashSession) -> Bool {
         guard let windowID = session.windowID,
               let visible = session.rescueVisibleFrame,
               let display = session.rescueDisplayFrame,
               let edge = session.edge else {
-            return
+            return false
         }
         let rest = StashGeometryPolicy.expandedOrigin(
             edge: edge,
@@ -22,7 +23,7 @@ enum StashRescue {
             display: display,
             lockedWidth: visible.width
         )
-        Preferences.shared.upsertRescueDossier(
+        let saved = Preferences.shared.upsertRescueDossier(
             RescueDossier(
                 subject: RescuedSubject(
                     bundleID: session.bundleID,
@@ -38,7 +39,8 @@ enum StashRescue {
                 recordedAt: Date()
             )
         )
-        Preferences.shared.addGhostedWindowID(pid: session.pid, windowID: windowID)
+        if saved { Preferences.shared.addGhostedWindowID(pid: session.pid, windowID: windowID) }
+        return saved
     }
 
     static func clear(processID: pid_t, windowNumber: UInt32?) {

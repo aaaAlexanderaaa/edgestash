@@ -1,60 +1,72 @@
-# EdgeStash 状态机边界审查
+# EdgeStash state-machine boundary review
 
-日期：2026-09-23。范围：当前工作区，包含 9 月 22 日的显示器恢复与透明度修复。
+Date: 2026-09-23. Scope: the working tree at review time, including the
+September 22 display-restoration and opacity fixes. Translated from the original
+Chinese review for the English project policy; all findings remain historical.
 
-这次审查按「窗口阶段 × 隐藏方式 × 异步操作 × 显示器环境 × 窗口生命周期」检查，
-不能只看 `idle → captured → collapsed → expanded` 四个阶段。
-同一个 `collapsed`，可能正在展开、已经解除最小化但尚未提交，或者等待显示器枚举；
-这些情况需要不同的取消和恢复动作。
+This review crosses window phase, hide strategy, asynchronous operations,
+display environment, and window lifetime. The four phases
+`idle → captured → collapsed → expanded` are insufficient by themselves.
+A collapsed session may be expanding, already deminimized but uncommitted, or
+waiting for display enumeration. Each requires different cancellation and recovery.
 
-## 已修复的缺口
+## Repaired gaps
 
-| 边界 | 原来的漏洞 | 修复及证据 |
+| Boundary | Previous defect | Repair and evidence |
 |---|---|---|
-| 重复显示器通知 × 恢复失败 | 同一目标的失败次数在每次应用时被清零，有限重试可能变成无限尝试 | 相同记忆保留目标预算，成功后移除；20 次重复观察只允许首次及 3 次重试。边界测试。 |
-| 重启 × 再次插屏 | 首次启动不恢复，但旧窗口编号仍载入记忆；下一次切换可能把新窗口当成旧窗口 | 新进程保留配置键、清空窗口成员；取消“看起来停在边缘就自动收纳”。边界测试与调用点检查。 |
-| 救援 × 失败后进入 idle | `idle`、手动拖出、或框架已在屏内，被当成可以删除救援记录 | 仍须成功恢复透明度和最小化状态；失败保留记录及再次恢复所需字段。边界测试。 |
-| 救援 × PID/窗口编号复用 | 数字相同就可能命中另一次进程启动的窗口 | 核对 bundle、启动时间、记录时间；失去 AX 权限时还核对 WindowServer 所有者。新进程只允许原有的保守形状匹配。边界测试。 |
-| 动画结束 × AX 写入失败 | 时间到就提交 collapsed/expanded，最终写入结果被丢弃 | 动画报告最终写入结果；失败隐藏回到可见恢复，失败展开重新隐藏或释放。源码检查与原生编译；真实 AX 拒绝尚待注入验证。 |
-| 接缝展开 × Space 已变化但通知未到 | 只靠异步 generation 防旧回调；准备后的最终 frame 写入未检查 | 解除最小化前、写入 frame 后核对目标 Space 和成员关系；失败执行取消补偿。策略测试与源码检查；实机异步时序仍待验证。 |
-| 折叠失败 × leave timer | 已停止计时器，但同步折叠失败没有恢复它 | 扩展窗口重新开始离开监视；捕获失败走可见恢复路径，保留未解决记录。源码检查与编译。 |
-| 用户拖动 × 系统移动 | 拖到另一侧被释放；系统挪动隐藏窗口也会删记忆；固定窗口反而无法拖出 | 共用动作策略区分退出、换边、换显示器和重新隐藏；等拖动结束再决定。边界测试覆盖实际用于运行时的策略。 |
-| 增加无关显示器 × 现有窗口 | 仍对所有窗口重新设置 frame/透明度 | 只处理坐标、缩放或邻接变化及被取消的操作；其他窗口恢复监视即可。边界测试。 |
-| 临时不可用 × 没有后续 Space 通知 | 接缝一次查询失败后可能一直禁用 | 使用已有 0.5 秒轮询重新查询，仅在可用性变化时更新标记，不重复弹提示。源码检查与编译。 |
+| Repeated display notifications and restoration failure | Applying the same target reset its failure count, potentially making bounded retries unlimited | Preserve the budget for the same memory and remove it after success; twenty duplicate observations permit only the initial attempt and three retries. Boundary tests. |
+| Restart and display reconnection | Initial launch did not restore membership, but loaded old window numbers could later identify new windows as old members | Preserve configuration keys while clearing memberships in a new process; remove automatic capture based on a parked-looking frame. Boundary tests and call-site review. |
+| Rescue and idle after failure | Idle phase, a manual drag, or an on-screen frame could authorize deleting rescue records | Require successful opacity and minimized-state restoration; preserve the dossier and fields needed to retry on failure. Boundary tests. |
+| Rescue and reused PID/window number | Matching numbers could identify a window from a different process launch | Check bundle, launch time, and record time; without AX trust, also verify WindowServer ownership. A new process permits only the pre-existing conservative shape match. Boundary tests. |
+| Animation completion and failed AX writes | Elapsed animation time committed collapsed/expanded state while discarding final write results | Report final write acknowledgement; failed hide restores visibility, failed reveal re-hides or releases. Source review and native compilation; real AX rejection injection remained open. |
+| Seam reveal and an undelivered Space change | Generation checks rejected stale callbacks, but the final frame write after preparation lacked a destination check | Check current destination and membership before deminimization and after the frame write; compensate on failure. Policy tests and source review; native timing remained open. |
+| Failed collapse and leave timer | The timer stopped, but synchronous collapse failure did not resume it | Restart leave observation for an expanded window; capture failure restores visibility and preserves unresolved records. Source review and compilation. |
+| User drag and system move | Opposite-edge drags released membership, system moves of hidden windows erased memory, and pinned windows could not be dragged out | A shared action policy distinguishes detach, edge change, display change, and re-hide, after the drag settles. Boundary tests exercise the live policy. |
+| Unrelated display increment and existing windows | Every window still received frame/opacity writes | Reconcile only coordinate, scale, adjacency, or cancelled-operation changes; otherwise resume observation. Boundary tests. |
+| Transient unavailability without another Space notification | A failed seam query could leave its signal permanently disabled | Reuse the existing 0.5-second poll; update only when availability changes, without repeating the explanation. Source review and compilation. |
 
-初始回归运行复现了 10 个失败断言，涉及救援、固定窗口拖出和重复通知预算；
-随后将移动测试迁到运行时实际使用的统一动作策略，移除了未被运行时代码调用的旧策略。
+The first regression run reproduced ten failed assertions covering rescue,
+pinned drags, and duplicate-notification budgets. Movement tests were then moved
+to the shared action policy actually used by the runtime; unused older policies
+were removed.
 
-## 仍不能据此宣称关闭的边界
+## Boundaries this evidence did not close
 
-- 当前“显示所有窗口”输入检测覆盖 Control-Up/Control-Down；触控板手势和独立
-  Mission Control 键缺少对应检测路径。这是输入覆盖缺口，不能拿策略测试通过替代。
-  需要可复现的原生事件证据再接入，避免把普通 Space 切换误当成打开所有收纳窗口。
-- Cmd-\` 是否在目标应用中跳过完全透明、保留定位边缘的窗口，仍需原生应用验证。
-  当前没有专门的键盘循环拦截，不把操作系统可能提供的行为当作已验证能力。
-- Dock 缩略图仍以标题匹配窗口。同一应用的重名窗口可能有歧义，不能声称精确的
-  多窗口目标识别已覆盖；需要真实 Dock AX 身份信息验证。
-- 多显示器慢枚举、镜像进出、合盖唤醒、Space 切换与 AX 写入同时发生，需要真机
-  跑事件序列。无界面逻辑测试不证明操作系统接受了写入，也不证明透明窗口的像素表现。
-- 本机仅有 Apple Command Line Tools。原生源码构建与签名可以完成，完整 Xcode
-  工程 Debug gate 仍开放。诊断二进制没有 Accessibility 授权，跨进程 AX 故障注入未完成。
+- At review time, show-all detection covered Control-Up/Control-Down, with no
+  trackpad-gesture or dedicated Mission Control-key path. Policy tests cannot
+  establish native input coverage. Reproducible native events are needed to
+  avoid treating an ordinary Space switch as permission to open all stashes.
+- Whether Cmd-` skips fully transparent windows parked at an edge still needs
+  target-application testing. There was no dedicated keyboard-cycle interception;
+  possible operating-system behavior was not counted as verified capability.
+- Dock thumbnails still used titles. Identically named windows in one app could
+  be ambiguous; precise multi-window identification needed real Dock AX identity.
+- Slow enumeration, mirroring, clamshell wake, Space changes, and simultaneous
+  AX writes require physical event sequences. Headless tests do not prove that
+  the operating system accepted writes or that transparent windows have no pixels.
+- This machine had only Apple Command Line Tools. Native compilation and signing
+  were available; the full Xcode-project Debug gate remained open. The diagnostic
+  executable lacked Accessibility authorization, so cross-process AX rejection
+  injection was incomplete.
 
-## 验证入口
+## Verification entry points
 
-- `./scripts/check-expectations.sh`：声明的 presentation anchors 与完整逻辑测试。
-- `Tests/StateMachineBoundaryTests.swift`：故障、重复事件、生命周期和移动边界。
-- `Tests/ScreenSetMemoryTests.swift`：多次显示器往返、镜像、缩放和电源状态。
-- `./scripts/stage-app.sh Debug` / `./scripts/stage-app.sh`：原生 Debug/Release 编译及固定交付路径。
+- `./scripts/check-expectations.sh`: declared presentation anchors and the full logic suite.
+- `Tests/StateMachineBoundaryTests.swift`: failures, duplicates, lifetime, and movement boundaries.
+- `Tests/ScreenSetMemoryTests.swift`: display round trips, mirroring, scale, and power state.
+- `./scripts/stage-app.sh Debug` / `./scripts/stage-app.sh`: native Debug/Release builds and fixed delivery paths.
 
-## 本轮验证结果
+## Verification results at the time
 
-- 最终 `./scripts/check-expectations.sh` 通过，完整逻辑测试通过。12 个展示效果入口均有声明；
-  其中 1 项有可执行次数验证，11 项仍为 `structural-only`，不据此宣称所有展示次数都已验证。
-- 最终原生 Debug 和 Release 构建均通过。Release 产物时间为
-  `2026-09-23 08:13:13 +0800`，详见 `dist/CURRENT.txt`。
-- `codesign --verify --deep --strict`、`plutil -lint`、zip 完整性和
-  `git diff --check` 均通过。
-- Xcode 工程 Debug 构建已尝试，因系统只有 Command Line Tools 而无法运行；
-  这项 gate 和上文原生事件／多显示器复核仍未完成。
+- The final expectation check and full logic suite passed. All twelve presentation
+  anchors were declared; one cardinality had executable evidence and eleven
+  remained `structural-only`. This did not verify every presentation cardinality.
+- Final native Debug and Release builds passed. The Release timestamp was
+  `2026-09-23 08:13:13 +0800`, recorded in `dist/CURRENT.txt`.
+- `codesign --verify --deep --strict`, `plutil -lint`, ZIP integrity, and
+  `git diff --check` passed.
+- The Xcode-project Debug build was attempted and could not run with only CLT.
+  That gate and the native-event/multi-display review above remained open.
 
-没有新增网络、屏幕采集、外部代码或新的用户权限；没有提交代码。
+No networking, screen capture, external code, or new permissions were added.
+No commit was made during this review.

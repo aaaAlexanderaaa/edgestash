@@ -48,7 +48,7 @@ cask "edgestash" do
   homepage "https://github.com/aaaAlexanderaaa/edgestash"
 
   depends_on arch: :arm64
-  depends_on macos: ">= :monterey"
+  depends_on macos: :monterey
 
   app "EdgeStash.app"
 

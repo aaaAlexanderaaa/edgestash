@@ -22,7 +22,8 @@ Selecting an app does not enable it. Switching its enable toggle does not
 reorder the list under the pointer. Empty/search states remain reachable.
 The detail editor groups stash behavior, appearance, and a local preview.
 Disabled apps can be configured before enabling. Other settings pages retain
-their existing actions. Chinese and English expose the same choices.
+their existing actions. The interface uses English as required by
+[`project-language.md`](../contracts/project-language.md).
 
 Material, emphasis color, and exposed-edge window motion are separate per-app
 preferences. Materials are Glass (existing translucent plate), Enamel (dense

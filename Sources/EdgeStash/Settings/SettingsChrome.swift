@@ -118,21 +118,6 @@ struct NoteBadge: View {
     }
 }
 
-struct InterfaceLanguagePicker: View {
-    @Binding var selection: Int
-
-    var body: some View {
-        Picker("", selection: $selection) {
-            Text(L10n.systemLangSystem).tag(0)
-            Text(L10n.systemLangZh).tag(1)
-            Text(L10n.systemLangEn).tag(2)
-        }
-        .labelsHidden()
-        .pickerStyle(.menu)
-        .frame(width: 168, alignment: .trailing)
-    }
-}
-
 struct SettingsFlagRow: View {
     let title: String
     let subtitle: String
@@ -162,16 +147,5 @@ struct SettingsFlagRow: View {
                 .labelsHidden()
                 .toggleStyle(.switch)
         }
-    }
-}
-
-func languageDisplay(_ value: Int) -> String {
-    switch value {
-    case 1:
-        return L10n.systemLangZh
-    case 2:
-        return L10n.systemLangEn
-    default:
-        return L10n.systemLangSystem
     }
 }

@@ -71,7 +71,7 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 trap 'exit 129' HUP
 
-printf '保持当前收纳状态，接下来各测量阶段请勿操作鼠标或键盘。\n结果仅保存在本机：%s\n' "$output"
+printf 'Keep the current stash state. Do not use the mouse or keyboard during measurement.\nResults stay on this Mac: %s\n' "$output"
 printf '%s\n' "${pids[@]}" > "$output/measured-pids.txt"
 "$helper" snapshot > "$output/before.json"
 if [ "${#app_pids[@]}" -eq 1 ]; then
@@ -80,18 +80,18 @@ if [ "${#app_pids[@]}" -eq 1 ]; then
   /usr/bin/sample "${app_pids[0]}" 3 10 -file "$output/EdgeStash.sample.txt" \
     > "$output/sample-status.txt" 2>&1 || true
 fi
-printf '%s\n' '测量 1/3：正常运行。'
+printf '%s\n' 'Measurement 1/3: normal operation.'
 "$helper" measure "$seconds" "${pids[@]}" > "$output/baseline.json"
 if "$pause_engine"; then
   if [ "${#app_pids[@]}" -ne 1 ]; then
-    printf '%s\n' '需要恰好一个 EdgeStash 进程，未暂停任何进程。' >&2
+    printf '%s\n' 'Exactly one EdgeStash process is required; no process was paused.' >&2
     exit 1
   fi
   app_pid="${app_pids[0]}"
   app_started="$(ps -p "$app_pid" -o lstart=)"
   if [ "$(ps -p "$app_pid" -o uid= | tr -d ' ')" != "$(id -u)" ] || \
       ps -p "$app_pid" -o stat= | /usr/bin/grep -q T; then
-    printf '%s\n' '进程不属于当前用户或已经被暂停，未改变其状态。' >&2
+    printf '%s\n' 'The process belongs to another user or is already paused; its state was not changed.' >&2
     exit 1
   fi
   # The watchdog survives this shell being killed. Both it and the EXIT trap
@@ -104,21 +104,21 @@ if "$pause_engine"; then
   ' watchdog "$app_pid" "$app_started" "$((seconds + 15))" \
     > "$output/watchdog.txt" 2>&1 &
   watchdog=$!
-  printf '测量 2/3：短暂停住 EdgeStash %s 秒；期间无法唤出收纳窗口，随后自动恢复。\n' "$seconds"
+  printf 'Measurement 2/3: pause EdgeStash for %s seconds; stash interaction is temporarily unavailable, then resumes automatically.\n' "$seconds"
   same_process
   paused=true
   kill -STOP "$app_pid"
   "$helper" measure "$seconds" "${pids[@]}" > "$output/engine-paused.json"
   resume
 else
-  printf '%s\n' '测量 2/3：继续静置（未使用 --pause-engine）。'
+  printf '%s\n' 'Measurement 2/3: remain idle (--pause-engine was not selected).'
   "$helper" measure "$seconds" "${pids[@]}" > "$output/idle-repeat.json"
 fi
-printf '%s\n' '测量 3/3：正常运行，确认可恢复。'
+printf '%s\n' 'Measurement 3/3: normal operation after resume.'
 "$helper" measure "$seconds" "${pids[@]}" > "$output/resumed.json"
 "$helper" snapshot > "$output/after.json"
 if "$probe"; then
-  printf '%s\n' '运行自有临时窗口遮挡实验（约 9 秒）；不操作其他应用窗口。'
+  printf '%s\n' 'Run the own-window occlusion probe (about 9 seconds); other apps are not controlled.'
   "$helper" occlusion-probe > "$output/occlusion-probe.json"
 fi
-printf '%s\n' '完成。数据没有上传；请保留整个结果目录。'
+printf '%s\n' 'Done. No data was uploaded; keep the entire results directory.'

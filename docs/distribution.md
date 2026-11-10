@@ -12,12 +12,14 @@ The app itself still makes no network requests.
 
 ## Diagnostic test releases
 
-The owner-requested v0.1.8 GitHub prerelease uses the existing ad-hoc package
-path, with `./scripts/stage-app.sh Release --diagnostics`. It is a Release
-optimized build with bounded local runtime logging enabled. Its notes state
-the CLT build evidence, unavailable full Xcode-project check, pending physical
-sleep/wake acceptance, and ad-hoc signing. It is not the Developer ID and
-notarization workflow below and does not generate an installable Cask.
+The owner-requested diagnostic prereleases, including v0.1.10, use the existing ad-hoc
+package path, with `./scripts/stage-app.sh Release --diagnostics`. These are
+Release optimized builds with bounded local runtime logging enabled. Each
+release records its own exact local and CI verification scope in English:
+v0.1.8 had CLT evidence only; v0.1.9 also passed a full Xcode-project Debug build.
+Local CLT builds do not satisfy that separate Xcode gate. Physical macOS 27
+multi-display acceptance remains open. These packages do not use the Developer
+ID and notarization workflow below and do not generate an installable Cask.
 
 ## One-time signing setup
 

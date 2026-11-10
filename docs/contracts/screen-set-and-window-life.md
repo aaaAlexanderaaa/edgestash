@@ -4,11 +4,16 @@ status: target
 authority: normative
 implementation: implemented
 verification_status: partial
-last_reconciled: 2026-10-22
+last_reconciled: 2026-11-09
 supersedes_clauses_of: docs/contracts/edgestash.md
 ---
 
 # Screen sets and the life of a stashed window
+
+The owner-accepted 2026-11-09 [recovery and input contract](reliability-and-input-sources.md)
+clarifies shortcut precedence and limits automatic system show-all detection.
+The explicit EdgeStash menu command is supported; arbitrary Control-arrow
+chords and Space changes are not treated as proof of Mission Control.
 
 ## Purpose
 
@@ -45,11 +50,13 @@ The yellow traffic-light minimize is the Dock. The two stay distinct.
 
 ## Raw layer
 
+The owner quotations below are English translations of the original Chinese.
+
 ### raw[1] — 2026-09-01
 
-> 假如我有三个窗口，现在我用三个显示器，然后这三个窗口分别在三个显示器的不同的侧边隐藏，收纳。然后我因为要开会，我把显示器全部拔掉了，出去了。然后我又调了一次布局。等我坐回去的时候，我重新连回我三个显示器。结果布局又全部混乱掉了。然后我又要开一次会。我刚刚离开电脑的时候，我刚刚刚拔掉显示器的时候，好不容易配好的配置，拔掉显示器又全部乱掉了。
+> I have three windows stashed on different edges of three displays. I unplug the displays for a meeting and adjust the layout while away. When I reconnect the same three displays, the layout becomes disordered. Before another meeting I have just configured everything again, but unplugging the displays disrupts it again.
 
-> 我拔掉显示器后，隐藏在侧边的东西，它不会弹回正中间，如果它没有被当前这一个屏幕布局所处理的话。
+> After I unplug displays, a window hidden at an edge does not return to the center when the current screen layout has no placement for it.
 
 Context: three displays, three stashed windows; unplug for a meeting;
 rearrange on the laptop; plug the three back; then unplug again. Both
@@ -58,14 +65,14 @@ at stale coordinates instead of becoming usable on a remaining display.
 
 ### raw[2] — 2026-09-01
 
-> Terminal 开了5个窗口，有两个被收纳，有三个在台前。但是可能会被一些其他的应用给遮挡。我点击的时候，会把那几个收纳的也触发起来。这不应该，我只想要看到那三个本来在，就在台前，只是被遮挡，不在最前面的被显示出来，而不是触发一下那两个被收纳的窗口又弹出来。
+> Terminal has five windows: two stashed and three on the desktop, possibly covered by other apps. Clicking Terminal also opens the stashed windows. I only want the three windows already on the desktop brought forward, without opening the other two.
 
 Context: clicking the app (Dock) must raise on-desktop windows and must
 not open stashed siblings.
 
 ### raw[3] — 2026-09-01
 
-> 它表现出了一个现象，就是你在做这些所谓的用力或者考虑的时候，你没有考虑用户的正常使用场景。
+> This shows that the design and investigation did not account for ordinary user scenarios.
 
 Context: display-set changes and app activation are normal use, not
 edge cases. Acceptance is everyday desktop life, not only the capture →
@@ -221,7 +228,8 @@ Lid-close-to-sleep is `sleep`, not `lid-awake`.
 | Dock app icon or Cmd-Tab, and every window of that app is stashed | The app | No by default. Per-app setting may choose: still no; open the most recent stash; open stashes on the display the pointer is on; open all. Default is still no. |
 | Click an on-desktop window of that app | That window | No |
 | Click that window’s own Dock thumbnail | That window | Yes, that one |
-| System “show all windows” (including a Dock / Mission Control all-windows presentation) | Every window of that app | Yes, every stash of that app opens |
+| EdgeStash “Expand All Stashed Windows” menu command | Every managed application | Yes, every stash opens through its normal safe reveal path |
+| System Mission Control / App Exposé, including gestures, hot corners, hardware keys and Dock show-all | System-owned overview | Automatic expansion is not guaranteed: no verified observation currently maps these inputs. Use EdgeStash's explicit command. |
 | Cmd-` | On-desktop windows of that app | No. Stashed windows are not stops |
 | Cmd-H, then show the app again | The application | No |
 | Yellow minimize or its Dock restore | That yellow-minimized window | Follows the system. Does not open stashes |
@@ -231,7 +239,9 @@ An EdgeStash-controlled open of a seam stash still follows INV-9. A
 Dock app-icon click that does not open a stash must not run a seam
 reveal transaction and must not activate the app a second time.
 
-The most recent stash is updated by a successful capture or reveal and by
+The application shortcut uses its configured all-managed/recent-window scope
+when a stash exists; it captures an eligible ordinary window only when there
+is no managed window. The most recent stash is updated by a successful capture or reveal and by
 focused-window use of an expanded stash, including marker, merged strip,
 and that window's Dock-thumbnail reveal. A failed capture does not change it.
 
@@ -393,7 +403,7 @@ stash. Exiting full screen does not put it back on the edge.
 |---|---|---|
 | Screen-set classification and complete round trips | logic executable (`ScreenSetMemoryTests.swift`) | increment, drop-configured, drop-unconfigured, return-configured, reflow, projection, scale, sleep, recover, settle/sleep-hold |
 | Activation does not open unnamed stashes | logic executable plus Debug build | Dock / Cmd-Tab with mixed on-desktop and stashed windows; default all-stashed setting |
-| Show-all opens every stash of that app | logic executable plus Debug build | owner scene: five Terminal windows, two stashed |
+| Explicit EdgeStash expand-all opens every stash | shared activation policy plus Debug build | five Terminal windows, two stashed; system overview inputs remain unsupported until their native observation is verified |
 | Vanished display becomes usable | logic executable plus owner review | no stale off-set frames; scatter; return to edges when the set returns |
 | Sleep versus lid-awake | owner review on a clamshell Mac | lid-sleep does not move stashes; lid-awake follows drop/increment |
 | First-version topology-release and Dock-reveal rows | removed or pointed here | this contract |
@@ -412,6 +422,16 @@ do not.
   and that lid-sleep does not move stashes.
 
 ## Reconciliation log
+
+- **2026-11-09 — owner accepted reliability and input repair:** rescue saves
+  gate new hides; seam repair and seam-to-outer conversion share the verified
+  Space reveal transaction. Unknown activation and ambiguous Dock titles cannot
+  open unnamed stashes. The explicit expand-all menu replaces the historical
+  Control-arrow inference; automatic system overview expansion remains outside
+  the verified input set. This supersedes raw[4]'s show-all promise and the
+  2026-09-02 key/title heuristics. Workspace verification is recorded in the
+  [reliability review](../reviews/2026-11-09-reliability-fixes.md); native owner
+  acceptance remains open.
 
 - **2026-10-22 — owner accepted recovery repair:** implements the researched
   identity/rebinding boundary, retained appearance intent, observed wake repair,

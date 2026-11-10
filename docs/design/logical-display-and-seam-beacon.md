@@ -22,19 +22,18 @@ slide-off strip.
 
 ## Raw layer
 
+The owner quotations below are English translations of the original Chinese.
+
 ### raw[1] — 2026-08-29
 
-> 像系统一样展示显示器排列，来帮助用户评估到底哪部分是重叠部分，因为显示器
-> 物理大小和在系统上被逻辑识别出来的大小是不一致的；同时增加一个逻辑区块的
-> 辅助操作，直接在指定显示上通过边缘光晕来展示不同位置的处理方式
+> Show the display arrangement like the system so users can assess shared segments: physical display size differs from logical desktop size. Add an aid that previews each position on the selected real display with an edge halo.
 
-Context: owner attached the macOS 「排列显示器」 screenshot (three staggered
-logical rectangles, menu bar on the primary).
+Context: owner attached the macOS Arrange Displays screenshot: three staggered
+logical rectangles, with the menu bar on the primary display.
 
 ### raw[2] — 2026-08-29
 
-> 在接壤部分的通过最小化实现的边界收纳，需要同样有那个贴边的条的占位，否则
-> 根本不知道还有什么东西被收纳了
+> A shared-edge stash hidden through minimization still needs a strip at the edge as its placeholder; otherwise users cannot tell what remains stashed.
 
 Context: shared-edge minimize currently loses a trustworthy desktop marker.
 
@@ -46,14 +45,13 @@ slide the real window onto the neighboring display.
 
 ### raw[4] — 2026-08-29
 
-> 其他的后续的功能，除了我刚才声明的要做的两点以外，我们后续再做。
+> Defer other future features. The two additions just described are the current scope.
 
 Context: these two items are the only new surfaces in this version.
 
 ### raw[5] — 2026-08-29
 
-> 开启「显示器具有单独的空间」时，先利用 macOS 在显示器接缝处的按屏裁剪，
-> 实现一个不依赖最小化的版本；关闭时仍需要安全回退。
+> With Displays have separate Spaces enabled, first try the system clipping at display seams to implement hiding without minimization. Keep a safe fallback when that setting is disabled.
 
 Context: owner observed that manually parked cross-display windows are clipped
 to the owning display and requested an implementation trial before retaining
@@ -61,10 +59,7 @@ minimization as the only shared-edge behavior.
 
 ### raw[6] — 2026-08-30
 
-> 当前的实现方案并不真正隐藏APP，而且我鼠标靠近的时候它也不会把对应的应用
-> 展示好。我举一个例子，现在一个 APP 有10个窗口，我把鼠标放到了其中一个，
-> 结果它直接把10个窗口全部叫出来了。我把鼠标放到那个接壤的边界，它的唤出
-> 并不灵敏。但是真正的边界上就是灵敏的。
+> The current implementation does not truly hide the app, and approaching it does not reveal the right window. For example, with ten app windows, hovering one brings all ten forward. Reveal at a shared seam is insensitive, while a real outer edge works well.
 
 Context: the owner's perceptual review of the raw[5] trial on real displays.
 The clipped slide leaves the window on the owning display at 2% alpha —
@@ -75,9 +70,9 @@ approaches; both are corrected with it.
 
 ### raw[7] — 2026-08-30
 
-> 我要求显示器锚定，而非 Space 锚定。
+> I require display anchoring rather than Space anchoring.
 
-> 显示但禁用：用户能看到收纳仍存在，但点击时说明当前全屏 Space 无法展开。
+> Keep the signal visible but disabled: users can see that a stash exists, and clicking explains that it cannot expand in the current full-screen Space.
 
 Context: the owner requires a minimized seam stash to follow the owning
 display's current ordinary user Space. The owner accepted a visible disabled
@@ -86,9 +81,7 @@ cross-process migration experiment before implementation.
 
 ### raw[8] — 2026-08-30
 
-> 接缝之间的收纳的确做到了窗口最小化，但是我只能通过快捷键呼出，而非鼠标
-> 唤出（在第一次唤出之后，就见不到信号条了）。同 Space 去反复唤出，它很
-> 明显就会失败：唤出后它收回去就再也没有办法唤出了。
+> Seam stashing now minimizes the window, but only a shortcut can reveal it, not the pointer: the signal disappears after the first reveal. Repeated reveal on the same Space fails; after the window collapses again, it can no longer be revealed.
 
 Context: owner perceptual review of the first repeated seam cycle. Read-only
 live inspection matched the vanished marker to a target session that had been
@@ -180,15 +173,15 @@ and preview; it does not replace the persisted per-display edge preferences.
 ### Design direction and content
 
 - Subject: logical multi-display geometry and stash strategy.
-- Thesis: the map is the system arrangement view with stash semantics
-  overlaid; the halo is a teaching light, not a third strip.
-- Anchors: macOS 「排列显示器」, primary menu-bar mark, staggered frames,
-  `DisplayEdgePolicy` outer / partially shared / fully shared.
-- Rejected: dragging displays to rearrange (that is System Settings);
-  making the seam beacon look identical to the outer strip; putting the
-  only shared-edge affordance inside the map with nothing on the desktop.
-- Vocabulary: 逻辑排列 / 接壤区段 / 外侧条 / 接缝信标 / 光晕预览.
-- Reduced motion: 120ms fade; no slide on halo or beacon.
+- Thesis: the map overlays stash semantics on the system arrangement view; the
+  halo teaches the edge strategy rather than becoming another strip.
+- Anchors: macOS Arrange Displays, primary menu-bar mark, staggered frames, and
+  `DisplayEdgePolicy` outer / partially shared / fully shared classifications.
+- Rejected: dragging displays to rearrange them outside System Settings; making
+  the seam beacon identical to the outer strip; showing the sole shared-edge
+  affordance only inside the map.
+- Vocabulary: logical arrangement / shared segment / outer strip / seam beacon / halo preview.
+- Reduced motion: 120ms fade; no halo or beacon slide.
 - Halo exists only while Settings is open and an edge is selected.
 - from: raw[1], raw[3]
 

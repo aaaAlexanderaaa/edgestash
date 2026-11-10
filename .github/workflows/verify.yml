@@ -1,0 +1,21 @@
+name: Verify
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  macos:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Behavior and capability contracts
+        run: ./scripts/check-expectations.sh
+      - name: Native persistence and controls
+        run: ./scripts/check-native-adapters.sh
+      - name: Screen-set coordinator replay
+        run: python3 docs/reviews/evidence/2026-10-27-screen-set-order/run-adapter-replay.py
+      - name: Distribution tooling
+        run: python3 scripts/check-distribution-tooling.py
+      - name: Xcode Debug target
+        run: xcodebuild -project EdgeStash.xcodeproj -scheme EdgeStash -configuration Debug -derivedDataPath .build/ci-xcode CODE_SIGNING_ALLOWED=NO build

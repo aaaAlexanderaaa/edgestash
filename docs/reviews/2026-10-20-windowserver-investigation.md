@@ -1,144 +1,163 @@
-# 2026-10-20 — WindowServer 持续占用调查
+# 2026-10-20: sustained WindowServer load investigation
 
-状态：发现上一轮验证遗漏的机制，已交付现场诊断；macOS 27 三屏故障尚未定位到
-唯一根因，未发布“已修复”版本。
+Status at investigation: a mechanism omitted by the preceding verification was
+identified and field diagnostics delivered. The macOS 27 three-display failure
+had no confirmed single cause; no release claimed it repaired. Translated from
+the original Chinese investigation, preserving historical evidence and limits.
 
-Owner 现场：最新 Release 0.1.6，macOS 27，三个显示器，多个窗口正在收纳，
-WindowServer 持续高占用；具体触发时刻尚不明确。
+Owner scene: Release 0.1.6, macOS 27, three displays, multiple stashed windows,
+and sustained WindowServer CPU usage. The exact trigger was unknown.
 
-## 已有修复为什么不足以关闭问题
+## Why preceding repairs did not close the issue
 
-`a6e0379`（0.1.5）合并同一轮查询并跳过未变化的面板重绘、frame、alpha、排序
-写入；0.1.6 保留了这些修复。原生 unchanged probe 证明重复适配器调用没有多余
-写入，但没有测量目标系统的合成成本，也没有证明被收纳应用已经停止图形更新。
-0.1.6 的 Nudge/Fade 改变过渡过程，没有改变最终外侧隐藏位置和零透明度。
+`a6e0379` (0.1.5) shared per-pass queries and skipped unchanged panel redraws,
+frame, alpha, and ordering writes. Version 0.1.6 retained those repairs. Native
+unchanged-update probes established no redundant adapter writes, but did not
+measure target-system composition or prove that stashed apps stopped rendering.
+Nudge/Fade changed transitions, not final outer-edge position or zero opacity.
 
-因此，“EdgeStash 自己低 CPU”“没有重复 needsDisplay”“逻辑测试通过”都不能
-证明这次用户报告已经解决。
+Low EdgeStash CPU, no repeated `needsDisplay`, and passing logic tests therefore
+did not establish resolution of this report.
 
-## 新的原生证据：零透明度仍是可见窗口
+## New native evidence: zero opacity can still count as visible
 
-独立探针只创建和操作自己的一个 AppKit 窗口。每个状态静置 1.5 秒，核对最终
-实际 frame，读取窗口自己的 `occlusionState` 和 WindowServer 元数据；不读取
-像素，不操作其他应用窗口。
+A standalone probe created and controlled only its own AppKit window. Each state
+settled for 1.5 seconds; it checked actual frame, `occlusionState`, and WindowServer
+metadata. It read no pixels and controlled no other app.
 
-本机 macOS 15.7.9、单屏 1920×1080@60Hz 的结果：
+Local results: macOS 15.7.9, one 1920×1080 display at 60Hz.
 
-| 状态 | 实际位置符合实验 | occlusion visible | 元数据 on-screen 标志 |
+| State | Actual placement matches experiment | Occlusion visible | On-screen metadata flag |
 |---|---|---|---|
-| 仅 2pt 留在屏内，CGS alpha=0 | 是 | 是 | 是 |
-| 同一位置，AppKit alpha=0 | 是 | 是 | 是 |
-| 完全移出所有显示器，alpha=1 | 是 | 否 | 是 |
-| 完全移出所有显示器，alpha=0 | 是 | 否 | 是 |
-| orderOut | 是 | 否 | 否 |
-| 系统最小化 | 是 | 否 | 否 |
+| 2pt lip inside display, CGS alpha=0 | Yes | Yes | Yes |
+| Same position, AppKit alpha=0 | Yes | Yes | Yes |
+| Fully outside all displays, alpha=1 | Yes | No | Yes |
+| Fully outside all displays, alpha=0 | Yes | No | Yes |
+| orderOut | Yes | No | No |
+| System minimization | Yes | No | No |
 
-原始证据：[occlusion-macos15.json](evidence/2026-10-20-windowserver/occlusion-macos15.json)。
-探针源码：[WindowServerDiagnostic.swift](../../scripts/WindowServerDiagnostic.swift)。
+Raw evidence: [occlusion-macos15.json](evidence/2026-10-20-windowserver/occlusion-macos15.json).
+Source: [WindowServerDiagnostic.swift](../../scripts/WindowServerDiagnostic.swift).
 
-实验首先遇到 AppKit 将标题栏约束回屏内的问题。最终探针显式重写自有窗口的
-`constrainFrameRect`，并为每个状态输出 expected/actual frame 和 geometryMatches。
-表中只使用修正后的结果；第一次定位错误的试验不构成 2pt/完全屏外证据。
+Initial positioning encountered AppKit constraining the title bar onto the display.
+The final probe overrode its own window's `constrainFrameRect` and emitted expected
+and actual frames plus `geometryMatches` for every state. The table uses only
+corrected results; the initial placement error is not lip/offscreen evidence.
 
-这与 Apple 的公开定义一致：全透明窗口也可能被判定为可见；应用应在自己的
-窗口真正被遮挡时停止无用工作。[NSWindow.OcclusionState.visible](https://developer.apple.com/documentation/appkit/nswindow/occlusionstate-swift.struct/visible)，
-[Notify Your App When Visibility Changes](https://developer.apple.com/library/archive/documentation/Performance/Conceptual/power_efficiency_guidelines_osx/WorkWhenVisible.html)。
+This matches Apple's public definition: a fully transparent window can still be
+considered visible, and apps should stop unnecessary work when genuinely occluded.
+See [NSWindow.OcclusionState.visible](https://developer.apple.com/documentation/appkit/nswindow/occlusionstate-swift.struct/visible)
+and [Notify Your App When Visibility Changes](https://developer.apple.com/library/archive/documentation/Performance/Conceptual/power_efficiency_guidelines_osx/WorkWhenVisible.html).
 
-**推断，尚非用户现场因果证明：** 当前外侧隐藏保留 2pt 几何 lip。即便视觉上
-完全隐藏，依赖遮挡状态节流的应用仍可能继续工作、提交图形更新；窗口数量增加
-时成本可能放大。零透明度也没有公开的“WindowServer 零成本”保证。
-这个实验既没有测量其他应用窗口的渲染提交，也没有证明 macOS 27 与本机行为相同。
-元数据 on-screen 标志尤其不能代替遮挡状态或逐帧合成证据。
+**Inference, not owner-machine causal proof:** outer hiding retained a 2pt geometry
+lip. Although visually hidden, apps throttling from occlusion state might continue
+working and submitting graphics, with cost increasing by window count. Zero opacity
+has no public guarantee of zero WindowServer cost. The experiment did not measure
+foreign apps' rendering submissions or establish identical macOS 27 behavior.
+The on-screen metadata flag cannot substitute for occlusion or composition evidence.
 
-## 本地 CPU 对照的适用范围
+## Scope of the local CPU comparison
 
-开发机运行中的 EdgeStash 实际为 0.1.5（线程采样头部），启动于 10 月 15 日；
-磁盘文件已经被 0.1.6 替换。只读 `Info.plist` 会误把旧进程当成新版。
-现场诊断同时记录启动时间、磁盘版本和 executableChangedSinceLaunch，并保存
-线程采样供复核。
+The developer's running EdgeStash was actually 0.1.5, started October 15, as the
+thread-sample header showed. Its disk image had been replaced by 0.1.6. Reading
+Info.plist alone would misidentify the process. Diagnostics therefore record start
+time, disk version, `executableChangedSinceLaunch`, and a thread sample.
 
-本机没有救援记录或桌面收纳信号窗，仅有 Settings 和菜单栏窗口。
-5 秒采样中主线程一直在事件循环等待，没有观察到活动 display link。
-一次 4 秒 × 3 阶段的 WindowServer 区间 CPU 为：
+There were no rescue dossiers or desktop stash signals on this machine, only
+Settings and menu-bar windows. A five-second sample found the main thread waiting
+in its event loop, with no observed active display link. One four-second,
+three-phase WindowServer comparison produced:
 
-| 正常运行 | EdgeStash SIGSTOP 期间 | 恢复运行 |
+| Normal | EdgeStash SIGSTOP | Resumed |
 |---|---|---|
 | 36.7% | 37.9% | 36.7% |
 
-暂停区间每次观测 EdgeStash 均为 `T`，CPU 时间未增长；恢复后为 `S`。
-计数来自累计 CPU 时间差 / 单调经过时间，100% 表示一个核。
-[正常](evidence/2026-10-20-windowserver/developer-baseline.json)、
-[暂停](evidence/2026-10-20-windowserver/developer-engine-paused.json)、
-[恢复](evidence/2026-10-20-windowserver/developer-resumed.json)。
+Every pause observation reported EdgeStash state `T`, with no CPU-time increase;
+after resume it reported `S`. Counts divide cumulative CPU-time differences by
+monotonic elapsed time; 100% means one core.
+[Normal](evidence/2026-10-20-windowserver/developer-baseline.json),
+[paused](evidence/2026-10-20-windowserver/developer-engine-paused.json),
+[resumed](evidence/2026-10-20-windowserver/developer-resumed.json).
 
-这验证诊断方法能区分进程执行，并说明开发机本身存在其他显示负载。它没有复现
-owner 的收纳场景，不能排除或证实 EdgeStash 在目标机器上的任何隐藏路径。
-暂停进程也不会移除其静态面板，或停止已经交给系统执行的动画。
+This validates that the method distinguishes process execution and shows other
+local display load. It did not reproduce the owner's stash scene or confirm or
+exclude any target-machine hide path. Pausing does not remove static panels or
+stop animation already submitted to the system.
 
-## 代码审查与当前排查优先级
+## Code review and investigation priorities
 
-| 方向 | 已知事实 | 仍需什么证据 |
+| Direction | Established facts | Missing evidence |
 |---|---|---|
-| 外侧透明窗口继续被当作可见 | `visualHiddenOrigin` 保留 lip，collapse 完成检查 alpha=0；原生探针显示该状态仍可见 | 在 macOS 27 上区分外侧/接缝并控制应用内容；记录客户端提交及 WindowServer 栈/图形轨道 |
-| 静态信号窗影响系统合成 | 细 rail/merge 自绘，固定 mainMenu/all-Spaces 面板；只有 Glass pin 可使用系统玻璃 | 不能从面板自身无重绘推断合成免费；需要相同客户端更新条件下的有/无面板对照 |
-| 后台观察或窗口反馈循环 | 每 5 秒发现；每 0.5 秒 seam 检查；每轮 Space 查询按显示器合并，但每个 seam 窗口仍有 AX 检查 | macOS 27 异常现场的暂停/恢复对照和调用栈；现有 query-count 测试不覆盖系统调用成本 |
-| 展开窗口的 leave watch | 0.1 秒定时器只在展开时工作，可能查 AX frame、窗口列表与 sibling focus；collapse 会失效它 | 故障现场是否仍有展开/固定窗口，以及是否有高频异步几何反馈 |
-| 全屏 sheen 面板 | 仅画 5×220pt，但面板设为屏幕大小；0.42 秒内 orderOut 并移除 sublayers | 这是过渡期成本/资源方向，正常清理下不足以解释持续空闲 CPU；不能当成已找到根因 |
+| Transparent outer windows still count as visible | `visualHiddenOrigin` retains a lip; collapse checks alpha=0; the native probe still reports visible. | Separate outer/seam paths on macOS 27 with controlled app content; measure client submissions and WindowServer stacks/graphics traces. |
+| Static signals affect composition | Thin rail/merge surfaces paint themselves; permanent mainMenu/all-Spaces panels remain; only the glass pin can use system glass. | No redraw is not free composition. Compare panels present/absent with identical client updates. |
+| Background observation or feedback loop | Five-second discovery; 0.5-second seam checks; Space queries shared per display, AX still per seam window. | Target-scene pause/resume and stacks; query-count tests do not establish system-call cost. |
+| Expanded-window leave watch | A 0.1-second timer while expanded may read AX frame, window lists, and sibling focus; collapse invalidates it. | Whether expanded/pinned windows or rapid asynchronous geometry feedback persist in the failure. |
+| Full-screen sheen panel | Paints only 5×220pt but reserves a display-sized panel; orderOut and layer removal within 0.42 seconds. | Transitional/resource cost, insufficient by itself to explain sustained idle load under normal cleanup. |
 
-`StashAnimator` 在 begin 才创建 display link，finish/cancel 停止它；没有发现代码
-明示的空闲动画时钟。Space poll 不会主动搬迁窗口；迁移只属于命名 reveal。
-鼠标移动另有 seam approach 路径，其成本必须与真正静止时分开观察。
+`StashAnimator` creates a display link on begin and stops it on finish/cancel;
+no explicit idle animation clock was found. Space polling does not migrate windows;
+migration belongs to named reveal. Pointer-motion seam approach must be measured
+separately from true idle cost.
 
-这轮没有改变隐藏、Space、激活或材质行为。尤其没有复活被否决的接缝 clipped
-slide；没有把外侧收纳静默改成系统最小化。完全屏外值得做后续受控实验，但会
-涉及位置约束、显示归属、Space 可达性、外部几何修复与救援；现有 2pt 规则不能
-只改一个常量就删除。产品行为变更仍需当前或 owner 接受的目标契约。
+This investigation changed no hide, Space, activation, or material behavior.
+The rejected seam clipped-slide experiment was not revived, and outer stashes
+were not silently converted to minimization. Fully offscreen placement merits a
+controlled experiment, but affects constraints, display ownership, Space reach,
+external-geometry repair, and rescue. Removing the 2pt lip is not a one-constant
+repair; material behavior still requires a current or owner-accepted contract.
 
-## 现场工具和下一条证据
+## Field tool and next evidence
 
-[使用说明](../windowserver-diagnostic.md)。
-独立工具不链接进产品，不改偏好，不请求 AX/录屏权限，不读取窗口标题或内容，
-不联网。打包后的 Apple Silicon 二进制可在没有 CLT 的机器上运行。
+See the [diagnostic guide](../windowserver-diagnostic.md). The standalone tool is
+not linked into the product, changes no preferences, requests no AX or recording
+permission, reads no titles/content, and makes no network calls. The packaged
+Apple Silicon executable runs without CLT.
 
-1. 保持三屏和当前多个收纳窗口，在高占用仍持续时运行诊断包。
-2. 获得 12 秒正常 / 12 秒暂停 EdgeStash / 12 秒恢复对照、对应进程采样、
-   前后窗口/显示器元数据。救援匹配的应用主进程也计入 CPU 样本，渲染辅助
-   进程和 GPU 活动仍需另外调查。
-3. 同包执行自有窗口遮挡探针，确认 macOS 27 的机制观测；它不改真实收纳窗口。
-4. 若暂停/恢复没有可重复差异，再在相同显示配置和同一应用静止内容下，
-   分别只保留外侧或接缝收纳并增加数量。退出前后数据同时改变窗口/内容状态，
-   不能单独归因于信号窗。
-5. 必要时在异常持续时取得 WindowServer 线程采样，以及 Instruments 的
-   CPU/GPU 图形时间线。Apple 的 [Metal developer workflows](https://developer.apple.com/documentation/xcode/metal-developer-workflows)
-   说明 Metal System Trace 可关联 CPU/GPU 与内存；本轮普通 CPU 诊断没有
-   测量 CA commits、Metal presents 或 GPU 时间。
+1. Keep three displays and multiple stashes while high load persists; run the package.
+2. Collect twelve-second normal/paused/resumed phases, process samples, and before/
+   after window/display metadata. Main processes matching rescue dossiers are
+   counted; renderer helpers and GPU activity need separate investigation.
+3. Run the own-window occlusion probe from the same package on macOS 27. It does
+   not alter real stashed windows.
+4. If pause/resume has no reproducible difference, compare outer-only and seam-only
+   stashes and increasing counts with the same display configuration and static
+   app content. Quitting changes windows/content too, so its delta cannot isolate
+   signal-panel cost.
+5. If needed, collect a WindowServer thread sample and Instruments CPU/GPU trace
+   while abnormal. Apple's [Metal developer workflows](https://developer.apple.com/documentation/xcode/metal-developer-workflows)
+   describes correlating CPU, GPU, and memory with Metal System Trace. Ordinary
+   CPU diagnostics did not measure CA commits, Metal presents, or GPU time.
 
-本机缺少完整 Xcode；WindowServer 属于系统用户，普通 `sample` 权限不足，
-`sudo -n sample` 提示需要密码，未取得系统线程栈。工具不会索取或保存密码，
-也不会终止 WindowServer。目标环境数据是下一步定位所需的实际缺口。
+Full Xcode was absent. WindowServer runs as a system user; ordinary `sample` lacked
+permission and `sudo -n sample` required a password, so no system stack was obtained.
+The tool requests/stores no password and never terminates WindowServer. Actual
+field data was the remaining localization gap.
 
-## 辅助调查和验证
+## Supporting investigation and verification
 
-chatgptbox 已完成通用 AppKit 机制咨询。含项目内部背景的第一条请求被自动审批
-拒绝，未据此向外发送内部背景；后续问题只询问公开 API 语义和通用实验方法。
-其意见用于交叉检查，具体事实仍以本地原生观测和 Apple 一手资料为准。
+chatgptbox completed a general AppKit-mechanism consultation. An initial request
+containing internal project context was rejected by automatic approval, and that
+context was not sent. Subsequent questions concerned public API semantics and
+general experimental methods. Advice was cross-checking only; facts rely on local
+native observations and primary Apple material.
 
-- 独立原生 helper 编译成功；完整诊断流程、几何核对、实际停止/恢复通过。
-- 暂停期间向脚本发送 SIGTERM，脚本以 143 退出，EdgeStash 恢复为 `S`，通过。
-  独立 watchdog 另绑定 PID/启动时间，以防脚本本身被强杀。
-- Shell 语法和 `git diff --check` 通过。
-- `./scripts/check-expectations.sh` 通过：12 个 presentation anchors，
-  1 项 executable cardinality、11 项 structural-only，完整逻辑测试通过。
-  首次受限运行被 SwiftPM 缓存/子沙箱阻止，使用正常本机权限重跑后通过；
-  没有修改语法契约来掩盖工具环境失败。
-- 产品窗口行为没有改变；发布准备将应用版本同步为 0.1.7（build 8）。
-- `stage-app.sh Debug` 和 `stage-app.sh Release` 的 Apple Command Line Tools
-  构建通过，最终本地包为 Release。完整 Xcode 未安装，Xcode 工程 Debug
-  验证仍待完成；CLT 构建不关闭该项。
-- `python3 scripts/check-distribution-tooling.py` 的七项发布工具测试通过。
-- 应用与独立诊断 ZIP 均通过解压内容比对、签名完整性、arm64 架构与
-  macOS 12 最低版本核对；应用包版本为 0.1.7（build 8）。
-- 独立复核使用一次性自有进程验证 SIGTERM 退出清理与 SIGKILL 后 watchdog
-  恢复，均通过；该验证不操作用户的收纳窗口。
-- 本次沿用已有版本的 ad-hoc 签名；Developer ID 签名、公证与 Homebrew
-  安装仍待凭据配置。0.1.7 提供诊断工具，不宣称 macOS 27 三屏问题已修复。
+- Standalone native helper compiled; full diagnostic flow, geometry checks, and
+  actual stop/resume passed.
+- SIGTERM during pause exited the script with 143 and restored EdgeStash to `S`.
+  The independent watchdog binds PID/start time against a killed script.
+- Shell syntax and `git diff --check` passed.
+- Expectation check passed: twelve anchors, one executable cardinality, eleven
+  structural-only, full logic suite. A restricted first run hit SwiftPM cache/
+  nested-sandbox limits; a normal-permission rerun passed. The grammar was not
+  changed to conceal environment failure.
+- Product window behavior stayed intact; release preparation bumped to 0.1.7 (8).
+- CLT Debug/Release staging passed, with Release final. Full Xcode-project Debug
+  remained unavailable; CLT did not close that gate.
+- Seven distribution-tool tests passed at that time.
+- Both app and diagnostic ZIPs matched extracted content and passed signature,
+  arm64, and macOS 12 minimum checks. App version was 0.1.7 (8).
+- Disposable own-process tests confirmed SIGTERM cleanup and SIGKILL watchdog
+  resume without controlling the owner's stashed windows.
+- Existing ad-hoc signing was retained; Developer ID, notarization, and Homebrew
+  required credentials. Version 0.1.7 supplied diagnostics without claiming the
+  macOS 27 three-display failure fixed.

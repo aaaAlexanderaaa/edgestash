@@ -12,6 +12,47 @@ public enum SeamSpaceAvailability: Equatable {
     case unavailable
 }
 
+public enum SeamRevealCommitResult: Equatable { case succeeded, keptMinimized, releaseRequired }
+
+public struct SeamRecoveryPreparation {
+    public enum State: Equatable { case idle, pending, prepared(UInt64), refused(SeamSpaceAvailability) }
+    public private(set) var state = State.idle
+    public private(set) var target: ScreenSetPlacement?
+    private var generation: UInt = 0
+    public init() {}
+    public mutating func select(_ target: ScreenSetPlacement) {
+        if self.target != target { cancel(); self.target = target }
+    }
+    public mutating func begin(_ target: ScreenSetPlacement) -> UInt {
+        select(target)
+        generation &+= 1
+        state = .pending
+        return generation
+    }
+    @discardableResult
+    public mutating func complete(_ ticket: UInt, target: ScreenSetPlacement, result: State) -> Bool {
+        guard generation == ticket, self.target == target, state == .pending else { return false }
+        state = result
+        return true
+    }
+    public mutating func cancel() { generation &+= 1; state = .idle; target = nil }
+}
+
+/// Shared by named reveals and wake repair. A failed or uncertain write may
+/// already have taken effect, so every post-deminimize failure compensates.
+public enum SeamRevealCommit {
+    public static func perform(
+        confirmsDestination: () -> Bool, restoreOpacity: () -> Bool,
+        deminimize: () -> Bool, placeFrame: () -> Bool, reminimize: () -> Bool
+    ) -> SeamRevealCommitResult {
+        guard confirmsDestination(), restoreOpacity() else { return .keptMinimized }
+        guard deminimize(), confirmsDestination(), placeFrame(), confirmsDestination() else {
+            return reminimize() ? .keptMinimized : .releaseRequired
+        }
+        return .succeeded
+    }
+}
+
 /// Share display observations only within one synchronous reconciliation pass.
 /// Create a new batch on every poll; reveal preparation and commit checks must
 /// read the transport directly so they cannot reuse an earlier observation.

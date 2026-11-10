@@ -12,8 +12,9 @@ final class StashEngine {
     private var localMouseDown: Any?
     private var localMouseUp: Any?
     private var mouseMoveMonitor: Any?
-    private var showAllKeyMonitor: Any?
-    private var localShowAllKeyMonitor: Any?
+    private var keyboardMonitor: Any?
+    private var localKeyboardMonitor: Any?
+    private var commandTabIntent = CommandTabIntent()
     private var pendingThumbnailTitle: String?
     private var approachTargetID: String?
     private var spaceRebuildGeneration = 0
@@ -116,11 +117,12 @@ final class StashEngine {
         let group = sessions.filter { $0.bundleID == bundleID }
         let hasOnDesktopWindow = group.contains(where: \.isOnDesktop)
         let allStandardWindowsStashed = !group.isEmpty && group.allSatisfy(\.isManaged)
+        let observedCommandTab = commandTabIntent.consume(now: ProcessInfo.processInfo.systemUptime)
         let kind: AppActivationKind
         if StashOwnedActivation.consume(bundleID) {
             kind = .ownedReveal
         } else {
-            kind = activationKind(for: bundleID)
+            kind = activationKind(for: bundleID, observedCommandTab: observedCommandTab)
         }
         let decision = StashActivationPolicy.decision(
             kind: kind,
@@ -221,11 +223,17 @@ final class StashEngine {
         installSessionEventTap()
         mouseDownMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] event in
             if event.type == .leftMouseDown { self?.handleMouseDown() }
-            else { self?.noteFrontmostInteraction() }
+            else {
+                self?.commandTabIntent.cancel(timestamp: event.timestamp)
+                self?.noteFrontmostInteraction()
+            }
         }
         localMouseDown = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] event in
             if event.type == .leftMouseDown { self?.handleMouseDown() }
-            else { self?.noteFrontmostInteraction() }
+            else {
+                self?.commandTabIntent.cancel(timestamp: event.timestamp)
+                self?.noteFrontmostInteraction()
+            }
             return event
         }
         mouseUpMonitor = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseUp) { [weak self] _ in
@@ -238,18 +246,22 @@ final class StashEngine {
         mouseMoveMonitor = NSEvent.addGlobalMonitorForEvents(matching: .mouseMoved) { [weak self] _ in
             self?.reevaluateSeamApproach()
         }
-        observeShowAllKeys()
+        observeKeyboard()
     }
 
-    private func observeShowAllKeys() {
+    private func observeKeyboard() {
         let handler: (NSEvent) -> Void = { [weak self] event in
             self?.noteFrontmostInteraction()
-            self?.handleShowAllKey(event)
+            if self?.eventTap == nil {
+                self?.commandTabIntent.observe(keyCode: event.keyCode,
+                    modifiers: event.modifierFlags.rawValue, timestamp: event.timestamp,
+                    isModifierChange: event.type == .flagsChanged)
+            }
         }
-        showAllKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { event in
+        keyboardMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { event in
             handler(event)
         }
-        localShowAllKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+        localKeyboardMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { event in
             handler(event)
             return event
         }
@@ -260,23 +272,9 @@ final class StashEngine {
         sessions.filter { $0.pid == pid }.forEach { $0.noteDirectInteraction() }
     }
 
-    private func handleShowAllKey(_ event: NSEvent) {
-        guard isRunning else { return }
-        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        guard ShowAllWindowsKeyPolicy.matchesShowAll(
-            keyCode: event.keyCode,
-            control: flags.contains(.control),
-            command: flags.contains(.command),
-            option: flags.contains(.option)
-        ) else {
-            return
-        }
-        if ShowAllWindowsKeyPolicy.frontmostAppOnly(keyCode: event.keyCode) {
-            guard let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier else { return }
-            applyShowAll(bundleIDs: [bundleID])
-        } else {
-            applyShowAll(bundleIDs: Array(Set(sessions.filter(\.isCollapsed).map(\.bundleID))))
-        }
+    func expandAllStashes() {
+        guard isRunning, !ScreenSetCoordinator.blocksUserGeometry else { return }
+        applyShowAll(bundleIDs: Array(Set(sessions.filter(\.isManaged).map(\.bundleID))))
     }
 
     private func applyShowAll(bundleIDs: [String]) {
@@ -354,6 +352,8 @@ final class StashEngine {
 
     private func installSessionEventTap() {
         let mask = (1 << CGEventType.leftMouseDown.rawValue) | (1 << CGEventType.leftMouseUp.rawValue)
+            | (1 << CGEventType.keyDown.rawValue)
+            | (1 << CGEventType.flagsChanged.rawValue)
         guard let tap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
             place: .headInsertEventTap,
@@ -362,6 +362,17 @@ final class StashEngine {
             callback: { _, type, event, _ in
                 if SessionEventTapPolicy.shouldReenableTap(type: type) {
                     StashEngineMouseRelay.shared.reenableEventTap()
+                    return Unmanaged.passUnretained(event)
+                }
+                if type == .keyDown || type == .flagsChanged {
+                    let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
+                    let modifiers = UInt(event.flags.rawValue)
+                    let timestamp = TimeInterval(event.timestamp) / 1_000_000_000
+                    DispatchQueue.main.async {
+                        StashEngineMouseRelay.shared.engine?.commandTabIntent.observe(
+                            keyCode: keyCode, modifiers: modifiers, timestamp: timestamp,
+                            isModifierChange: type == .flagsChanged)
+                    }
                     return Unmanaged.passUnretained(event)
                 }
                 DispatchQueue.main.async {
@@ -398,6 +409,7 @@ final class StashEngine {
 
     func handleMouseDown() {
         guard shouldAcceptMouse(.down) else { return }
+        commandTabIntent.cancel(timestamp: ProcessInfo.processInfo.systemUptime)
         noteFrontmostInteraction()
         captureRetryGeneration += 1
         let mouse = NSEvent.mouseLocation
@@ -783,6 +795,21 @@ final class StashEngine {
            let session = sessions.first(where: { $0.isExpanded && $0.sameWindow(as: focused) }) {
             lastPreferredSession[bundleID] = ObjectIdentifier(session)
         }
+        // A thumbnail click within the already-frontmost app need not produce
+        // didActivateApplication. Its actual focus notification is another gate.
+        if NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
+           StashDock.hasRecentClick(), let title = StashDock.clickedWindowTitle(),
+           StashDock.clickedBundleID() == bundleID,
+           let focused = StashAX.focusedWindow(of: AXUIElementCreateApplication(pid)),
+           let number = DockThumbnailPolicy.focusedWindow(
+                beforeClick: StashDock.focusedWindowBeforeClick(), now: StashAX.windowID(of: focused),
+                requestedTitle: title, observedTitle: StashAX.string(focused, kAXTitleAttribute as String)),
+           let target = sessions.first(where: { $0.pid == pid && $0.windowID == number && $0.sameWindow(as: focused) }) {
+            StashDock.consumeRecentClick()
+            // Exact focus identity handles duplicate outer-window titles.
+            // A seam tile's system deminiaturization owns its exact reveal.
+            if target.presentation != .systemMinimize { target.expandFromDock() }
+        }
     }
 
     private func handleAppShortcut(_ bundleID: String) {
@@ -836,7 +863,7 @@ final class StashEngine {
         }
         discover(app: front, bundleID: bundleID)
         let appElement = AXUIElementCreateApplication(front.processIdentifier)
-        guard let focused = StashAX.focusedWindow(of: appElement) else { return }
+        guard let focused = StashAX.focusedWindow(of: appElement), StashAX.isStandardWindow(focused) else { return }
         let session: StashSession
         if let existing = sessions.first(where: { $0.sameWindow(as: focused) }) {
             session = existing
@@ -851,15 +878,14 @@ final class StashEngine {
             sessions.append(created)
             session = created
         }
-        session.markTemporary()
-        temporarySession = session
         if session.isIdle {
-            if session.captureNearestAllowed() {
-                lastPreferredSession[bundleID] = ObjectIdentifier(session)
-            }
+            guard session.captureNearestAllowed() else { return }
+            lastPreferredSession[bundleID] = ObjectIdentifier(session)
         } else {
             session.toggleFromShortcut()
         }
+        if !Preferences.shared.stashActive(bundleID: bundleID) { session.markTemporary() }
+        temporarySession = session
         merged.reconcile(sessions: sessions)
     }
 
@@ -870,7 +896,7 @@ final class StashEngine {
     }
 
     private func preferredIdle(in group: [StashSession], bundleID: String) -> StashSession? {
-        let idle = group.filter(\.isIdle)
+        let idle = group.filter { $0.isIdle && $0.isEligibleForCapture }
         if let app = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == bundleID }) {
             let focused = StashAX.focusedWindow(of: AXUIElementCreateApplication(app.processIdentifier))
             if let focused, let match = idle.first(where: { $0.sameWindow(as: focused) }) {
@@ -901,11 +927,12 @@ final class StashEngine {
         if let localMouseDown { NSEvent.removeMonitor(localMouseDown) }
         if let localMouseUp { NSEvent.removeMonitor(localMouseUp) }
         if let mouseMoveMonitor { NSEvent.removeMonitor(mouseMoveMonitor) }
-        if let showAllKeyMonitor { NSEvent.removeMonitor(showAllKeyMonitor) }
-        if let localShowAllKeyMonitor { NSEvent.removeMonitor(localShowAllKeyMonitor) }
-        showAllKeyMonitor = nil
-        localShowAllKeyMonitor = nil
+        if let keyboardMonitor { NSEvent.removeMonitor(keyboardMonitor) }
+        if let localKeyboardMonitor { NSEvent.removeMonitor(localKeyboardMonitor) }
+        keyboardMonitor = nil
+        localKeyboardMonitor = nil
         pendingThumbnailTitle = nil
+        commandTabIntent = CommandTabIntent()
         hiddenBundles.removeAll()
         recentlyUnhidden.removeAll()
         mouseMoveMonitor = nil
@@ -945,18 +972,18 @@ final class StashEngine {
         screenSets.recordPlacement(of: session, sessions: sessions)
     }
 
-    private func activationKind(for bundleID: String) -> AppActivationKind {
+    private func activationKind(for bundleID: String, observedCommandTab: Bool) -> AppActivationKind {
         guard StashDock.hasRecentClick() else {
             if recentlyUnhidden.contains(bundleID) || hiddenBundles.remove(bundleID) != nil {
                 return .hideApp
             }
-            return .commandTab
+            return observedCommandTab ? .commandTab : .unknown
         }
         let clicked = StashDock.clickedBundleID()
         let windowTitle = StashDock.clickedWindowTitle()
         let inDock = StashDock.isDockPoint(NSEvent.mouseLocation)
         if let windowTitle, !windowTitle.isEmpty {
-            StashDock.consumeRecentClick()
+            guard StashDock.bindThumbnail(to: bundleID) else { return .unknown }
             pendingThumbnailTitle = windowTitle
             return .dockWindowThumbnail
         }
@@ -972,7 +999,7 @@ final class StashEngine {
             StashDock.consumeRecentClick()
             return .fileDropOrNotification
         }
-        return .commandTab
+        return observedCommandTab ? .commandTab : .unknown
     }
 
     private func applyActivation(
@@ -999,10 +1026,17 @@ final class StashEngine {
             let title = pendingThumbnailTitle
             pendingThumbnailTitle = nil
             guard let title else { return }
-            let match = group.first {
-                $0.isManaged && !$0.desiredPresentationIsExpanded && StashAX.string($0.windowElement, kAXTitleAttribute as String) == title
+            let candidates = group.compactMap { session -> DockThumbnailCandidate? in
+                guard let number = session.windowID,
+                      let name = StashAX.string(session.windowElement, kAXTitleAttribute as String) else { return nil }
+                return DockThumbnailCandidate(windowID: number, title: name, isManaged: session.isManaged,
+                    isCollapsed: !session.desiredPresentationIsExpanded,
+                    systemMinimize: session.presentation == .systemMinimize)
             }
-            match?.expandFromDock()
+            guard candidates.count == group.count,
+                  let number = DockThumbnailPolicy.fallbackWindow(title: title, candidates: candidates) else { return }
+            StashDock.consumeRecentClick()
+            group.first { $0.windowID == number }?.expandFromDock()
         }
     }
 

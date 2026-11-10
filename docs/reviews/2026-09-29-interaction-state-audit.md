@@ -1,45 +1,89 @@
-# EdgeStash 交互状态与边缘状态复查
+# EdgeStash interaction and edge-state follow-up
 
-日期：2026-09-29。范围：当前未提交工作区，接续 9 月 23 日的状态机审查。
-以 `docs/contracts/edgestash.md`、`docs/contracts/screen-set-and-window-life.md`
-和 `docs/contracts/behavior-grammar.md` 为行为依据。源码与无界面测试能证明策略和调用路径；
-不能代替真实 AX、Dock、Space 或多显示器的体感验证。
+Date: 2026-09-29. Scope: the uncommitted working tree at the time, following the
+September 23 state-machine review. Translated from the original Chinese review;
+findings and evidence describe that historical implementation.
 
-## 本次修复
+Behavioral authority: `docs/contracts/edgestash.md`,
+`docs/contracts/screen-set-and-window-life.md`, and
+`docs/contracts/behavior-grammar.md`. Source and headless tests establish policy
+and call paths, not native AX, Dock, Space, or multi-display experience.
 
-| 场景 | 发现与修复 | 证据 |
+## Repairs in this review
+
+| Scenario | Finding and repair | Evidence |
 |---|---|---|
-| 重复显示器观察与恢复失败 | 同一待恢复目标被每次新观察立即重试，提前耗尽本应在 1/2/4 秒执行的预算。`beginApplication` 现在保留相同目标但不提前返回它，定时重试仍由 `retryRestoration` 执行。 | `ScreenSetRestorationRetry`；20 次重复观察和三次定时失败的边界测试 |
-| 重复观察与稳定窗口 | 原协调器除 `increment` 外会刷新所有在场窗口；相同观察也反复发 AX frame/alpha/minimize 写入。现在只在显示器 frame、scale 或边缘邻接策略实际变化时要求刷新；被取消的会话仍通过 `needsScreenSetRepair` 修复。 | `ScreenSetMemoryCoordinator.transition`；相同观察的无刷新断言 |
-| 悬停接缝失败与一次性说明 | Space 准备或最终校验失败会从 `failSharedReveal` 自动弹提示，包括悬停和 0.5 秒轮询路径。这既会打断鼠标流，也提前消耗“点击禁用接缝标记才解释”的一次机会。失败仍禁用标记，但说明只由标记点击触发。 | `StashSession.failSharedReveal`、`StashMarkerWindow.mouseDown`；展示入口结构检查 |
-| 多应用显示所有窗口 | Owned activation 原先只保存全局最后一个 bundle；A、B 连续展开时，A 的异步激活回调可被误判为 Dock/Cmd-Tab。现在按 bundle 分开记录并一次性消费。 | `OwnedActivationLedger`；交错回调测试 |
-| 折叠后的焦点归还 | 0.3 秒延迟期间用户若已切到别的应用，旧回调仍会激活记住的应用。现在仅在本次受控应用仍是前台时归还焦点，跳过时清掉旧记忆。 | `FocusReturnPolicy.shouldReturnFocus`；前台未变／已变的边界测试 |
+| Duplicate display observations and failed restoration | Every observation immediately retried the same target, prematurely consuming the 1/2/4-second budget. `beginApplication` now retains an unchanged pending target without returning it early; `retryRestoration` owns timed retries. | `ScreenSetRestorationRetry`; twenty duplicate observations and three timed failures. |
+| Duplicate observations and stable windows | Except for increment, the coordinator refreshed all present windows, repeatedly writing AX frame/alpha/minimized state for identical observations. Refresh is now required only for actual display frame, scale, or edge-adjacency changes; cancelled sessions still use `needsScreenSetRepair`. | `ScreenSetMemoryCoordinator.transition`; no-refresh assertions for identical observations. |
+| Failed seam hover and the one-time explanation | Failed Space preparation or final validation automatically explained through `failSharedReveal`, including hover and 0.5-second polling. This interrupted pointer flow and consumed the explanation reserved for clicking a disabled signal. Failure still disables the marker; only marker click explains. | `StashSession.failSharedReveal`, `StashMarkerWindow.mouseDown`; presentation-anchor check. |
+| Show-all across multiple apps | Owned activation retained only one global bundle. Interleaved A/B reveals could misclassify A's delayed callback as Dock/Cmd-Tab. Ownership is now recorded and consumed separately per bundle. | `OwnedActivationLedger`; interleaved callback tests. |
+| Focus return after collapse | A 0.3-second callback could activate the remembered app after the user switched elsewhere. Return now requires the controlled app to remain frontmost; skipping also clears the old memory. | `FocusReturnPolicy.shouldReturnFocus`; unchanged/changed foreground cases. |
 
-## 2026-09-30 评审后修复
+## Follow-up repairs on 2026-09-30
 
-- 恢复重试现在为每个失败目标保存到期时间。重复显示器观察沿用剩余时间，最短计时器触发时只重试已到期目标；交错的 1 秒和 4 秒目标有独立边界断言。
-- 已收起窗口先识别目标屏幕，再判定重新隐藏、换边或退出。跨屏隐藏窄边要求与目标屏幕有正宽度交集，避免把刚好贴边的窗口误判为跨屏。
-- 使用 15.5 SDK 和临时 SwiftPM 沙箱参数的完整 expectation check 通过；本机只有 Command Line Tools，Xcode 工程 Debug 构建仍无法运行，也未做真实多屏 AX 复核。
+- Each failed restoration target now retains its own deadline. Duplicate display
+  observations preserve remaining delay; the earliest timer retries only due
+  targets. Interleaved one-second and four-second targets have independent tests.
+- Collapsed windows resolve their destination display before deciding re-hide,
+  change-edge, or detach. Cross-display hidden lips require positive-width
+  overlap, avoiding false crossing at an exactly touching boundary.
+- The complete expectation check passed using the 15.5 SDK and temporary SwiftPM
+  sandbox arguments. Only CLT was installed; Xcode-project Debug and real
+  multi-display AX review remained unavailable.
 
-## 仍需处理的缺口（按体验影响排序）
+## Remaining gaps, ordered by experience impact
 
-1. **多窗口连续操作仍共用一个焦点记忆。** `StashFocusReturn.rememberedPID` 是全局单值；同一批多应用展开／折叠可互相覆盖，多个延迟回调也只有第一个能消费记忆。新增的前台门闩防止抢掉用户后来的切换，但不保证“显示所有窗口”后每个窗口都按预期归还焦点。应在真机明确批量操作的焦点规则，再按操作批次管理。
-2. **“显示所有窗口”输入覆盖不完整。** 运行时只监听 Control-Up/Control-Down 键。触控板手势、独立 Mission Control 键和 Dock 的“显示所有窗口”没有可靠识别路径；契约却要求这些入口打开对应 stash。需要先记录系统实际事件/AX 身份，再接入，避免把普通 Space 切换误判为 show-all。位置：`StashEngine.observeShowAllKeys`、`ShowAllWindowsKeyPolicy`。
-3. **Dock 缩略图目标不确定。** `StashDock` 读取标题，`StashEngine.applyActivation` 在同应用中取第一个同标题 collapsed 会话。同名文档/Terminal 窗口会打开错的 stash；Dock 点击与应用激活的先后也未在真机覆盖。位置：`StashDock.hit`、`StashEngine.applyActivation`。
-4. **快捷键范围与接受的契约不一致。** 契约说应用 stash 快捷键处理该应用每个已收纳窗口；目前只要发现任何 idle 窗口，`handleAppShortcut` 会先收纳一个 idle 窗口并直接返回，即使有已收纳窗口。逻辑测试明确维护了这一行为，但合同没有写出这个优先级。需由 owner 决定快捷键应优先操作已收纳集合，还是更新契约，把“当前桌面窗口先被收纳”的行为明确呈现给用户。
-5. **局部接缝刷新仍偏粗。** 目前 `ScreenSetMemoryCoordinator` 用整条边的邻接策略决定 `refresh`；一个新显示器只接触该边的一小段，也可能刷新同边其他不相交的窗口。真实隐藏策略已经按窗口纵向区间判断，刷新判定也应使用会话 frame。稳定窗口的多余 AX 写入会表现为轻微跳动。
+1. **Batch operations still shared one focus memory.** The global
+   `StashFocusReturn.rememberedPID` could be overwritten by multi-app reveals and
+   collapses; only the first delayed callback could consume it. The new foreground
+   gate protected later app switches, but did not establish per-window focus
+   return after show-all. Define native batch focus behavior before assigning
+   ownership by operation batch.
+2. **Show-all input coverage was incomplete.** The runtime observed only
+   Control-Up/Control-Down. Trackpad gestures, the Mission Control key, and Dock
+   show-all lacked reliable paths although the contract required them. Observe
+   actual native events/AX identity before wiring them, so ordinary Space switches
+   are not misclassified. Locations: `StashEngine.observeShowAllKeys` and
+   `ShowAllWindowsKeyPolicy`.
+3. **Dock thumbnail identity was uncertain.** `StashDock` read a title, and
+   `StashEngine.applyActivation` selected the first same-title collapsed session.
+   Duplicate documents or Terminal titles could open the wrong stash. Native Dock
+   click/activation ordering was unverified. Locations: `StashDock.hit` and
+   `StashEngine.applyActivation`.
+4. **Shortcut precedence disagreed with the accepted contract.** The contract
+   addressed every managed window of the app. If any idle window existed,
+   `handleAppShortcut` captured one and returned, even when managed windows also
+   existed. Tests explicitly preserved that behavior, but the contract did not
+   declare it. The owner needed to choose existing-stash precedence or explicitly
+   accept and expose desktop-window-first capture.
+5. **Partial seam refresh was too broad.** `ScreenSetMemoryCoordinator` used
+   adjacency of an entire edge to select refreshes. A new display touching a small
+   interval could refresh other nonintersecting windows on that edge, although
+   actual hide strategy already used each window's vertical interval. Refresh
+   should use session geometry; unnecessary AX writes can cause visible jumps.
 
-## 需要真机事件序列的边界
+## Boundaries requiring native event sequences
 
-- 接缝反复展开／离开／再次展开、Space 改变与 deminimize 同时发生、全屏禁用标记、以及 AX 拒绝 frame 或 minimize 的补偿路径。
-- 插屏、拔屏、合盖、纯显示器熄灭和镜像来回；特别记录系统通知、枚举快照、重试 deadline、每个窗口最终 AX frame/minimized/alpha。
-- Cmd-\` 是否跳过透明停边窗口；当前没有键盘循环拦截，也没有原生验证。
-- owner 的玻璃轨和焦点感受复核。无界面逻辑检查不会证明透明边唇无像素、标记可触达或动画连贯。
+- Repeated seam reveal/leave/reveal, Space changes concurrent with deminimization,
+  full-screen-disabled markers, and compensation after rejected frame/minimize writes.
+- Plug/unplug, clamshell, display-only power, and mirroring round trips; record
+  notification order, enumeration, retry deadlines, and final AX frame/minimized/alpha.
+- Whether Cmd-` skips transparent parked windows; no keyboard interception or
+  native verification existed.
+- Owner review of glass rails and focus behavior. Headless checks cannot establish
+  a pixel-free lip, reachable markers, or continuous animation.
 
-## 验证状态
+## Verification status at the time
 
-- 展示入口结构检查：12 个入口全部已声明；仍只有 1 项有可执行次数证据，11 项是 `structural-only`。
-- 完整 `./scripts/check-expectations.sh` 通过：使用 `MacOSX15.5.sdk`，并通过临时 PATH wrapper 给 SwiftPM 加 `--disable-sandbox`，以避开当前执行环境的嵌套沙箱限制。没有改动仓库脚本。单独运行的逻辑套件也通过。
-- 直接运行该脚本在这台机器上不能完成行为部分：SwiftPM 嵌套沙箱被拒，默认 26.0 SDK 与本机 CLT Swift 编译器版本不匹配。该失败属于工具链环境，不是行为测试断言。
-- 原生 Debug 编译尝试使用 15.5 SDK，但缺少 `NSGlassEffectView`；本机没有完整 Xcode。Xcode 工程 Debug gate 仍开放。这不是本次逻辑测试失败。
-- 未做真实 AX 或多显示器体感复核；未提交，也未覆盖现有未提交改动。
+- All twelve presentation anchors were declared; one cardinality was executable
+  and eleven remained `structural-only`.
+- The complete expectation check passed with `MacOSX15.5.sdk` and a temporary
+  PATH wrapper adding `--disable-sandbox` to SwiftPM. Repository scripts were
+  unchanged. The standalone logic suite also passed.
+- Direct execution could not complete its behavioral portion: nested SwiftPM
+  sandboxing was denied, and the default 26.0 SDK did not match the CLT compiler.
+  These were environment failures, not failed behavioral assertions.
+- Native Debug compilation with the 15.5 SDK lacked `NSGlassEffectView`; full
+  Xcode was absent. The Xcode-project Debug gate remained open.
+- No real AX or perceptual multi-display review was performed. No commit was
+  made, and existing uncommitted changes were preserved.

@@ -36,6 +36,14 @@ private func edgeStashApps() -> [NSRunningApplication] {
 
 private func rescueSubjects() -> [[String: Any]] {
     let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+    for name in ["rescues.json", "rescues.previous.json"] {
+        let journal = support.appendingPathComponent("EdgeStash/\(name)")
+        if let data = try? Data(contentsOf: journal),
+           let rescues = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
+            // An empty current journal overrides stale legacy settings too.
+            return rescues.compactMap { $0["subject"] as? [String: Any] }
+        }
+    }
     let store = support.appendingPathComponent("EdgeStash/store.json")
     let document = (try? Data(contentsOf: store)).flatMap {
         try? JSONSerialization.jsonObject(with: $0) as? [String: Any]

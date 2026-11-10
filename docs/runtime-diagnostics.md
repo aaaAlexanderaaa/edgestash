@@ -1,69 +1,108 @@
-# 休眠与自动隐藏：Release 诊断包
+# Sleep and automatic collapse: diagnostic Release builds
 
-此前发行包没有完整的休眠、收纳会话与自动收回事件日志，不能回溯安装前的故障。
-[v0.1.8 测试版](https://github.com/aaaAlexanderaaa/edgestash/releases/tag/v0.1.8)
-提供启动即记录的 app，无需下载独立诊断工具。
-本次 0.1.8 (9) 将诊断开关与优化配置分开：
+Version 0.1.10 (11) retains explicit local diagnostics in the optimized Release
+package. `blockedSpace` means environment recovery was refused by the current
+Space safety gate. The window stays minimized, preserves its original expanded
+or pinned recovery intent, and uses the existing bounded retry budget. It cannot
+bypass refusal through a deminimized desktop fallback. Completing Space
+preparation resumes that same budget without adding a background polling clock.
+Physical macOS 27 multi-display wake and WindowServer acceptance remain open.
+
+`waitingForPersistence` means appearance is already correct but a rescue update
+has not received save acknowledgement. Recovery intent and the same bounded
+budget remain; this neither reports completion nor triggers visible fallback.
+
+Recovery first reads `~/Library/Application Support/EdgeStash/rescues.json`,
+using a valid `rescues.previous.json` if damaged. Ordinary settings remain in
+`store.json`. Before acknowledgement, both rescue copies contain the same latest
+complete set, including the newest hidden window. Settings and rescue errors
+remain independent; success in one cannot conceal failure in the other. Legacy
+records migrate only when no independent journal exists. Keep these local files;
+do not overwrite or delete unresolved rescue records. They contain no window
+titles, document contents, or screenshots.
+
+Earlier packages did not contain complete sleep, session, and automatic-collapse
+logs, so they cannot reconstruct failures from before installation.
+The [v0.1.8 test release](https://github.com/aaaAlexanderaaa/edgestash/releases/tag/v0.1.8)
+introduced startup logging without a separate diagnostic tool. Since 0.1.8 (9),
+diagnostics and optimization are independent:
 
 ```bash
 ./scripts/stage-app.sh Release --diagnostics
 ```
 
-这是使用 Release 优化的诊断包。`dist/CURRENT.txt` 应同时显示
-`configuration: Release`、`diagnostics: true`。包内 Info.plist 的
-`EdgeStashRuntimeDiagnostics` 在签名前写入；无需终端启动、环境变量或开发工具。
-普通 `./scripts/stage-app.sh Release` 关闭诊断，Debug 默认开启。
+This package uses Release optimization. `dist/CURRENT.txt` must report both
+`configuration: Release` and `diagnostics: true`. The package's
+`EdgeStashRuntimeDiagnostics` flag is written to Info.plist before signing;
+terminal launch, environment variables, and development tools are unnecessary.
+Ordinary `./scripts/stage-app.sh Release` disables diagnostics; Debug enables them.
 
-先退出正在运行的 EdgeStash，再打开 `dist/EdgeStash.app`。传到另一台机器使用
-`dist/EdgeStash.zip`，解压后先退出旧进程，再打开新 app。不要仅覆盖磁盘上的 app
-而继续使用旧进程。`app.start` 记录版本、build、配置和实际载入 Mach-O 的 UUID，
-可识别“磁盘包已换，旧进程仍在运行”。
+Quit the running EdgeStash, then open `dist/EdgeStash.app`. Use
+`dist/EdgeStash.zip` on another machine; quit the old process before opening the
+extracted app. Replacing a disk file does not restart an old process.
+`app.start` records version, build, configuration, and the UUID of the actually
+loaded Mach-O image to distinguish these cases.
 
-1. 正常收纳窗口，照平时方式熄屏／休眠并唤醒；无需切换显示器布局。
-2. 如果复现，记下大致时间，以及窗口／边缘信号条的状态；可以照常按快捷键。
-3. 在 Finder 的“前往文件夹”打开 `~/Library/Logs/EdgeStash/`，复制或压缩整个
-   文件夹提供分析。请及时复制，长期运行会轮换覆盖较早记录。
+1. Stash windows normally, then turn the display off or sleep and wake as usual.
+   A display-layout change is unnecessary.
+2. If the problem recurs, note the approximate time and the window/rail state.
+   Shortcuts can still be used normally.
+3. In Finder's Go to Folder, open `~/Library/Logs/EdgeStash/` and copy or compress
+   the entire directory for analysis. Copy promptly: rotation replaces older logs.
 
-文件是逐行 JSON：`runtime.jsonl`、`runtime.previous.jsonl`，各最多 2 MiB，总计
-约 4 MiB。跨启动保留；每条有墙上时间、uptime、EdgeStash 的 PID 与本次 run ID。
-目录权限 0700，新文件 0600。写入使用串行 utility 队列，退出时排空队列；不依赖
-Console 是否开启。磁盘写入失败只在系统日志提示一次；缺日志不证明没收到事件。
+Logs are line-delimited JSON: `runtime.jsonl` and `runtime.previous.jsonl`, each
+capped at 2 MiB, approximately 4 MiB total. They survive app launches. Each event
+includes wall time, uptime, EdgeStash PID, and the current run ID. Directory mode
+is 0700 and new files use 0600. A serial utility queue writes logs and drains on
+quit; Console need not be open. Disk failure is reported once to system logging.
+An absent log entry does not prove that an event never arrived.
 
-## 能区分的路径
+## Paths the evidence distinguishes
 
-| 事件 | 用途 |
+| Event | Purpose |
 |---|---|
-| `workspace.*` / `power.*` / `screens.*` | 系统睡眠和屏幕电源分别记录；同布局唤醒、显示稳定判定、恢复计划与重试 |
-| `session.role-check-failed` / `ax.failure` | AX 错误码与目标引用；错误不再直接当作窗口死亡 |
-| `session.control-wait` / `session.binding-check` / `session.control-rebound` | 原引用不可用、枚举成功或失败／是否读全、精确候选数、服务器归属、原／当前进程启动时间、等待或重绑 |
-| `session.stale-ax-callback` | 老引用或老环境的迟到通知被拒绝；binding/lifecycle generation 也在会话快照中 |
-| `session.recovery-observed` / `session.recovery-unchanged` | 写入前的 frame/minimized/alpha；健康窗口跳过写入 |
-| `session.recovery-readback` | 实际写后观测是否符合目标；API 返回成功不单独作为修复成功 |
-| `session.restore-result` / `session.refresh-result` / `session.retry-result` | succeeded、waitingForControl 或 failed；remainingAttempts 是剩余写入次数，成功移出队列后为 -1 |
-| `session.scatter-fallback` / `session.fallback-waits-for-control` | 可见桌面回退，或引用尚未验证而暂缓回退；恢复意图与 idle 外观分开 |
-| `session.recovery-exhausted` | 首次加三次实际恢复写入均失败，停止自动写入，保留可用回退与原目标 |
-| `session.shutdown` / `session.shutdown-result` / `memory.forget` | 解除收纳的真实原因、可见性恢复结果、是否删除记忆 |
-| `session.leave-gate` / `session.auto-collapse` | 离开自动收回的阻挡原因变化与尝试；0.1 秒观察不逐帧刷日志 |
-| `shortcut.*` | 按键当时 idle/collapsed/expanded 数量，以及是否重新收纳了 idle 窗口 |
-| `engine.trust-lost` / `engine.start` / `app.start` / `app.stop` | 权限暂停与恢复、EdgeStash 本身是否重新启动；缺 stop 本身不能确定崩溃原因 |
+| `workspace.*` / `power.*` / `screens.*` | Distinguish system sleep from display power; record unchanged-layout wake, settle, restoration plans, and retries. |
+| `session.role-check-failed` / `ax.failure` | AX error and target reference; an error alone no longer means window death. |
+| `session.control-wait` / `session.binding-check` / `session.control-rebound` | Unavailable reference, enumeration success/failure/completeness, exact candidate count, server ownership, previous/current process launch time, waiting, and rebinding. |
+| `session.stale-ax-callback` | Rejected notification from an old binding or environment; snapshots also include binding/lifecycle generations. |
+| `session.recovery-observed` / `session.recovery-unchanged` | Pre-write frame/minimized/alpha and healthy windows that need no placement write. |
+| `session.recovery-readback` | Whether post-write observations match the target; API success alone does not establish recovery. |
+| `session.restore-result` / `session.refresh-result` / `session.retry-result` | `succeeded`, `waitingForControl`, `waitingForPersistence`, `blockedSpace`, or `failed`; `remainingAttempts` is the remaining write budget and becomes -1 after successful queue removal. |
+| `session.scatter-fallback` / `session.fallback-waits-for-control` | Visible desktop fallback or deferral until a verified binding; intent is distinct from idle appearance. |
+| `session.recovery-exhausted` | Initial recovery plus three retries failed; automatic writes stop while the original target remains. Space/persistence refusal retains its existing presentation rather than forcing desktop fallback. |
+| `session.shutdown` / `session.shutdown-result` / `memory.forget` | Actual release reason, visibility restoration result, and whether memory was removed. |
+| `session.leave-gate` / `session.auto-collapse` | Changes in automatic-collapse guards and attempts; the 0.1-second observer does not log every tick. |
+| `shortcut.*` | Idle/collapsed/expanded counts at the gesture and whether an idle window was captured again. |
+| `engine.trust-lost` / `engine.start` / `app.start` / `app.stop` | Permission suspension/recovery and app restart; a missing stop event alone does not prove crash cause. |
 
-`ax.slow` 记录超过 0.25 秒的调用；只改变记录，不改变 AX timeout。
-相同目标／操作／属性／错误码最多每 5 秒一条。普通快速成功调用不逐帧输出。
-会话快照记录原应用 PID、进程启动时间、窗口编号、收纳几何、pin、隐藏方式、
-leave watcher、恢复与引用代次。不采集标题、文件名、文档、键盘输入或像素；
-不联网、不自动上传。普通 Release 不求值诊断快照、不创建诊断目录。
+`ax.slow` records calls longer than 0.25 seconds; it changes logging, not the AX
+timeout. An identical target/operation/attribute/error is logged at most once per
+five seconds. Ordinary fast successful calls are not emitted per frame. Session
+snapshots include the subject PID, process launch time, window number, geometry,
+pin, hide strategy, leave watcher, recovery, and binding generations. No titles,
+filenames, document contents, keystrokes, or pixels are collected. There is no
+networking or automatic upload. Ordinary Release neither evaluates diagnostic
+snapshots nor creates the diagnostic directory.
 
-## 修复边界与验证
+## Repair boundaries and verification
 
-本次删除“AX 引用无效即全局忘记窗口”的路径；精确身份不明则保留意图并等待。
-已核对的新引用接回同一个窗口，不新建 idle 副本。销毁需进程死亡、归属已变，
-或销毁通知加完整成功枚举与服务器缺席的交叉证据。进程元数据暂缺不当作已退出。真正关闭／禁用仍清理记忆。
-同布局唤醒先观察健康状态，原来展开且未固定的窗口恢复离开 watcher；失败回退
-保留原位置／展开／pin。原有 5 秒发现循环恢复可读后唤醒同一预算，不能无限重写。
-实际拖走或重新收纳会取消旧目标，休眠前／旧绑定的迟到操作不能覆盖新状态。
+An invalid AX reference no longer globally forgets a window. Uncertain identity
+retains intent and waits; a verified replacement binds to the same session rather
+than creating an idle duplicate. Death requires process death, changed ownership,
+or destruction corroborated by complete successful fresh enumeration and absent
+server ownership. Missing process metadata alone does not mean exit. Actual
+closure and disable still clean up memory.
 
-真实权限撤销仍停止引擎；EdgeStash 退出／崩溃后的 fresh 规则仍不复活收纳成员。
-新的 start/run/UUID 证据用于区分这些情况，不能仅凭相似症状声称现场原因已确认。
-完整 Xcode 不在本机，CLT 原生构建不替代 Xcode 工程 gate；真实 macOS 27
-多屏休眠验收仍需使用本次 Release 包。完整验证记录见
-`docs/reviews/2026-10-22-sleep-wake-recovery-research.md`。
+Unchanged-layout wake observes healthy presentation before writing and resumes
+the leave watcher for expanded unpinned windows. Failure fallback preserves the
+original location, expanded/collapsed intent, and pin. Existing five-second
+discovery resumes the same write budget when control returns; it cannot enable
+unlimited rewrites. A real drag or recapture cancels the old target. Pre-sleep or
+old-binding callbacks cannot overwrite new state.
+
+Real permission revocation still suspends the engine. Quit/crash follows the
+fresh-launch contract and does not revive membership. Start/run/UUID evidence
+helps distinguish these cases; similar symptoms alone cannot establish cause.
+Local CLT builds do not close the separate Xcode-project gate. Physical macOS 27
+multi-display sleep acceptance remains open. Historical recovery evidence is in
+`docs/reviews/2026-10-22-sleep-wake-recovery-research.md`.

@@ -14,7 +14,7 @@ cat > "$package/Run Diagnostic.command" <<'SCRIPT'
 cd -- "$(dirname -- "$0")"
 /bin/bash ./diagnose-windowserver.sh --pause-engine --occlusion-probe
 result=$?
-printf '\n按回车关闭。\n'
+printf '\nPress Return to close.\n'
 read -r _
 exit "$result"
 SCRIPT
