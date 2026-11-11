@@ -4,7 +4,7 @@ status: current
 authority: normative
 implementation: implemented
 verification_status: partial
-last_reconciled: 2026-11-09
+last_reconciled: 2026-11-11
 ---
 
 # Recovery safety and input identity
@@ -42,6 +42,26 @@ it adds no network, capture, permission, or alternate hide strategy.
   that application has a stash. Only when it has no stash may it capture an
   eligible ordinary window. This resolves the previously undocumented idle-first
   precedence in favor of the accepted window-life contract.
+- An acknowledged minimize write can complete asynchronously. Capture keeps
+  membership, its acknowledged rescue dossier, visible restore geometry, and
+  the newest queued presentation request while readback settles. The existing
+  0.5-second observation pass checks the existing 1.5-second settle bound; it
+  does not repeat the write. Confirmation commits the collapse and consumes
+  the queued request. Expiry retains the newest desired appearance for the
+  existing control-validation and bounded recovery path; it cannot release an
+  unconfirmed hide as an ordinary idle window.
+- Cancelling an unconfirmed owned hide submits its inverse even when an
+  immediate AX read still says not minimized. That same read cannot clear the
+  rescue dossier. The existing observation pass waits through the settle bound
+  before confirming release. An unresolved release retains the dossier; the
+  confirmation pass cannot create an unbounded inverse-write loop. Quit or
+  session removal can end observation, so persisted rescue remains necessary.
+- Recovery frame and opacity writes also require observed presentation. An
+  acknowledged write gets the same bounded readback wait before fallback;
+  those read-only checks do not repeat writes or consume another attempt.
+  Persistent mismatch still fails. In particular, opacity 1 cannot stand in
+  for confirmed opacity 0. Geometry refreshes outside the screen transaction
+  use the same retry owner while confirmation is pending.
 - Reopening an expanded seam window during environment repair obeys the same
   current-display ordinary-Space, minimized migration, membership confirmation,
   final recheck, and compensation gates as a named reveal. A refused destination
@@ -78,3 +98,5 @@ multi-display/macOS 27 acceptance remains separate from builds and simulations.
 Implementation and workspace verification are recorded in
 [the 2026-11-09 reliability review](../reviews/2026-11-09-reliability-fixes.md).
 Owner multi-display acceptance and native input-source acceptance remain open.
+The 2026-11-11 Stickies field evidence and asynchronous-write repairs are recorded
+in [the incident review](../reviews/2026-11-11-minimized-window-position.md).

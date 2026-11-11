@@ -9,6 +9,22 @@ public enum WindowBindingDecision: Equatable {
     case rebind, wait, confirmedGone
 }
 
+/// Acknowledged asynchronous writes can precede AX/WindowServer readback.
+/// Uses the existing owned-minimize settle bound and the engine's 0.5s poll.
+/// Waiting never authorizes a successful presentation or clears rescue debt.
+public struct WindowWriteConfirmation {
+    public enum Result: Equatable { case waiting, confirmed, expired }
+    public let startedAt: TimeInterval
+    public init(now: TimeInterval) { startedAt = now }
+    public func hasSettled(now: TimeInterval) -> Bool {
+        now - startedAt >= SeamSessionDurabilityPolicy.ownedMinimizeSettle
+    }
+    public func observe(matches: Bool, now: TimeInterval) -> Result {
+        if matches { return .confirmed }
+        return hasSettled(now: now) ? .expired : .waiting
+    }
+}
+
 /// A failed transport is not a dead window. Missing metadata alone is never
 /// positive death evidence, including for minimized or off-Space windows.
 public enum WindowRecoveryPolicy {
@@ -46,8 +62,15 @@ public enum WindowRecoveryPolicy {
 
     /// AX frame coordinates can round by a point (also the drag threshold).
     public static func framesMatch(_ actual: CGRect, _ expected: CGRect) -> Bool {
-        abs(actual.minX - expected.minX) <= 1 && abs(actual.minY - expected.minY) <= 1
+        isUsableFrame(actual) && isUsableFrame(expected)
+            && abs(actual.minX - expected.minX) <= 1 && abs(actual.minY - expected.minY) <= 1
             && abs(actual.width - expected.width) <= 1 && abs(actual.height - expected.height) <= 1
+    }
+
+    public static func isUsableFrame(_ frame: CGRect) -> Bool {
+        frame.origin.x.isFinite && frame.origin.y.isFinite
+            && frame.size.width.isFinite && frame.size.height.isFinite
+            && frame.size.width > 0 && frame.size.height > 0
     }
 
     public static func presentationMatches(

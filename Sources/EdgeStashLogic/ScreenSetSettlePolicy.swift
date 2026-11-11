@@ -1,5 +1,50 @@
 import Foundation
 
+/// Keep fallback destinations across independently due retry batches. Starting
+/// a fresh scatter for each one-window batch stacks all windows at (80, 80).
+/// A changed desktop invalidates coordinates, but duplicate observations do not.
+public struct ScreenSetFallbackLayout {
+    private var displays: [DisplayGeometry] = []
+    private var origins: [ScreenSetWindowKey: CGPoint] = [:]
+    public init() {}
+    public mutating func remove(_ key: ScreenSetWindowKey) { origins.removeValue(forKey: key) }
+
+    public mutating func origin(for key: ScreenSetWindowKey, size: CGSize,
+                                on connected: [DisplayGeometry]) -> CGPoint? {
+        let sorted = connected.sorted { $0.id < $1.id }
+        if sorted != displays { displays = sorted; origins.removeAll() }
+        guard !displays.isEmpty else { return nil }
+        if let saved = origins[key] { return saved }
+        let used = Set(origins.values.map { Coordinate(x: $0.x, y: $0.y) })
+        let start = origins.count % displays.count
+        for offset in displays.indices {
+            let display = displays[(start + offset) % displays.count]
+            let candidates = ScreenSetPolicy.scatterOrigins(count: used.count + 1,
+                                                            on: display.frame, windowSize: size)
+            if let point = candidates.first(where: { !used.contains(Coordinate(x: $0.x, y: $0.y)) }) {
+                origins[key] = point
+                return point
+            }
+        }
+        // Oversized windows may have only one fully fitting origin. Keep the
+        // title-bar origin on the desktop and distinct even if content clips.
+        for display in displays {
+            let columns = max(1, Int(display.frame.width))
+            for index in 0...used.count {
+                let point = CGPoint(x: display.frame.minX + CGFloat(index % columns),
+                                    y: display.frame.minY + CGFloat(index / columns))
+                if display.frame.contains(point), !used.contains(Coordinate(x: point.x, y: point.y)) {
+                    origins[key] = point
+                    return point
+                }
+            }
+        }
+        return nil
+    }
+
+    private struct Coordinate: Hashable { var x: CGFloat; var y: CGFloat }
+}
+
 /// AX and app discovery can lag a settled display observation. Retry only the
 /// failed targets, at 1/2/4 seconds, then leave the usable fallback and memory.
 /// A new environment replaces this queue; deliberate capture/death cancels a key.

@@ -47,6 +47,7 @@ final class StashSession {
     var attempts = 0
     var scatters = 0
     var shutdowns = 0
+    var landingOrigins: [CGPoint] = []
     var isManaged: Bool { screenSetSlot != nil }
     var isIdle: Bool { !isManaged }
     var recoveryIntent: ScreenSetRecoveryIntent? {
@@ -92,6 +93,8 @@ final class StashSession {
     }
     func leaveStash(to origin: CGPoint, preservingRecovery intent: ScreenSetRecoveryIntent?) {
         scatters += 1
+        landingOrigins.append(origin)
+        if intent == nil { ScreenSetCoordinator.active?.cancelRestoration(of: self) }
         screenSetSlot = nil
         pendingScreenSetRecovery = intent
         needsScreenSetRepair = intent != nil
@@ -100,6 +103,9 @@ final class StashSession {
 }
 
 extension ScreenSetCoordinator {
+    func replayScatter(_ sessions: [StashSession], on displays: [DisplayGeometry]) {
+        scatterLeavingStash(sessions, on: displays)
+    }
     func replayApply(_ displays: [DisplayGeometry], afterWake: Bool = false) {
         DisplayCatalog.show(displays)
         beginQuiet()
@@ -390,6 +396,29 @@ struct AdapterReplay {
             reliabilityTimelines += 1
             coordinator.invalidate()
         }
+
+        // Field regression: retries become due separately, so scatter must
+        // retain destinations outside any one invocation's temporary array.
+        DisplayCatalog.show(displays)
+        let scattered = allSlots.map { StashSession($0, managed: true) }
+        let scatterCoordinator = ScreenSetCoordinator()
+        scatterCoordinator.captureBaseline { scattered }
+        scatterCoordinator.replayScatter(scattered, on: displays)
+        let initialOrigins = scattered.compactMap { $0.landingOrigins.first }
+        for index in [0, 1, 2, 2, 1, 2] {
+            scatterCoordinator.replayScatter([scattered[index]], on: displays.reversed())
+            check(scattered[index].landingOrigins.last == initialOrigins[index],
+                  "separate retry batch retains each window's fallback")
+        }
+        check(Set(initialOrigins.map { "\($0.x),\($0.y)" }).count == 3,
+              "initial scatter assigns distinct origins")
+        scatterCoordinator.replayScatter(scattered, on: [displays[0]])
+        let remainingOrigins = scattered.compactMap { $0.landingOrigins.last }
+        check(Set(remainingOrigins.map { "\($0.x),\($0.y)" }).count == 3
+              && remainingOrigins.allSatisfy { displays[0].frame.contains($0) },
+              "display drop discards stale fallback coordinates and scatters on the remaining desktop")
+        scatterCoordinator.invalidate()
+        reliabilityTimelines += 1
 
         let result: [String: Any] = [
             "reliabilityTimelines": reliabilityTimelines,

@@ -21,6 +21,8 @@ public enum StashCollapsePresentation: Equatable {
 }
 
 public enum ManagedGeometryAction: Equatable {
+    /// The observation cannot describe a desktop placement or a resize.
+    case ignore
     case none
     case detach
     case repairHidden
@@ -33,8 +35,8 @@ public enum StashSessionPolicy {
     public static func mayCapture(isStandard: Bool, minimized: Bool?, fullScreen: Bool?,
                                   hasWindowNumber: Bool, frame: CGRect?) -> Bool {
         guard isStandard, minimized == false, fullScreen == false, hasWindowNumber,
-              let frame, frame.width > 0, frame.height > 0 else { return false }
-        return frame.minX.isFinite && frame.minY.isFinite && frame.width.isFinite && frame.height.isFinite
+              let frame else { return false }
+        return WindowRecoveryPolicy.isUsableFrame(frame)
     }
 
     /// AXMoved describes a physical change, not necessarily a user decision.
@@ -44,12 +46,16 @@ public enum StashSessionPolicy {
     public static func externalGeometryAction(
         phase: StashSessionPhase, presentation: StashCollapsePresentation?,
         frame: CGRect, displayID: String, edge: DisplayEdge,
-        displays: [DisplayGeometry], wasDragged: Bool,
+        displays: [DisplayGeometry], wasDragged: Bool, minimized: Bool?,
         isBusy: Bool = false, screenSetQuiet: Bool = false, recovering: Bool = false
     ) -> ManagedGeometryAction {
         guard !isBusy, !screenSetQuiet else { return .none }
+        // Minimized AX bounds can be relocated to the primary display during
+        // wake/reconfiguration. They are not a move-to-display command, even
+        // when a mouse button happens to be down. Keep the saved visible frame.
+        guard minimized == false, WindowRecoveryPolicy.isUsableFrame(frame) else { return .ignore }
         guard let source = displays.first(where: { $0.id == displayID }) else { return .none }
-        if recovering, !wasDragged, phase == .expanded { return .repairHidden }
+        if recovering, !wasDragged, phase != .idle { return .repairHidden }
         func alignedSide(on display: DisplayGeometry) -> DisplayEdge? {
             ([edge] + DisplayEdge.allCases.filter { $0 != edge }).first {
                 abs($0 == .left ? frame.minX - display.frame.minX : frame.maxX - display.frame.maxX) <= 20

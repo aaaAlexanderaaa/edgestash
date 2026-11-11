@@ -89,16 +89,18 @@ func runReliabilityTests(_ expect: (Bool, String) -> Void) {
         previous: .systemMinimize, next: .systemMinimize, ownsMinimize: true),
            "a healthy collapsed seam does not require a migration or visibility write")
     func replay(fail: String? = nil, changedAt: Int? = nil, compensation: Bool = true)
-        -> (SeamRevealCommitResult, [String]) {
+        -> (SeamRevealCommitResult, [String], [SeamRevealCommit.Failure]) {
         var trace: [String] = []
+        var failures: [SeamRevealCommit.Failure] = []
         var observations = 0
         func write(_ name: String) -> Bool { trace.append(name); return fail != name }
         let result = SeamRevealCommit.perform(confirmsDestination: {
             observations += 1; trace.append("confirm")
             return observations != changedAt
         }, restoreOpacity: { write("alpha") }, deminimize: { write("deminimize") },
-           placeFrame: { write("frame") }, reminimize: { trace.append("compensate"); return compensation })
-        return (result, trace)
+           placeFrame: { write("frame") }, reminimize: { trace.append("compensate"); return compensation },
+           onFailure: { failures.append($0) })
+        return (result, trace, failures)
     }
     let success = replay()
     expect(success.0 == .succeeded && success.1 == ["confirm", "alpha", "deminimize", "confirm", "frame", "confirm"],
@@ -117,6 +119,19 @@ func runReliabilityTests(_ expect: (Bool, String) -> Void) {
     }
     expect(replay(fail: "frame", compensation: false).0 == .releaseRequired,
            "failed compensation explicitly takes visibility-restoring release")
+    // MARK: seam_reveal failure diagnostics preserve transaction ordering.
+    expect(success.2.isEmpty && refused.2 == [.destinationBeforeReveal],
+           "successful commits stay quiet; a pre-reveal refusal identifies its exact gate")
+    expect(replay(fail: "alpha").2 == [.opacity] && replay(fail: "alpha").1 == ["confirm", "alpha"],
+           "opacity rejection is distinct and cannot deminimize")
+    expect(replay(fail: "deminimize").2 == [.deminimize],
+           "failed or unsettled deminimization is distinguishable from frame rejection")
+    expect(replay(fail: "frame").2 == [.frame], "rejected frame readback identifies placement failure")
+    expect(replay(changedAt: 2).2 == [.destinationAfterDeminimize]
+           && replay(changedAt: 3).2 == [.destinationAfterPlacement],
+           "the two post-write Space checks retain their separate failure stages")
+    expect(replay(fail: "frame", compensation: false).2 == [.frame, .compensation],
+           "failed compensation preserves the original failure as well as the release reason")
 
     var preparation = SeamRecoveryPreparation()
     let first = ScreenSetPlacement(windowNumber: 42, bundleID: "test.app", displayID: "one", edge: 0)

@@ -20,7 +20,9 @@ extension StashSession {
             DisplaySpaceTransport.shared.availability(for: $0)
         }
     ) {
-        guard !ScreenSetCoordinator.blocksUserGeometry, !awaitingWindowControl, !recoveryEpochActive else { return }
+        guard !ScreenSetCoordinator.blocksUserGeometry, !awaitingWindowControl else { return }
+        if reconcilePendingWindowWrites() { return }
+        guard !recoveryEpochActive else { return }
         guard usingSharedMinimize, phase == .collapsed, !restoringShared else { return }
         guard now.timeIntervalSince(lastMinimizeCheck) >= 0.5 else { return }
         lastMinimizeCheck = now
@@ -383,6 +385,9 @@ extension StashSession {
             minimizeNotification = nil
         }
         if let minimizeNotification {
+            // An owned capture may still be waiting for this notification's
+            // actual AX state. It must commit before normal lifecycle handling.
+            if reconcilePendingWindowWrites() { return }
             let observedMinimized = StashAX.isMinimized(element)
             guard observedMinimized != nil else { markWindowControlUnavailable(); return }
             // Environment recovery owns presentation until it has verified
@@ -455,7 +460,12 @@ extension StashSession {
     private func reconcileExternalGeometry() {
         guard !ScreenSetCoordinator.blocksUserGeometry, !awaitingWindowControl, !busy else { return }
         if ScreenSetCoordinator.active?.reconcileUnannouncedTopology() == true { return }
-        let wasDragged = externalGeometryWasDragged
+        guard let edge, let displayID else { return }
+        guard let minimized = StashAX.isMinimized(windowElement) else {
+            markWindowControlUnavailable()
+            return
+        }
+        let wasDragged = externalGeometryWasDragged && !minimized
         externalGeometryWasDragged = false
         if wasDragged { cancelPendingRecovery() }
         if pendingScreenSetRecovery != nil {
@@ -464,18 +474,26 @@ extension StashSession {
             onControlReady?(self)
             return
         }
-        guard let edge, let displayID, let frame = StashAX.frame(of: windowElement) else { return }
+        // A minimized window need not expose bounds at all. Its saved frame
+        // is only an input to the ignore decision, never new desktop geometry.
+        let observedFrame = StashAX.frame(of: windowElement)
+        guard let frame = observedFrame ?? (minimized ? restoreFrame : nil) else { return }
         let displays = DisplayCatalog.adjacencyGeometries()
         let action = StashSessionPolicy.externalGeometryAction(
             phase: phase, presentation: presentation, frame: frame,
             displayID: displayID, edge: edge, displays: displays,
-            wasDragged: wasDragged, isBusy: busy,
+            wasDragged: wasDragged, minimized: minimized, isBusy: busy,
             screenSetQuiet: ScreenSetCoordinator.blocksUserGeometry,
             recovering: recoveryEpochActive
         )
         diagnose("session.external-geometry", ["action": String(describing: action), "dragged": wasDragged,
-                                               "observedFrame": [Double(frame.minX), Double(frame.minY), Double(frame.width), Double(frame.height)]])
+                                               "minimized": minimized,
+                                               "observedFrame": observedFrame.map {
+                                                   [Double($0.minX), Double($0.minY), Double($0.width), Double($0.height)]
+                                               } ?? []])
         switch action {
+        case .ignore:
+            break
         case .none:
             if phase == .expanded, frame != restoreFrame,
                let display = displays.first(where: { $0.id == displayID }) {

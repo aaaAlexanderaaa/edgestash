@@ -66,7 +66,11 @@ An absent log entry does not prove that an event never arrived.
 | `session.control-wait` / `session.binding-check` / `session.control-rebound` | Unavailable reference, enumeration success/failure/completeness, exact candidate count, server ownership, previous/current process launch time, waiting, and rebinding. |
 | `session.stale-ax-callback` | Rejected notification from an old binding or environment; snapshots also include binding/lifecycle generations. |
 | `session.recovery-observed` / `session.recovery-unchanged` | Pre-write frame/minimized/alpha and healthy windows that need no placement write. |
-| `session.recovery-readback` | Whether post-write observations match the target; API success alone does not establish recovery. |
+| `session.recovery-readback` | Whether post-write observations match the target; API success alone does not establish recovery. New builds include `confirmation` (`waiting`, `confirmed`, `expired`) and expected/observed frames. Waiting reuses the original write and attempt. |
+| `session.minimize-confirmation` / `session.minimize-release-confirmation` | Delayed capture confirmation and settled cancellation of an unconfirmed hide. Session snapshots include pending confirmation flags and unconfirmed ownership. Added after 0.1.10. |
+| `session.external-geometry` | Observed frame, minimized state and geometry decision. `ignore` prevents minimized bounds from overwriting the saved desktop location. |
+| `session.seam-prepare-failed` / `session.seam-reveal-failed` | Exact preparation refusal and resulting availability for a named reveal. |
+| `session.seam-commit-failed` / `session.seam-frame-rejected` | Commit stage, target display/Space, and expected versus observed frame. Separates deminimization failure, frame mismatch, changed destination, and failed compensation. Added after 0.1.10; old packages cannot emit these details. |
 | `session.restore-result` / `session.refresh-result` / `session.retry-result` | `succeeded`, `waitingForControl`, `waitingForPersistence`, `blockedSpace`, or `failed`; `remainingAttempts` is the remaining write budget and becomes -1 after successful queue removal. |
 | `session.scatter-fallback` / `session.fallback-waits-for-control` | Visible desktop fallback or deferral until a verified binding; intent is distinct from idle appearance. |
 | `session.recovery-exhausted` | Initial recovery plus three retries failed; automatic writes stop while the original target remains. Space/persistence refusal retains its existing presentation rather than forcing desktop fallback. |

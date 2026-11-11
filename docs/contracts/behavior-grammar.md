@@ -4,7 +4,7 @@ status: current
 authority: normative
 implementation: implemented
 verification_status: partial
-last_reconciled: 2026-10-22
+last_reconciled: 2026-11-11
 ---
 
 # Behavior grammar and the expectation check
@@ -147,6 +147,30 @@ superseded recovery targets. Control-unavailable visible fallback writes wait
 for a verified binding. These tests do not prove native AX completion.
 Fresh process hydration preserves screen-set keys but clears their window
 memberships. None of these operations creates a new presentation production.
+
+Minimized AX bounds cannot authorize a placement or saved-size update, including
+after the environment has settled. Unreadable minimize state waits for verified
+control; invalid bounds cannot authorize frame writes. The shared geometry
+decision and memory consequences are exercised by `Tests/WindowRecoveryTests.swift`
+(`window_recovery minimized coordinates cannot replace saved placement`). The
+seam commit reports the failed gate to existing local diagnostics while keeping
+its original confirmation and compensation order. The injected ordering evidence
+is in `Tests/ReliabilityTests.swift` (`seam_reveal failure diagnostics preserve
+transaction ordering`). These guards add no presentation production, retry, or
+polling timer and do not promote any presentation cardinality coverage.
+
+Acknowledged capture minimizes and recovery presentation writes use the existing
+0.5-second observation pass to confirm actual state within the existing
+1.5-second settle bound. Pending capture retains membership and the newest named
+request. Expiry keeps visibility debt and recovery intent. Cancelling an
+unconfirmed minimize cannot clear rescue on the same immediate false read.
+Read-only recovery checks do not spend write attempts or replace rebased geometry;
+persistent mismatch still uses the declared fallback and retry budget. The
+fallback allocator retains per-window origins across independently due batches.
+`Tests/WindowRecoveryTests.swift` covers delayed acknowledgement, bounded opacity
+confirmation, inverse-write settle, and distinct fallback origins. The incident
+review records adapter evidence and its native limits. No presentation anchor or
+cardinality has changed.
 
 Session completion requires acknowledgement of the final AX frame writes.
 Exposed-edge Nudge/Fade additionally checks every opacity write: reveal hides

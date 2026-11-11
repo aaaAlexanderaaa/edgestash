@@ -100,7 +100,7 @@ func runStateMachineBoundaryTests(_ expect: (Bool, String) -> Void) {
     func move(_ frame: CGRect, phase: StashSessionPhase = .expanded, dragged: Bool) -> ManagedGeometryAction {
         StashSessionPolicy.externalGeometryAction(
             phase: phase, presentation: .slideOffscreen, frame: frame,
-            displayID: "laptop", edge: .left, displays: two.displays, wasDragged: dragged
+            displayID: "laptop", edge: .left, displays: two.displays, wasDragged: dragged, minimized: false
         )
     }
     let center = CGRect(x: 200, y: 80, width: 480, height: 320)
@@ -125,9 +125,9 @@ func runStateMachineBoundaryTests(_ expect: (Bool, String) -> Void) {
            "a system move of a collapsed window adopts the connected destination display")
     expect(StashSessionPolicy.externalGeometryAction(
         phase: .collapsed, presentation: .systemMinimize, frame: destinationCenter,
-        displayID: "laptop", edge: .left, displays: two.displays, wasDragged: false
+        displayID: "laptop", edge: .left, displays: two.displays, wasDragged: false, minimized: false
     ) == .rebind(displayID: "external", edge: .left),
-           "a minimized seam window also adopts its system-selected destination")
+           "a deminimized seam window can adopt a system-selected destination")
     expect(move(CGRect(x: 962, y: 80, width: 480, height: 320), phase: .collapsed, dragged: true)
            == .rebind(displayID: "external", edge: .left),
            "a collapsed window's destination lip wins over its larger overlap with the old display")
@@ -136,13 +136,13 @@ func runStateMachineBoundaryTests(_ expect: (Bool, String) -> Void) {
     for (busy, quiet) in [(true, false), (false, true), (true, true)] {
         expect(StashSessionPolicy.externalGeometryAction(
             phase: .expanded, presentation: .slideOffscreen, frame: center,
-            displayID: "laptop", edge: .left, displays: two.displays, wasDragged: true,
+            displayID: "laptop", edge: .left, displays: two.displays, wasDragged: true, minimized: false,
             isBusy: busy, screenSetQuiet: quiet
         ) == .none, "an in-flight operation or unsettled environment cannot commit a geometry-driven membership edit")
     }
     expect(StashSessionPolicy.externalGeometryAction(
         phase: .expanded, presentation: .slideOffscreen, frame: destinationCenter,
-        displayID: "laptop", edge: .left, displays: [external], wasDragged: true
+        displayID: "laptop", edge: .left, displays: [external], wasDragged: true, minimized: false
     ) == .none, "a missing owning display belongs to screen-set recovery, not user detach")
 
     // A prepared seam reveal can become stale while AX restores its frame.

@@ -41,13 +41,27 @@ public struct SeamRecoveryPreparation {
 /// Shared by named reveals and wake repair. A failed or uncertain write may
 /// already have taken effect, so every post-deminimize failure compensates.
 public enum SeamRevealCommit {
+    public enum Failure: String {
+        case destinationBeforeReveal, opacity, deminimize, destinationAfterDeminimize
+        case frame, destinationAfterPlacement, compensation
+    }
+
     public static func perform(
         confirmsDestination: () -> Bool, restoreOpacity: () -> Bool,
-        deminimize: () -> Bool, placeFrame: () -> Bool, reminimize: () -> Bool
+        deminimize: () -> Bool, placeFrame: () -> Bool, reminimize: () -> Bool,
+        onFailure: (Failure) -> Void = { _ in }
     ) -> SeamRevealCommitResult {
-        guard confirmsDestination(), restoreOpacity() else { return .keptMinimized }
-        guard deminimize(), confirmsDestination(), placeFrame(), confirmsDestination() else {
-            return reminimize() ? .keptMinimized : .releaseRequired
+        func checked(_ operation: () -> Bool, _ failure: Failure) -> Bool {
+            let succeeded = operation()
+            if !succeeded { onFailure(failure) }
+            return succeeded
+        }
+        guard checked(confirmsDestination, .destinationBeforeReveal),
+              checked(restoreOpacity, .opacity) else { return .keptMinimized }
+        guard checked(deminimize, .deminimize),
+              checked(confirmsDestination, .destinationAfterDeminimize),
+              checked(placeFrame, .frame), checked(confirmsDestination, .destinationAfterPlacement) else {
+            return checked(reminimize, .compensation) ? .keptMinimized : .releaseRequired
         }
         return .succeeded
     }

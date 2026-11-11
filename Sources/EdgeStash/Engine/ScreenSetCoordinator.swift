@@ -26,6 +26,7 @@ final class ScreenSetCoordinator {
     private var knownBuiltinID: String?
     private var sessionSource: (() -> [StashSession])?
     private var restorationRetry = ScreenSetRestorationRetry()
+    private var fallbackLayout = ScreenSetFallbackLayout()
     private var retryWork: DispatchWorkItem?
     var onSettled: ((_ validateBindings: Bool) -> Void)?
 
@@ -47,6 +48,7 @@ final class ScreenSetCoordinator {
         retryWork?.cancel()
         retryWork = nil
         restorationRetry = ScreenSetRestorationRetry()
+        fallbackLayout = ScreenSetFallbackLayout()
         sessionSource = nil
         onSettled = nil
         power.settled()
@@ -116,6 +118,7 @@ final class ScreenSetCoordinator {
               let slot = session.screenSetSlot else { return }
         guard !reconcileUnannouncedTopology() else { return }
         restorationRetry.remove(slot.key)
+        fallbackLayout.remove(slot.key)
         let preferences = Preferences.shared
         guard let next = memory?.recording(slot, live: sessions.compactMap(\.screenSetSlot),
                                           configurations: preferences.storedScreenSets),
@@ -153,7 +156,8 @@ final class ScreenSetCoordinator {
 
     func cancelRestoration(of session: StashSession) {
         guard let number = session.windowID else { return }
-        restorationRetry.remove(ScreenSetWindowKey(windowNumber: number, bundleID: session.bundleID))
+        let key = ScreenSetWindowKey(windowNumber: number, bundleID: session.bundleID)
+        restorationRetry.remove(key)
         scheduleRestorationRetry()
     }
 
@@ -171,6 +175,7 @@ final class ScreenSetCoordinator {
         let preferences = Preferences.shared
         let key = ScreenSetWindowKey(windowNumber: windowNumber, bundleID: bundleID)
         restorationRetry.remove(key)
+        fallbackLayout.remove(key)
         guard let next = memory?.forgetting(key, everywhere: everywhere,
                                            configurations: preferences.storedScreenSets),
               next != preferences.storedScreenSets else { return }
@@ -350,6 +355,7 @@ final class ScreenSetCoordinator {
             case .succeeded:
                 memory?.didRestore(slot)
                 restorationRetry.remove(slot.key)
+                fallbackLayout.remove(slot.key)
             case .waitingForControl:
                 session.retainRecoveryIntent(intent)
                 restorationRetry.waitForControl(slot, intent: intent)
@@ -370,7 +376,7 @@ final class ScreenSetCoordinator {
             let result = session.reconcileScreenSetPresentation(inspectFirst: afterWake)
             switch result {
             case .succeeded:
-                break
+                fallbackLayout.remove(slot.key)
             case .waitingForControl:
                 session.retainRecoveryIntent(intent)
                 restorationRetry.waitForControl(slot, intent: intent)
@@ -434,6 +440,7 @@ final class ScreenSetCoordinator {
             case .succeeded:
                 memory?.didRestore(slot)
                 restorationRetry.remove(slot.key)
+                fallbackLayout.remove(slot.key)
             case .waitingForControl:
                 session.retainRecoveryIntent(intent)
                 restorationRetry.waitForControl(slot, intent: intent)
@@ -455,50 +462,16 @@ final class ScreenSetCoordinator {
             }
         }
         guard !unique.isEmpty else { return }
-        let origins = Self.scatterOrigins(for: unique, on: displays)
         for session in unique {
+            guard let number = session.windowID else { continue }
+            let key = ScreenSetWindowKey(windowNumber: number, bundleID: session.bundleID)
             session.diagnose("session.scatter-fallback")
-            if let origin = origins[ObjectIdentifier(session)] {
-                let intent = session.windowID.flatMap {
-                    restorationRetry.intent(for: ScreenSetWindowKey(windowNumber: $0, bundleID: session.bundleID))
-                }
-                session.leaveStash(to: origin, preservingRecovery: intent)
-            } else if let fallback = displays.first {
-                let origin = ScreenSetPolicy.scatterOrigins(
-                    count: 1,
-                    on: fallback.frame,
-                    windowSize: session.restoreFrame?.size ?? CGSize(width: 640, height: 480)
-                ).first ?? fallback.frame.origin
-                let intent = session.windowID.flatMap {
-                    restorationRetry.intent(for: ScreenSetWindowKey(windowNumber: $0, bundleID: session.bundleID))
-                }
+            if let origin = fallbackLayout.origin(for: key,
+                size: session.restoreFrame?.size ?? CGSize(width: 640, height: 480), on: displays) {
+                let intent = restorationRetry.intent(for: key)
                 session.leaveStash(to: origin, preservingRecovery: intent)
             }
         }
-    }
-
-    private static func scatterOrigins(
-        for sessions: [StashSession],
-        on displays: [DisplayGeometry]
-    ) -> [ObjectIdentifier: CGPoint] {
-        guard !sessions.isEmpty, !displays.isEmpty else { return [:] }
-        var groups = Array(repeating: [StashSession](), count: displays.count)
-        for (index, session) in sessions.enumerated() {
-            groups[index % displays.count].append(session)
-        }
-        var result: [ObjectIdentifier: CGPoint] = [:]
-        for (displayIndex, group) in groups.enumerated() where !group.isEmpty {
-            let size = group.first?.restoreFrame?.size ?? CGSize(width: 640, height: 480)
-            let origins = ScreenSetPolicy.scatterOrigins(
-                count: group.count,
-                on: displays[displayIndex].frame,
-                windowSize: size
-            )
-            for (index, session) in group.enumerated() where index < origins.count {
-                result[ObjectIdentifier(session)] = origins[index]
-            }
-        }
-        return result
     }
 
     private static func geometries(screens: [NSScreen] = NSScreen.screens) -> [DisplayGeometry] {

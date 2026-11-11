@@ -1,0 +1,124 @@
+{
+  "scope": "Owner-provided diagnostic log analysis. Native events are observations; they do not prove opacity API behavior after the immediate readback.",
+  "zipSHA256": "590ec3532eeeb432f8e15861f3b430a0f30c0e98ee793877f3196955aae1864e",
+  "files": {
+    "runtime.previous.jsonl": {
+      "sha256": "5fcc84b8aa6c9371490d16072d789d29babb47a7ac33ee45bb3f9b58b953e93f",
+      "lines": 4952,
+      "firstUTC": "2026-11-10T06:01:48.794Z",
+      "lastUTC": "2026-11-11T03:23:16.182Z"
+    },
+    "runtime.jsonl": {
+      "sha256": "fa5d61f8ee3eef52d244aecf73473d3924d29832bf41e4c5ff6c18233558df62",
+      "lines": 3355,
+      "firstUTC": "2026-11-11T03:23:16.182Z",
+      "lastUTC": "2026-11-11T09:14:49.582Z"
+    }
+  },
+  "knownAppStart": {
+    "build": "11",
+    "configuration": "Release",
+    "event": "app.start",
+    "executableUUID": "9383FEAB-24DC-39B1-A7C0-1EEFFF7330CD",
+    "os": "Version 27.0.1 (Build 26A434)",
+    "process": 18375,
+    "run": "087A7347-157F-402F-A29C-BD3B09F55EAA",
+    "time": "2026-11-11T06:10:02.409Z",
+    "uptime": 286864.064950125,
+    "version": "0.1.10"
+  },
+  "acknowledgedMinimizeWithLateCompletion": [
+    {
+      "requestUTC": "2026-11-11T06:39:19.565Z",
+      "requestLine": 1737,
+      "window": 1978,
+      "minimizeNotificationUTC": "2026-11-11T06:39:20.217Z",
+      "notificationLine": 1742,
+      "delaySeconds": 0.653,
+      "releaseLine": 1739,
+      "rescueClearedBeforeCompletion": true
+    },
+    {
+      "requestUTC": "2026-11-11T06:39:21.904Z",
+      "requestLine": 1748,
+      "window": 1976,
+      "minimizeNotificationUTC": "2026-11-11T06:39:22.553Z",
+      "notificationLine": 1753,
+      "delaySeconds": 0.649,
+      "releaseLine": 1750,
+      "rescueClearedBeforeCompletion": true
+    },
+    {
+      "requestUTC": "2026-11-11T06:39:41.393Z",
+      "requestLine": 1782,
+      "window": 1978,
+      "minimizeNotificationUTC": "2026-11-11T06:39:42.086Z",
+      "notificationLine": 1787,
+      "delaySeconds": 0.693,
+      "releaseLine": 1784,
+      "rescueClearedBeforeCompletion": true
+    },
+    {
+      "requestUTC": "2026-11-11T06:52:18.519Z",
+      "requestLine": 2163,
+      "window": 1976,
+      "minimizeNotificationUTC": "2026-11-11T06:52:19.143Z",
+      "notificationLine": 2169,
+      "delaySeconds": 0.624,
+      "releaseLine": 2166,
+      "rescueClearedBeforeCompletion": true
+    },
+    {
+      "requestUTC": "2026-11-11T06:52:20.111Z",
+      "requestLine": 2205,
+      "window": 1978,
+      "minimizeNotificationUTC": "2026-11-11T06:52:20.758Z",
+      "notificationLine": 2212,
+      "delaySeconds": 0.647,
+      "releaseLine": 2208,
+      "rescueClearedBeforeCompletion": true
+    },
+    {
+      "requestUTC": "2026-11-11T06:52:21.062Z",
+      "requestLine": 2220,
+      "window": 1977,
+      "minimizeNotificationUTC": "2026-11-11T06:52:21.666Z",
+      "notificationLine": 2225,
+      "delaySeconds": 0.605,
+      "releaseLine": 2222,
+      "rescueClearedBeforeCompletion": true
+    },
+    {
+      "requestUTC": "2026-11-11T06:52:43.086Z",
+      "requestLine": 2244,
+      "window": 1976,
+      "minimizeNotificationUTC": "2026-11-11T06:52:43.662Z",
+      "notificationLine": 2249,
+      "delaySeconds": 0.576,
+      "releaseLine": 2246,
+      "rescueClearedBeforeCompletion": true
+    }
+  ],
+  "knownRunRecoveryReadbacks": {
+    "total": 33,
+    "collapsedRejectedWithAlphaOne": 32
+  },
+  "repeatedShortcutInterval": {
+    "fromUTC": "2026-11-11T06:52:18.496Z",
+    "toUTC": "2026-11-11T06:52:44.755Z",
+    "count": 14,
+    "allIdleThree": true
+  },
+  "keyRuntimeLines": {
+    "primaryFallbackWindow1976": 2112,
+    "primaryFallbackWindow1978": 2152,
+    "primaryFallbackWindow1977": 2180,
+    "prematureReleaseWindow1976": 2166,
+    "delayedMinimizeWindow1976": 2169,
+    "prematureReleaseWindow1978": 2208,
+    "delayedMinimizeWindow1978": 2212,
+    "prematureReleaseWindow1977": 2222,
+    "delayedMinimizeWindow1977": 2225
+  },
+  "minimizedFrameRebindHypothesis": "Not observed in this archive. The earlier code-level defect remains separately guarded."
+}

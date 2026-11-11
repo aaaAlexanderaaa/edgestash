@@ -1,5 +1,6 @@
 import ApplicationServices
 import CoreGraphics
+import EdgeStashLogic
 import Foundation
 
 @_silgen_name("_AXUIElementGetWindow")
@@ -80,7 +81,9 @@ enum StashAX {
               AXValueGetValue(sizeValue as! AXValue, .cgSize, &size) else {
             return .failure(.illegalArgument)
         }
-        return .value(CGRect(origin: origin, size: size))
+        let frame = CGRect(origin: origin, size: size)
+        guard WindowRecoveryPolicy.isUsableFrame(frame) else { return .failure(.illegalArgument) }
+        return .value(frame)
     }
 
     @discardableResult
@@ -106,7 +109,8 @@ enum StashAX {
     }
 
     static func applyFrame(_ element: AXUIElement, _ frame: CGRect) -> (sized: Bool, moved: Bool) {
-        (setSize(element, frame.size), setPosition(element, frame.origin))
+        guard WindowRecoveryPolicy.isUsableFrame(frame) else { return (false, false) }
+        return (setSize(element, frame.size), setPosition(element, frame.origin))
     }
 
     @discardableResult
@@ -168,17 +172,21 @@ enum StashAX {
 
     @discardableResult
     static func setMinimized(_ element: AXUIElement, _ minimized: Bool) -> Bool {
-        guard canSetMinimized(element) else { return false }
-        guard setBool(element, kAXMinimizedAttribute as String, minimized) else { return false }
+        guard requestMinimized(element, minimized) else { return false }
         if let observed = isMinimized(element) {
             if observed != minimized {
                 StashDiagnostics.record("ax.minimize-mismatch", ["ax": String(CFHash(element)), "requested": minimized, "observed": observed])
             }
             return observed == minimized
         }
-        // An accepted write with an unreadable result is not evidence of the
-        // visibility state required by collapse, compensation, or rescue.
         return false
+    }
+
+    /// Submission acknowledgement only. Callers must confirm asynchronously
+    /// before committing a hide; a stale false read is not rejection.
+    static func requestMinimized(_ element: AXUIElement, _ minimized: Bool) -> Bool {
+        guard canSetMinimized(element) else { return false }
+        return setBool(element, kAXMinimizedAttribute as String, minimized)
     }
 
     static func roleAlive(_ element: AXUIElement) -> AXError {

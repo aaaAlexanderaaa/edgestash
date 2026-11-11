@@ -121,6 +121,12 @@ final class StashSession {
     var externalGeometryWasDragged = false
     private(set) var needsScreenSetRepair = false
     private var recoverySpacePreparation = SeamRecoveryPreparation()
+    private var pendingMinimize: (confirmation: WindowWriteConfirmation, next: StashSessionPhase,
+                                  frame: CGRect, merged: Bool)?
+    private var pendingPresentation: (confirmation: WindowWriteConfirmation, phase: StashSessionPhase,
+                                      presentation: StashCollapsePresentation, frame: CGRect)?
+    private var unconfirmedOwnedMinimize = false
+    private var pendingMinimizeRelease: WindowWriteConfirmation?
 
     init(appElement: AXUIElement, windowElement: AXUIElement, pid: pid_t, bundleID: String) {
         self.appElement = appElement
@@ -217,6 +223,7 @@ final class StashSession {
 
     func cancelPendingRecovery() {
         recoverySpacePreparation.cancel()
+        pendingPresentation = nil
         pendingScreenSetRecovery = nil
         pendingVisibleFallbackOrigin = nil
         recoveryEpochActive = false
@@ -348,7 +355,7 @@ final class StashSession {
     }
 
     private var eligibleCaptureFrame: CGRect? {
-        guard !awaitingWindowControl, !ScreenSetCoordinator.blocksUserGeometry else { return nil }
+        guard !awaitingWindowControl, !usingSharedMinimize, !ScreenSetCoordinator.blocksUserGeometry else { return nil }
         let frame = StashAX.frame(of: windowElement)
         return StashSessionPolicy.mayCapture(
             isStandard: StashAX.isStandardWindow(windowElement),
@@ -384,8 +391,11 @@ final class StashSession {
         if !invalidateSpacePreparation, recoverySpacePreparation.state == .pending { return }
         if invalidateSpacePreparation {
             if recoverySpacePreparation.state == .pending { onControlReady?(self) }
+            if pendingPresentation != nil { onControlReady?(self) }
             recoverySpacePreparation.cancel()
+            pendingPresentation = nil
         }
+        pendingMinimize = nil
         diagnose("session.environment-pause")
         recoveryEpochActive = isManaged || pendingScreenSetRecovery != nil
         externalGeometryWasDragged = false
@@ -450,7 +460,14 @@ final class StashSession {
     /// Keep the same display and side while rebasing actual desktop geometry.
     @discardableResult
     func refreshCollapsePresentation() -> Bool {
-        reconcileScreenSetPresentation() == .succeeded
+        let result = reconcileScreenSetPresentation()
+        if result == .waitingForControl {
+            // Geometry refreshes outside a screen transaction need the same
+            // retry owner to consume their asynchronous readback completion.
+            ScreenSetCoordinator.active?.waitForControl(of: self)
+            return true
+        }
+        return result == .succeeded
     }
 
     func reconcileScreenSetPresentation(
@@ -468,6 +485,9 @@ final class StashSession {
         }
         let displays = DisplayCatalog.adjacencyGeometries()
         guard let display = displays.first(where: { $0.id == displayID }) else { return .failed }
+        if pendingPresentation != nil {
+            return confirmScreenSetPresentation(readWindows: readWindows)
+        }
         let minimized = StashAX.boolResult(windowElement, kAXMinimizedAttribute as String)
         guard let isMinimized = minimized.value else {
             markWindowControlUnavailable()
@@ -560,21 +580,38 @@ final class StashSession {
             phase = .collapsed
         }
         presentation = next
-        // AX success is a write acknowledgement, not proof of appearance.
-        // Log readback and fail bounded recovery if the observable result
-        // still disagrees. An unreadable result retains the same intent.
+        pendingPresentation = (WindowWriteConfirmation(now: ProcessInfo.processInfo.systemUptime),
+                               phase, next, isExpanded ? rebased : hidden)
+        return confirmScreenSetPresentation(readWindows: readWindows)
+    }
+
+    private func confirmScreenSetPresentation(readWindows: () -> [StashRecoverySurface]?) -> ScreenSetApplicationResult {
+        guard let pending = pendingPresentation else { return .failed }
         let observedMinimized = StashAX.isMinimized(windowElement)
         let observedFrame = StashAX.frame(of: windowElement)
         let observedSurface = readWindows()?.first { $0.windowID == windowID && $0.pid == pid }
         let confirmed = WindowRecoveryPolicy.presentationMatches(
-            phase: phase, presentation: next, expectedFrame: isExpanded ? rebased : hidden,
+            phase: pending.phase, presentation: pending.presentation, expectedFrame: pending.frame,
             actualFrame: observedFrame, minimized: observedMinimized, alpha: observedSurface?.alpha
         )
+        let result = pending.confirmation.observe(matches: confirmed, now: ProcessInfo.processInfo.systemUptime)
         diagnose("session.recovery-readback", ["confirmed": confirmed, "minimized": observedMinimized.map { $0 as Any } ?? "unknown",
-                                               "alpha": observedSurface?.alpha.map { Double($0) } ?? -1])
-        guard confirmed else { return .failed }
-        finishScreenSetRepair()
-        return .succeeded
+            "alpha": observedSurface?.alpha.map { Double($0) } ?? -1, "confirmation": String(describing: result),
+            "expectedFrame": [Double(pending.frame.minX), Double(pending.frame.minY), Double(pending.frame.width), Double(pending.frame.height)],
+            "observedFrame": observedFrame.map { [Double($0.minX), Double($0.minY), Double($0.width), Double($0.height)] } ?? []])
+        switch result {
+        case .waiting: return .waitingForControl
+        case .expired:
+            pendingPresentation = nil
+            return .failed
+        case .confirmed:
+            pendingPresentation = nil
+            phase = pending.phase
+            presentation = pending.presentation
+            unconfirmedOwnedMinimize = false
+            finishScreenSetRepair()
+            return .succeeded
+        }
     }
 
     private func holdMinimizedRecovery(_ intent: ScreenSetRecoveryIntent,
@@ -685,18 +722,34 @@ final class StashSession {
             restoreOpacity: { StashSurface.setAlpha(windowID: windowID, alpha: alpha) },
             deminimize: { StashAX.setMinimized(self.windowElement, false) },
             placeFrame: {
-                StashAX.setFrame(self.windowElement, frame)
-                    && StashAX.isMinimized(self.windowElement) == false
-                    && StashAX.frame(of: self.windowElement).map { WindowRecoveryPolicy.framesMatch($0, frame) } == true
+                let written = StashAX.setFrame(self.windowElement, frame)
+                let minimized = StashAX.isMinimized(self.windowElement)
+                let observed = StashAX.frame(of: self.windowElement)
+                let confirmed = written && minimized == false
+                    && observed.map { WindowRecoveryPolicy.framesMatch($0, frame) } == true
+                if !confirmed {
+                    self.diagnose("session.seam-frame-rejected", [
+                        "written": written, "minimized": minimized.map { $0 as Any } ?? "unknown",
+                        "expectedFrame": [Double(frame.minX), Double(frame.minY), Double(frame.width), Double(frame.height)],
+                        "observedFrame": observed.map { [Double($0.minX), Double($0.minY), Double($0.width), Double($0.height)] } ?? []
+                    ])
+                }
+                return confirmed
             },
             reminimize: {
                 self.lastOwnedMinimizeAt = Date()
                 return StashAX.setMinimized(self.windowElement, true)
+            },
+            onFailure: { failure in
+                self.diagnose("session.seam-commit-failed", ["stage": failure.rawValue,
+                    "targetSpace": spaceID, "targetDisplay": displayID])
             }
         )
     }
 
     private func finishScreenSetRepair() {
+        pendingPresentation = nil
+        unconfirmedOwnedMinimize = false
         recoverySpacePreparation.cancel()
         pendingScreenSetRecovery = nil
         recoveryEpochActive = false
@@ -719,6 +772,13 @@ final class StashSession {
     ) -> ScreenSetApplicationResult {
         guard DisplayCatalog.screen(withID: displayID) != nil else { return .failed }
         guard !awaitingWindowControl else { return .waitingForControl }
+        guard pendingMinimizeRelease == nil else { return .waitingForControl }
+        if self.displayID == displayID, self.edge == edge, pendingPresentation != nil {
+            // A read-only confirmation must not reinstall the pre-rebase
+            // intent frame, reset phase, or cancel a newer named request.
+            return reconcileScreenSetPresentation(inspectFirst: true)
+        }
+        pendingPresentation = nil
         if let intent { recoverySpacePreparation.select(intent.placement) }
         prepareForScreenSetChange(invalidateSpacePreparation: false)
         if let intent {
@@ -846,6 +906,10 @@ final class StashSession {
 
     func shutdown(event: SessionLifecyclePolicy.Event) {
         diagnose("session.shutdown", ["reason": String(describing: event)])
+        let hadUnconfirmedMinimize = unconfirmedOwnedMinimize
+        pendingMinimize = nil
+        pendingPresentation = nil
+        pendingMinimizeRelease = nil
         let preservingRecovery = ScreenSetCoordinator.isApplying && event == .miniaturized
             && pendingScreenSetRecovery != nil
         if !preservingRecovery { cancelPendingRecovery() }
@@ -880,8 +944,9 @@ final class StashSession {
             unminimizeOK = !usingSharedMinimize
         } else if shouldRestore {
             if usingSharedMinimize {
-                unminimizeOK = StashAX.isMinimized(windowElement) == false
-                    || StashAX.setMinimized(windowElement, false)
+                // An earlier accepted minimize can still be queued in the
+                // target app. Always submit the inverse, even on a false read.
+                unminimizeOK = releaseOwnedMinimize()
             }
             if let restoreFrame {
                 positionOK = StashAX.setFrame(windowElement, restoreFrame)
@@ -892,8 +957,7 @@ final class StashSession {
                 && StashSurface.setAlpha(windowID: windowID, alpha: 1)
         }
         if event == .detachedFromEdge, usingSharedMinimize, !awaitingWindowControl {
-            unminimizeOK = StashAX.isMinimized(windowElement) == false
-                || StashAX.setMinimized(windowElement, false)
+            unminimizeOK = releaseOwnedMinimize()
         } else if event == .detachedFromEdge, usingSharedMinimize {
             unminimizeOK = false
         }
@@ -952,10 +1016,26 @@ final class StashSession {
             onEnded?(self, event)
         }
         ignoringGeometryNotifications = false
+        if hadUnconfirmedMinimize, shouldRestore, !awaitingWindowControl, pendingMinimizeRelease == nil {
+            // Fresh binding validation must finish release before the dossier
+            // can be removed. The current read may predate both queued writes.
+            markWindowControlUnavailable()
+        }
         diagnose("session.shutdown-result", ["reason": String(describing: event),
                                              "positionOK": positionOK, "alphaOK": alphaOK,
                                              "unminimizeOK": unminimizeOK, "rescueCleared": restorationSettled])
         notifyChanged()
+    }
+
+    /// A false read immediately after reversing an unconfirmed hide can still
+    /// predate both writes. Keep its dossier through the existing settle bound.
+    private func releaseOwnedMinimize() -> Bool {
+        guard StashAX.requestMinimized(windowElement, false) else { return false }
+        if unconfirmedOwnedMinimize {
+            pendingMinimizeRelease = WindowWriteConfirmation(now: ProcessInfo.processInfo.systemUptime)
+            return false
+        }
+        return StashAX.isMinimized(windowElement) == false
     }
 
     private func rehideCollapsed(on display: DisplayGeometry, next: StashCollapsePresentation) -> Bool {
@@ -970,7 +1050,10 @@ final class StashSession {
             guard seamSpaceAvailability != .unavailable || usingSharedMinimize else { return false }
             usingSharedMinimize = true
             lastOwnedMinimizeAt = Date()
-            guard StashAX.isMinimized(windowElement) == true || StashAX.setMinimized(windowElement, true) else { return false }
+            if StashAX.isMinimized(windowElement) != true {
+                unconfirmedOwnedMinimize = true
+                guard StashAX.requestMinimized(windowElement, true) else { return false }
+            }
             // A minimized window is anchored by displayID; its frame can be
             // written on the confirmed reveal path if AX rejects it while hidden.
             if let windowID, !StashSurface.setAlpha(windowID: windowID, alpha: 1) { return false }
@@ -1109,21 +1192,21 @@ final class StashSession {
             usingSharedMinimize = true
             restoringShared = false
             lastOwnedMinimizeAt = Date()
-            guard StashAX.setMinimized(windowElement, true) else {
+            guard StashAX.requestMinimized(windowElement, true) else {
                 // A failed acknowledgement can still have minimized the
                 // window. Keep the visibility debt until a fresh read proves
                 // otherwise; shutdown must not clear its rescue prematurely.
-                usingSharedMinimize = StashAX.isMinimized(windowElement) != false
-                if usingSharedMinimize { markWindowControlUnavailable() }
-                if StashSessionPolicy.shouldRestorePriorFrame(
-                    didMoveToExpanded: moved,
-                    minimizeSucceeded: false
-                ), !awaitingWindowControl {
-                    _ = StashAX.setFrame(windowElement, priorFrame)
-                }
+                // Transport failure is also uncertain: never erase ownership
+                // on a possibly stale false observation.
+                unconfirmedOwnedMinimize = true
+                markWindowControlUnavailable()
                 return false
             }
-            finishCollapse(next: next, frame: expanded, merged: merged)
+            unconfirmedOwnedMinimize = true
+            pendingMinimize = (WindowWriteConfirmation(now: ProcessInfo.processInfo.systemUptime), next, expanded, merged)
+            busy = true
+            collapseStarted = true
+            confirmOwnedMinimize()
         case .slideOffscreen:
             usingSharedMinimize = false
             let hidden = StashGeometryPolicy.visualHiddenOrigin(
@@ -1152,6 +1235,69 @@ final class StashSession {
         }
         collapseStarted = true
         return true
+    }
+
+    /// Run by the existing 0.5s observation pass. No additional polling timer
+    /// or repeated hide write is created while readback is settling.
+    @discardableResult
+    func reconcilePendingWindowWrites() -> Bool {
+        if let release = pendingMinimizeRelease {
+            let now = ProcessInfo.processInfo.systemUptime
+            guard release.hasSettled(now: now) else { return true }
+            pendingMinimizeRelease = nil
+            let confirmed = StashAX.isMinimized(windowElement) == false
+            diagnose("session.minimize-release-confirmation", ["confirmed": confirmed])
+            // A timeout cannot erase visibility debt or start an unbounded
+            // inverse-write loop. Failed release keeps its persisted dossier.
+            guard confirmed else {
+                if pendingScreenSetRecovery != nil { onControlReady?(self) }
+                return true
+            }
+            unconfirmedOwnedMinimize = false
+            if pendingScreenSetRecovery != nil {
+                onControlReady?(self)
+            } else {
+                shutdown(event: .miniaturized)
+            }
+            return true
+        }
+        if pendingMinimize != nil {
+            confirmOwnedMinimize()
+            return true
+        }
+        if pendingPresentation != nil {
+            onControlReady?(self)
+            return true
+        }
+        return false
+    }
+
+    private func confirmOwnedMinimize() {
+        guard let pending = pendingMinimize else { return }
+        let observed = StashAX.isMinimized(windowElement)
+        let result = pending.confirmation.observe(matches: observed == true,
+                                                  now: ProcessInfo.processInfo.systemUptime)
+        diagnose("session.minimize-confirmation", ["result": String(describing: result),
+            "observed": observed.map { $0 as Any } ?? "unknown"])
+        switch result {
+        case .waiting:
+            break
+        case .confirmed:
+            pendingMinimize = nil
+            unconfirmedOwnedMinimize = false
+            finishCollapse(next: pending.next, frame: pending.frame, merged: pending.merged)
+        case .expired:
+            pendingMinimize = nil
+            // Do not convert an unconfirmed owned hide into an ordinary idle
+            // window. Existing control validation/recovery retains its rescue.
+            if let slot = screenSetSlot {
+                retainRecoveryIntent(ScreenSetRecoveryIntent(placement: slot,
+                                                              expanded: desiredPresentationIsExpanded,
+                                                              frame: pending.frame,
+                                                              displayFrame: rescueDisplayFrame))
+            }
+            markWindowControlUnavailable()
+        }
     }
 
     @discardableResult
@@ -1289,6 +1435,7 @@ final class StashSession {
                     self.shutdown(event: .miniaturized)
                 }
             case let .failure(error):
+                self.diagnose("session.seam-prepare-failed", ["reason": String(describing: error)])
                 let availability: SeamSpaceAvailability = error == .disabledFullScreen
                     ? .disabledFullScreen
                     : .unavailable
@@ -1388,6 +1535,7 @@ final class StashSession {
     }
 
     private func failSharedReveal(availability: SeamSpaceAvailability) {
+        diagnose("session.seam-reveal-failed", ["availability": String(describing: availability)])
         presentationRequests.cancel()
         seamSpaceAvailability = availability
         restoringShared = false
@@ -1545,6 +1693,10 @@ final class StashSession {
         row["bindingGeneration"] = windowBindingGeneration
         row["lifecycleGeneration"] = lifecycleGeneration
         row["recoveryPending"] = pendingScreenSetRecovery != nil
+        row["minimizeConfirmationPending"] = pendingMinimize != nil
+        row["presentationConfirmationPending"] = pendingPresentation != nil
+        row["minimizeReleaseConfirmationPending"] = pendingMinimizeRelease != nil
+        row["unconfirmedOwnedMinimize"] = unconfirmedOwnedMinimize
         StashDiagnostics.record(event, row)
     }
 

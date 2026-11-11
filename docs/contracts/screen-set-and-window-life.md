@@ -4,7 +4,7 @@ status: target
 authority: normative
 implementation: implemented
 verification_status: partial
-last_reconciled: 2026-11-09
+last_reconciled: 2026-11-11
 supersedes_clauses_of: docs/contracts/edgestash.md
 ---
 
@@ -363,12 +363,25 @@ stash. Exiting full screen does not put it back on the edge.
   selected memory supersedes old retry destinations; same-memory observations
   retain pending targets. Deliberate recapture, death, or disable cancels that
   window's pending target. Exhaustion leaves memory intact for a later return.
+  Acknowledged writes wait for presentation readback for the existing
+  1.5-second settle bound, using the existing 0.5-second observation pass.
+  Read-only confirmation does not rewrite the window, restore pre-rebase
+  coordinates, or spend another attempt. A persistent mismatch still falls
+  back and consumes the failed attempt. Fallback destinations are retained per
+  window across separately due retry batches; later batches cannot restart
+  allocation at the same origin. Changed desktop geometry invalidates those
+  destinations; successful restoration or deliberate placement releases them.
 - Pin does not create a second screen-set policy.
 - Geometry reconciliation waits until a drag finishes. A drag to the opposite
   edge keeps membership; a drag back to the desktop releases even a pinned
   stash. A non-drag system move to another connected display keeps the same
   side. An unsolicited move of a collapsed window repairs its hidden
   presentation instead of forgetting its placement.
+  A window still reported minimized has no authoritative desktop geometry:
+  its AX bounds cannot change the saved display, edge, size, or visible frame.
+  A move-to-display decision requires an observed non-minimized window and
+  usable bounds. A mouse button held over another window is not evidence that
+  a minimized stash was dragged. Unreadable minimized state waits for control.
 - A resize of an expanded stash updates its saved size and its marker, merged
   rail, and pin geometry after the gesture settles, including while pinned.
   Accepted live geometry is not rewritten merely to refresh those signals;
@@ -422,6 +435,20 @@ do not.
   and that lid-sleep does not move stashes.
 
 ## Reconciliation log
+
+- **2026-11-11 — asynchronous writes and fallback scatter:** the owner reports Stickies on
+  macOS 27.0.1 with EdgeStash 0.1.10 remaining minimized after repeated shortcuts
+  and opening near the primary display's upper-left area via its Dock tile.
+  Supplied logs confirm accepted minimize writes completing about 0.6 seconds
+  after capture had already failed and cleared rescue. Recovery opacity readback
+  also failed immediately, and separate fallback batches reused the same origin.
+  Bounded confirmation now preserves ownership and retry accounting; fallback
+  allocation persists across batches. A separate code defect allowed minimized
+  geometry to replace saved placement; that guard remains, but the supplied
+  logs do not show it causing this incident. These repairs enforce the existing
+  anchoring, rescue, and scatter promises without relaxing Space or opacity
+  confirmation. Native verification of the repair remains open; see the
+  [investigation](../reviews/2026-11-11-minimized-window-position.md).
 
 - **2026-11-09 — owner accepted reliability and input repair:** rescue saves
   gate new hides; seam repair and seam-to-outer conversion share the verified
