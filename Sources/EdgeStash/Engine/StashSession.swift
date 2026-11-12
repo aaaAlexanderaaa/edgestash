@@ -223,7 +223,7 @@ final class StashSession {
 
     func cancelPendingRecovery() {
         recoverySpacePreparation.cancel()
-        pendingPresentation = nil
+        cancelPresentationConfirmation()
         pendingScreenSetRecovery = nil
         pendingVisibleFallbackOrigin = nil
         recoveryEpochActive = false
@@ -393,7 +393,7 @@ final class StashSession {
             if recoverySpacePreparation.state == .pending { onControlReady?(self) }
             if pendingPresentation != nil { onControlReady?(self) }
             recoverySpacePreparation.cancel()
-            pendingPresentation = nil
+            cancelPresentationConfirmation()
         }
         pendingMinimize = nil
         diagnose("session.environment-pause")
@@ -580,6 +580,8 @@ final class StashSession {
             phase = .collapsed
         }
         presentation = next
+        presentationRequests.begin(StashPresentationRequest(expanded: isExpanded))
+        busy = true
         pendingPresentation = (WindowWriteConfirmation(now: ProcessInfo.processInfo.systemUptime),
                                phase, next, isExpanded ? rebased : hidden)
         return confirmScreenSetPresentation(readWindows: readWindows)
@@ -602,15 +604,36 @@ final class StashSession {
         switch result {
         case .waiting: return .waitingForControl
         case .expired:
-            pendingPresentation = nil
+            cancelPresentationConfirmation()
             return .failed
         case .confirmed:
+            let request = presentationRequests.complete()
+            let revision = presentationRequests.revision
             pendingPresentation = nil
+            busy = false
             phase = pending.phase
             presentation = pending.presentation
             unconfirmedOwnedMinimize = false
             finishScreenSetRepair()
+            deferPendingPresentation(request, revision: revision)
             return .succeeded
+        }
+    }
+
+    private func cancelPresentationConfirmation() {
+        guard pendingPresentation != nil else { return }
+        pendingPresentation = nil
+        busy = false
+        presentationRequests.cancel()
+    }
+
+    private func deferPendingPresentation(_ request: StashPresentationRequest?, revision: UInt) {
+        guard let request else { return }
+        // Confirmation can finish inside the coordinator's synchronous write
+        // guard. Replay after it commits; a newer action or cancellation wins
+        // through the same revision check used by animation completions.
+        DispatchQueue.main.async { [weak self] in
+            self?.runPendingPresentation(request, revision: revision)
         }
     }
 
@@ -748,7 +771,7 @@ final class StashSession {
     }
 
     private func finishScreenSetRepair() {
-        pendingPresentation = nil
+        cancelPresentationConfirmation()
         unconfirmedOwnedMinimize = false
         recoverySpacePreparation.cancel()
         pendingScreenSetRecovery = nil
@@ -778,7 +801,7 @@ final class StashSession {
             // intent frame, reset phase, or cancel a newer named request.
             return reconcileScreenSetPresentation(inspectFirst: true)
         }
-        pendingPresentation = nil
+        cancelPresentationConfirmation()
         if let intent { recoverySpacePreparation.select(intent.placement) }
         prepareForScreenSetChange(invalidateSpacePreparation: false)
         if let intent {

@@ -68,6 +68,7 @@ final class StashSession {
         collapsed += 1; phase = next; busy = false; latestRequest = presentationRequests.complete()
     }
     func finishScreenSetRepair() { repaired += 1; pendingScreenSetRecovery = nil }
+    func deferPendingPresentation(_ request: StashPresentationRequest?, revision: UInt) { latestRequest = request }
     func shutdown(event: SessionLifecyclePolicy.Event) { releases += 1 }
     func prepareForScreenSetChange(invalidateSpacePreparation: Bool) { pauses += 1 }
     func reconcileScreenSetPresentation(inspectFirst: Bool = false) -> ScreenSetApplicationResult {

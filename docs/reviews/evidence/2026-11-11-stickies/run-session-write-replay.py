@@ -23,7 +23,7 @@ def main():
     root = evidence.parents[3]
     source = root / "Sources/EdgeStash/Engine/StashSession.swift"
     driver = evidence / "session-write-replay.swift"
-    methods = ["confirmOwnedMinimize", "confirmScreenSetPresentation",
+    methods = ["confirmOwnedMinimize", "confirmScreenSetPresentation", "cancelPresentationConfirmation",
                "reconcilePendingWindowWrites", "releaseOwnedMinimize",
                "refreshCollapsePresentation", "applyScreenSetSlot"]
     native = source.read_text()

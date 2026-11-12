@@ -172,6 +172,15 @@ confirmation, inverse-write settle, and distinct fallback origins. The incident
 review records adapter evidence and its native limits. No presentation anchor or
 cardinality has changed.
 
+Recovery presentation confirmation also owns the existing newest-target queue.
+Named requests cannot cancel an acknowledged write or mistake its stale
+not-minimized read for a Dock reveal. Successful confirmation defers the newest
+request until the synchronous coordinator commit has ended. Revision ownership
+rejects superseded callbacks; expiry and environment/release cancellation clear
+the queue and busy gate. `scripts/check-session-recovery.py` exercises the live
+session methods with injected AX, UI, clock and main-queue boundaries. It adds no
+polling timer or presentation anchor and does not prove native AX completion.
+
 Session completion requires acknowledgement of the final AX frame writes.
 Exposed-edge Nudge/Fade additionally checks every opacity write: reveal hides
 before preparation and confirms placement before full opacity; collapse checks

@@ -123,3 +123,26 @@ still causes fallback; this patch is not evidence that the opacity symptom is
 fully fixed. The owner build must use `scripts/stage-app.sh`; quit the running
 EdgeStash before opening `dist/EdgeStash.app`. Distribution remains the app,
 `dist/EdgeStash.zip` and `dist/CURRENT.txt` from that script.
+
+## 0.1.11 release follow-up
+
+The owner requested a repair and a non-latest Release build after a release
+review reproduced a further request-ordering defect. Recovery submitted a
+minimize and waited for readback without owning the session's busy gate. A
+shortcut could cancel that wait, mistake a stale false read for a Dock restore,
+and then recollapse when the already accepted minimize completed.
+
+Recovery confirmation now owns the existing newest-target queue. It replays the
+newest request after the synchronous coordinator commit; failure, environment
+cancellation or newer input invalidates older callbacks. The existing Space
+preparation and commit checks remain on the replayed reveal.
+
+`python3 scripts/check-session-recovery.py` runs 35 assertions through 19 current
+session method bodies, including the recovery entry, named requests, final
+completion and Space-safe commit. AX/UI, clock, main queue, animation and observer
+boundaries are injected. Removing the recovery busy gate makes the regression
+fail. The check runs in CI. macOS expectation and native isolated-adapter checks
+also passed locally, closing the earlier Linux-only build limitation for those
+checks. Exact release build, archive and CI evidence is linked from
+[the 0.1.11 notes](../releases/v0.1.11.md). Physical macOS 27 and opacity acceptance
+remain open; none of this follow-up promotes them to verified.

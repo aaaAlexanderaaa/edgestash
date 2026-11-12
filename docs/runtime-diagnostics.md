@@ -1,6 +1,6 @@
 # Sleep and automatic collapse: diagnostic Release builds
 
-Version 0.1.10 (11) retains explicit local diagnostics in the optimized Release
+Version 0.1.11 (12) retains explicit local diagnostics in the optimized Release
 package. `blockedSpace` means environment recovery was refused by the current
 Space safety gate. The window stays minimized, preserves its original expanded
 or pinned recovery intent, and uses the existing bounded retry budget. It cannot

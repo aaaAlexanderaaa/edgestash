@@ -62,6 +62,12 @@ it adds no network, capture, permission, or alternate hide strategy.
   Persistent mismatch still fails. In particular, opacity 1 cannot stand in
   for confirmed opacity 0. Geometry refreshes outside the screen transaction
   use the same retry owner while confirmation is pending.
+- Pending recovery presentation confirmation owns the existing newest-target
+  queue too. Named reveal/collapse requests wait without cancelling the accepted
+  writes. Confirmation replays only the newest request after the coordinator's
+  synchronous commit; a newer action, failure, release, or environment
+  cancellation invalidates that replay. A stale not-minimized read during this
+  wait is not a system-owned Dock reveal.
 - Reopening an expanded seam window during environment repair obeys the same
   current-display ordinary-Space, minimized migration, membership confirmation,
   final recheck, and compensation gates as a named reveal. A refused destination

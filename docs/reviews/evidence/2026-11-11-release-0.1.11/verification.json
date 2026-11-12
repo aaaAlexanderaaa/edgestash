@@ -1,0 +1,36 @@
+{
+  "appSourcesDigestMethod": "sorted unique git-listed Sources, EdgeStash.xcodeproj and Package.swift paths; concatenate path NUL and raw SHA256(file), then SHA256",
+  "appSourcesSHA256": "1abc9e04b1f1f9b28397a7578df41de21edbbc154f7fa31312942fb0d409b2ba",
+  "architecture": "arm64",
+  "archiveSHA256": "edbce7fe49028464c8882ceba33642876d446b48ca2eabd77bf99a19e18b8f4b",
+  "archiveVerification": {
+    "allAppEntriesIdentical": true,
+    "appFileEntries": 8,
+    "strictSignatures": "passed for staged and freshly extracted app"
+  },
+  "binaryUUID": "996E5E08-E6C0-38F2-93BE-CF3C17B01E47",
+  "checks": {
+    "coordinatorReplay": "passed; 68 timelines and 306 assertions",
+    "distributionTooling": "10 passed; signing/notarization services simulated",
+    "existingSessionWriteReplay": "passed; 18 assertions with injected boundaries",
+    "expectationCheck": "passed; 12 presentation anchors, one executable and eleven structural-only cardinalities",
+    "localBuilds": "CLT Debug and diagnostic Release passed",
+    "logicRegressions": "passed; 18432 configured round trips and 1512 subset-return paths plus the full existing suite",
+    "nativeAdapters": "passed; isolated native persistence and own-AppKit controls, not foreign-app AX completion",
+    "negativeSessionReplay": "removing the recovery busy gate is rejected by the regression",
+    "sessionRecoveryReplay": "passed; 35 assertions through 19 current method bodies with injected native/scheduler boundaries"
+  },
+  "ciEvidence": "Full Xcode Debug and the added session replay must pass for the exact release commit before publication; the release body records its final run URL and status.",
+  "configuration": "Release",
+  "hostMacOS": "15.7.9",
+  "localXcodeProjectDebug": "unavailable: full Xcode is not installed; CLT builds do not close this gate",
+  "minimumMacOS": "12.0",
+  "physicalAcceptance": "macOS 27 multi-display, sleep/wake, cross-app AX/input, WindowServer and owner perceptual acceptance remain open; opacity symptom is not claimed fixed by readback waiting",
+  "releaseChannel": "owner-requested non-latest diagnostic prerelease",
+  "runtimeDiagnostics": true,
+  "sdkVersion": "26.0",
+  "signing": "ad-hoc; not notarized",
+  "stagedManifest": "configuration: Release\ndiagnostics: true\ntoolchain: Apple Command Line Tools (Xcode project validation unavailable)\nmode: development\nversion: 0.1.11 (12)\narchitecture: arm64\nsigning: ad-hoc (not a distribution identity)\nnotarization: not requested\nbuilt: 2026-11-11 16:23:02 -0800\n",
+  "tag": "v0.1.11",
+  "version": "0.1.11 (12)"
+}

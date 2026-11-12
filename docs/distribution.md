@@ -12,7 +12,7 @@ The app itself still makes no network requests.
 
 ## Diagnostic test releases
 
-The owner-requested diagnostic prereleases, including v0.1.10, use the existing ad-hoc
+The owner-requested diagnostic prereleases, including v0.1.11, use the existing ad-hoc
 package path, with `./scripts/stage-app.sh Release --diagnostics`. These are
 Release optimized builds with bounded local runtime logging enabled. Each
 release records its own exact local and CI verification scope in English:
