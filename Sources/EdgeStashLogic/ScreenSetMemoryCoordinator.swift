@@ -61,6 +61,11 @@ public struct ScreenSetTransition {
     public let restore: [ScreenSetPlacement]
     public let release: Set<ScreenSetWindowKey>
     public let refresh: Set<ScreenSetWindowKey>
+    public let refreshReasons: [ScreenSetWindowKey: ScreenSetRefreshReason]
+}
+
+public enum ScreenSetRefreshReason: String {
+    case wake, missingGeometry, displayFrame, scale, windowSegment, sharedIntervals
 }
 
 /// Owns memory selection, complete membership reconciliation, and writes. The
@@ -94,7 +99,8 @@ public struct ScreenSetMemoryCoordinator {
         configurations: [ScreenSetConfiguration],
         live: [ScreenSetPlacement],
         keepMissingDisplay: String? = nil,
-        afterWake: Bool = false
+        afterWake: Bool = false,
+        windowFrames: [ScreenSetWindowKey: CGRect] = [:]
     ) -> ScreenSetTransition {
         let previous = observation
         let sameIDs = previous.fingerprint.displayIDs == current.fingerprint.displayIDs
@@ -155,7 +161,7 @@ public struct ScreenSetMemoryCoordinator {
                 event: event,
                 restore: target.slots,
                 release: Set(live.filter { !keys.contains($0.key) }.map(\.key)),
-                live: live, previous: previous, afterWake: afterWake
+                live: live, previous: previous, afterWake: afterWake, windowFrames: windowFrames
             )
         }
 
@@ -166,34 +172,55 @@ public struct ScreenSetMemoryCoordinator {
             present.contains($0.displayID) && !managed.contains($0.key)
         }.sorted { $0.windowNumber < $1.windowNumber }
         return transition(event: event, restore: returning, release: Set(gone.map(\.key)),
-                          live: live, previous: previous, afterWake: afterWake)
+                          live: live, previous: previous, afterWake: afterWake, windowFrames: windowFrames)
     }
 
     private mutating func transition(
         event: ScreenSetEvent, restore: [ScreenSetPlacement], release: Set<ScreenSetWindowKey>,
-        live: [ScreenSetPlacement], previous: ScreenSetObservation, afterWake: Bool
+        live: [ScreenSetPlacement], previous: ScreenSetObservation, afterWake: Bool,
+        windowFrames: [ScreenSetWindowKey: CGRect]
     ) -> ScreenSetTransition {
         lastPlacements = Dictionary(uniqueKeysWithValues: live.filter { !release.contains($0.key) }.map { ($0.key, $0) })
         for slot in restore { lastPlacements[slot.key] = slot }
         let restoring = Set(restore.map(\.key))
         let present = Set(observation.fingerprint.displayIDs)
-        let refresh = Set(live.filter { slot in
-            guard present.contains(slot.displayID), !release.contains(slot.key), !restoring.contains(slot.key) else { return false }
-            // Display power and system sleep can invalidate the live hidden
-            // presentation without changing a single display metric. Wake is
-            // an explicit repair boundary; a duplicate awake observation isn't.
-            if afterWake { return true }
-            guard let before = previous.displays.first(where: { $0.id == slot.displayID }),
-                  let after = observation.displays.first(where: { $0.id == slot.displayID }),
-                  let edge = DisplayEdge(rawValue: slot.edge) else { return true }
-            // Repeated observations and unrelated display changes must not
-            // rewrite stable windows. Changed adjacency or geometry still does.
-            return before.frame != after.frame
-                || previous.scales[slot.displayID] != observation.scales[slot.displayID]
-                || DisplayEdgePolicy.collapseStrategy(at: edge, of: before, in: previous.displays)
-                    != DisplayEdgePolicy.collapseStrategy(at: edge, of: after, in: observation.displays)
-        }.map(\.key))
-        return ScreenSetTransition(event: event, restore: restore, release: release, refresh: refresh)
+        var reasons: [ScreenSetWindowKey: ScreenSetRefreshReason] = [:]
+        for slot in live {
+            guard present.contains(slot.displayID), !release.contains(slot.key), !restoring.contains(slot.key) else { continue }
+            if let reason = Self.refreshReason(slot: slot, previous: previous, current: observation,
+                                               afterWake: afterWake, windowFrame: windowFrames[slot.key]) {
+                reasons[slot.key] = reason
+            }
+        }
+        return ScreenSetTransition(event: event, restore: restore, release: release,
+                                   refresh: Set(reasons.keys), refreshReasons: reasons)
+    }
+
+    public static func refreshReason(slot: ScreenSetPlacement, previous: ScreenSetObservation,
+                                     current: ScreenSetObservation, afterWake: Bool,
+                                     windowFrame: CGRect?) -> ScreenSetRefreshReason? {
+        // Display power and system sleep can invalidate the live hidden
+        // presentation without changing a single display metric. Wake is
+        // an explicit repair boundary; a duplicate awake observation isn't.
+        if afterWake { return .wake }
+        guard let before = previous.displays.first(where: { $0.id == slot.displayID }),
+              let after = current.displays.first(where: { $0.id == slot.displayID }),
+              let edge = DisplayEdge(rawValue: slot.edge) else { return .missingGeometry }
+        // Repeated observations and unrelated display changes must not
+        // rewrite stable windows. Changed adjacency or geometry still does.
+        if before.frame != after.frame { return .displayFrame }
+        if previous.scales[slot.displayID] != current.scales[slot.displayID] { return .scale }
+        if let frame = windowFrame, frame.width > 0, frame.height > 0,
+           [frame.minX, frame.minY, frame.width, frame.height].allSatisfy(\.isFinite) {
+            return DisplayEdgePolicy.collapseStrategy(at: edge, of: before, windowFrame: frame, in: previous.displays)
+                != DisplayEdgePolicy.collapseStrategy(at: edge, of: after, windowFrame: frame, in: current.displays)
+                ? .windowSegment : nil
+        }
+        // Without saved window bounds, retain the complete adjacency
+        // intervals. A whole-edge Boolean loses changes on partial seams.
+        return DisplayEdgePolicy.sharedIntervals(at: edge, of: before, in: previous.displays)
+            != DisplayEdgePolicy.sharedIntervals(at: edge, of: after, in: current.displays)
+            ? .sharedIntervals : nil
     }
 
     public mutating func didRestore(_ slot: ScreenSetPlacement) {

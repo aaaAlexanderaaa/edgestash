@@ -307,11 +307,21 @@ final class ScreenSetCoordinator {
             configurations: Preferences.shared.storedScreenSets,
             live: sessions.compactMap(\.screenSetSlot),
             keepMissingDisplay: keepMissingDisplay,
-            afterWake: afterWake
+            afterWake: afterWake,
+            windowFrames: Dictionary(sessions.compactMap { session in
+                guard let slot = session.screenSetSlot, let frame = session.restoreFrame else { return nil }
+                return (slot.key, frame)
+            }, uniquingKeysWith: { first, _ in first })
         ) else { return }
         diagnose("screens.apply", ["afterWake": afterWake, "classification": String(describing: plan.event),
                                    "restoreCount": plan.restore.count, "refreshCount": plan.refresh.count,
                                    "releaseCount": plan.release.count])
+        for session in sessions where session.isManaged {
+            guard let slot = session.screenSetSlot else { continue }
+            session.diagnose("session.geometry-decision", ["refresh": plan.refresh.contains(slot.key),
+                "reason": plan.refreshReasons[slot.key]?.rawValue ?? "unchanged-or-restoring",
+                "restore": plan.restore.contains(where: { $0.key == slot.key }), "release": plan.release.contains(slot.key)])
+        }
         let sameMemory = previousKey != nil && previousKey == memory?.memoryFingerprint
         let targets = restorationRetry.beginApplication(
             restoring: plan.restore,

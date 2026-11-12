@@ -1,0 +1,36 @@
+{
+  "appSourcesDigestMethod": "sorted unique git-listed Sources, EdgeStash.xcodeproj and Package.swift paths; concatenate path NUL and raw SHA256(file), then SHA256",
+  "appSourcesSHA256": "e1f398512f5c6e88721340e80188e7ff68c74b32154b6acbd530b17a5cb6890a",
+  "architecture": "arm64",
+  "archiveSHA256": "27e7801aaa166af863d08b7f3ba4bc35f31a5cb9318e67042690f30e9ebbac38",
+  "archiveVerification": {
+    "allAppEntriesIdentical": true,
+    "appFileEntries": 8,
+    "strictSignatures": "passed for staged and freshly extracted app"
+  },
+  "binaryUUID": "73D41628-E382-3246-A8AB-D3AA5730261C",
+  "checks": {
+    "coordinatorReplay": "passed; 70 timelines and 313 assertions including two partial-edge timelines",
+    "distributionTooling": "10 passed; signing/notarization services simulated",
+    "existingSessionWriteReplay": "passed; 18 assertions with injected boundaries",
+    "expectationCheck": "passed; 12 presentation anchors, one executable and eleven structural-only cardinalities",
+    "localBuilds": "CLT Debug and diagnostic Release passed",
+    "logicRegressions": "passed; 18432 configured round trips, 1512 subset-return paths, toggle/handoff priority and partial-edge scenarios plus existing suite",
+    "nativeAdapters": "passed; isolated native persistence and own-AppKit controls, not foreign-app AX completion",
+    "negativeControls": "5 isolated bad-behavior variants all rejected; no production source mutations",
+    "sessionRecoveryReplay": "passed; 71 assertions; current session/engine methods and complete merge coordinator with injected boundaries"
+  },
+  "ciEvidence": "Full Xcode Debug and all CI checks must pass for the exact release commit before publication; the release body records its final run URL and status.",
+  "configuration": "Release",
+  "hostMacOS": "15.7.9",
+  "localXcodeProjectDebug": "unavailable: full Xcode is not installed; CLT builds do not close this gate",
+  "minimumMacOS": "12.0",
+  "physicalAcceptance": "macOS 27 multi-display, sleep/wake, cross-app AX/input, WindowServer and owner perceptual acceptance remain open",
+  "releaseChannel": "owner-requested non-latest diagnostic prerelease",
+  "runtimeDiagnostics": true,
+  "sdkVersion": "26.0",
+  "signing": "ad-hoc; not notarized",
+  "stagedManifest": "configuration: Release\ndiagnostics: true\ntoolchain: Apple Command Line Tools (Xcode project validation unavailable)\nmode: development\nversion: 0.1.12 (13)\narchitecture: arm64\nsigning: ad-hoc (not a distribution identity)\nnotarization: not requested\nbuilt: 2026-11-12 04:07:04 -0800\n",
+  "tag": "v0.1.12",
+  "version": "0.1.12 (13)"
+}

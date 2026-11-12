@@ -40,35 +40,25 @@ extension StashSession {
             elapsedSinceOwnedMinimize: now.timeIntervalSince(lastOwnedMinimizeAt),
             observedMinimized: StashAX.isMinimized(windowElement)
         ) else { return }
-        _ = expand(fromDock: false)
+        _ = expand(fromDock: false, source: .system)
     }
 
     func beginHoverReveal() {
-        guard !ScreenSetCoordinator.blocksUserGeometry, !awaitingWindowControl, !recoveryEpochActive else { return }
-        guard HoverRevealPolicy.shouldBegin(
-            phase: phase, isBusy: busy, markerSuppressed: markerSuppressed,
-            clickLocked: clickCollapseLockActive, buttonPressed: NSEvent.pressedMouseButtons != 0
-        ) else { return }
-        if presentation == .systemMinimize {
-            guard canBeginSeamReveal else { return }
-        }
+        guard canBeginHoverReveal() else { return }
         // The marker panel and the seam approach band can both see the same
         // arrival; a pending dwell must not restart or the reveal would lag
         // one extra delay behind every entry.
         if let timer = hoverDelayTimer, timer.isValid { return }
         let delay = TimeInterval(Preferences.shared.revealDelayMS) / 1000
+        let revision = presentationRequests.revision
         if delay <= 0 {
-            _ = expand(fromDock: false)
+            _ = expand(fromDock: false, source: .hover, expectedRevision: revision)
             return
         }
         let lifecycle = lifecycleGeneration
         hoverDelayTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
-            guard let self, self.lifecycleGeneration == lifecycle,
-                  HoverRevealPolicy.shouldBegin(
-                    phase: self.phase, isBusy: self.busy, markerSuppressed: self.markerSuppressed,
-                    clickLocked: self.clickCollapseLockActive, buttonPressed: NSEvent.pressedMouseButtons != 0
-                  ) else { return }
-            _ = self.expand(fromDock: false)
+            guard let self, self.lifecycleGeneration == lifecycle, self.canBeginHoverReveal() else { return }
+            _ = self.expand(fromDock: false, source: .hover, expectedRevision: revision)
         }
     }
 
@@ -87,9 +77,9 @@ extension StashSession {
         if !desiredPresentationIsExpanded {
             // A click while the lock is held expands immediately; the lock
             // stays on so the next click collapses again (click toggle).
-            _ = expand(fromDock: false)
+            _ = expand(fromDock: false, source: .marker)
         } else {
-            if collapse() {
+            if collapse(source: .marker) {
                 clickCollapseLockActive = true
             }
         }
@@ -349,7 +339,7 @@ extension StashSession {
             if outsideSince == nil { outsideSince = now }
             if LeaveCollapsePolicy.shouldCollapse(outsideSince: outsideSince, now: now) {
                 outsideSince = nil
-                let accepted = collapse()
+                let accepted = collapse(source: .automatic)
                 diagnose("session.auto-collapse", ["accepted": accepted])
             }
             return
@@ -409,7 +399,7 @@ extension StashSession {
             case .releaseSession:
                 shutdown(event: .miniaturized)
             case .adoptSystemReveal:
-                _ = expand(fromDock: false)
+                _ = expand(fromDock: false, source: .system)
             case .recollapse:
                 adoptSeamRecollapse()
             }

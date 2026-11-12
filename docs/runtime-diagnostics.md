@@ -1,12 +1,51 @@
-# Sleep and automatic collapse: diagnostic Release builds
+# Window operations and recovery: diagnostic Release builds
 
-Version 0.1.11 (12) retains explicit local diagnostics in the optimized Release
+Version 0.1.12 (13) retains explicit local diagnostics in the optimized Release
 package. `blockedSpace` means environment recovery was refused by the current
 Space safety gate. The window stays minimized, preserves its original expanded
 or pinned recovery intent, and uses the existing bounded retry budget. It cannot
 bypass refusal through a deminimized desktop fallback. Completing Space
 preparation resumes that same budget without adding a background polling clock.
 Physical macOS 27 multi-display wake and WindowServer acceptance remain open.
+
+## Reconstructing a 0.1.12 operation
+
+Use `run` and `session` to group records; `pid`, `subjectLaunch` and `window`
+identify the application/window lifetime. A `presentation.command` records one
+batch's `command`, `source`, `targetExpanded`, `targets` and `skipped` before any
+member executes. `session.command-skipped` explains which member lacked control
+or was blocked by the environment. There is no implicit retry of that command.
+
+`session.presentation-request` records the request source and target, the input
+revision before admission, and `decision`: `start`, `queued`, `satisfied`, or a
+refusal such as `unavailable`, `pinned`, `stale`, `unsettled` or `invalidPhase`.
+Sources distinguish shortcut, marker, merged click, Dock, show-all, hover,
+automatic leave, capture, system observation and recovery. No chord or key text
+is logged. A satisfied explicit request can cancel an older deferred operation
+without producing another AX write.
+
+Session snapshots include `desiredExpanded`, `requestRevision`,
+`presentationOperation`, and `activeRequest` / `pendingRequest` /
+`deferredRequest` (target, source, command). Input revision changes when newer
+input arrives; operation identity stays stable while that write owns completion
+or failure cleanup. `session.presentation-complete.completedOperation` links the
+completion to its executor. `session.presentation-execution` records acceptance,
+and `session.presentation-execution-dropped` explains superseded or refused
+execution. `session.presentation-replay` and `session.presentation-replay-dropped`
+retain the expected revision so an older callback can be distinguished from a
+new operation. `session.hover-rejected` records a stale/unsettled merged dwell.
+
+`merge.projection` records changed expanded-member sets and the visual highlight;
+it never represents an implicit close command. Unchanged projections are not
+logged repeatedly. `session.geometry-decision` records refresh/restore/release
+selection and its reason: wake, display frame, scale, occupied window segment,
+missing geometry or conservatively changed shared intervals. Pair it with
+`screens.apply`, display geometry and the saved `restoreFrame` in the session row.
+
+After an incident, record the approximate time, command scope, involved apps and
+whether screens/Spaces changed, then promptly copy both local rotating logs.
+This lets a report distinguish refused input, queued intent, cancelled ownership,
+failed native writes and a skipped geometry repair without collecting contents.
 
 `waitingForPersistence` means appearance is already correct but a rescue update
 has not received save acknowledgement. Recovery intent and the same bounded

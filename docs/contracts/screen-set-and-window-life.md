@@ -4,11 +4,15 @@ status: target
 authority: normative
 implementation: implemented
 verification_status: partial
-last_reconciled: 2026-11-11
+last_reconciled: 2026-11-12
 supersedes_clauses_of: docs/contracts/edgestash.md
 ---
 
 # Screen sets and the life of a stashed window
+
+The [presentation ownership contract](presentation-ownership.md) clarifies
+batch commands with unavailable members, deferred input, merge projection and
+window-segment geometry refresh for 0.1.12.
 
 The owner-accepted 2026-11-09 [recovery and input contract](reliability-and-input-sources.md)
 clarifies shortcut precedence and limits automatic system show-all detection.

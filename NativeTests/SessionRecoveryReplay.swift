@@ -2,9 +2,19 @@
 // AX/UI, clock, coordinator guard and main-queue delivery are injected; this
 // verifies adapter ordering, not physical multi-display or native AX completion.
 import Foundation
+import AppKit
 import EdgeStashLogic
 
-enum ReplayClock { static var now: TimeInterval = 100 }
+enum ReplayClock {
+    static var now: TimeInterval = 100
+    static var date: Date { Date(timeIntervalSince1970: now) }
+}
+enum NSEvent { static var pressedMouseButtons = 0 }
+enum StashDiagnostics {
+    static let isEnabled = true
+    static var events: [(String, [String: Any])] = []
+    static func record(_ event: String, _ fields: [String: Any]) { events.append((event, fields)) }
+}
 final class DispatchQueue {
     static let main = DispatchQueue()
     var pending: [() -> Void] = []
@@ -56,8 +66,9 @@ enum StashSurface {
 }
 enum StashRescue {
     static var saves = 0
+    static var saveHook: (() -> Bool)?
     @discardableResult
-    static func persist(session: StashSession) -> Bool { saves += 1; return true }
+    static func persist(session: StashSession) -> Bool { saves += 1; return saveHook?() ?? true }
 }
 enum StashFocusReturn { static func remember(excluding pid: Int32) {} }
 enum NSScreen { static let screens = [1] }
@@ -74,9 +85,15 @@ enum DisplayCatalog {
     static func primaryHeight(screens: [Int]) -> CGFloat { 1080 }
 }
 enum Motion { case slide }
-struct Appearance { let resolvedMotion = Motion.slide }
+struct Appearance { let resolvedMotion = Motion.slide; let resolvedMaterial = StashMaterial.glass }
 final class Preferences {
     static let shared = Preferences()
+    var scope = AppShortcutWindowScope.allManagedWindows
+    var mergesStrips = true
+    var advisedStripOverload = true
+    var revealDelayMS = 150
+    func chordScope(for bundleID: String) -> AppShortcutWindowScope { scope }
+    func stripColor(for bundleID: String) -> NSColor { .blue }
     func appearance(for bundleID: String) -> Appearance { Appearance() }
 }
 enum PreparationError: Error { case disabledFullScreen }
@@ -84,6 +101,8 @@ final class DisplaySpaceTransport {
     static let shared = DisplaySpaceTransport()
     var preparations = 0
     var confirmations = 0
+    var delayedPreparations: [(Result<UInt64, PreparationError>) -> Void] = []
+    var delayPreparation = false
     func availability(for displayID: UInt32) -> SeamSpaceAvailability { .ready(spaceID: 1) }
     func confirmsDestination(windowID: UInt32, displayID: UInt32, targetSpaceID: UInt64) -> Bool {
         confirmations += 1
@@ -92,7 +111,8 @@ final class DisplaySpaceTransport {
     func prepareMinimizedWindow(windowID: UInt32, for displayID: UInt32,
                                 completion: @escaping (Result<UInt64, PreparationError>) -> Void) {
         preparations += 1
-        completion(.success(1))
+        if delayPreparation { delayedPreparations.append(completion) }
+        else { completion(.success(1)) }
     }
 }
 final class ScreenSetCoordinator {
@@ -110,7 +130,21 @@ final class StashSession {
     let windowElement = 1
     var windowID: UInt32? = 42
     let pid: Int32 = 555
-    let bundleID = "com.apple.Stickies"
+    var bundleID = "com.apple.Stickies"
+    var mergeID: String { String(describing: ObjectIdentifier(self)) }
+    var isIdle: Bool { phase == .idle }
+    var isCollapsed: Bool { phase == .collapsed }
+    var markerSuppressed = false
+    var clickCollapseLockActive = false
+    let applicationIcon: NSImage? = nil
+    var mergeMember: MergeMember? {
+        guard isManaged else { return nil }
+        return MergeMember(id: mergeID, edge: edge!, screenFrame: DisplayCatalog.external.frame,
+                           visibleMinY: 200, visibleMaxY: 600, windowHeight: 400, title: "Replay",
+                           presentation: presentation ?? .slideOffscreen)
+    }
+    func setMarkerSuppressed(_ value: Bool) { markerSuppressed = value }
+    func captureNearestAllowed() -> Bool { false }
     let pinWindow = PinWindow()
     let animator = Animator()
     var phase: StashSessionPhase = .collapsed
@@ -149,10 +183,11 @@ final class StashSession {
     var pendingGeometryDetach: DispatchWorkItem?
     var focusReturn = FocusReturnCoordinator()
     var presentationRequests = StashPresentationCoordinator()
-    var desiredPresentationIsExpanded: Bool { presentationRequests.desiredExpanded(phase: phase) }
+    // INSERT_CURRENT_SESSION_STATE
     var hoverDelayTimer: Timer?
     var leaveTimer: Timer?
-    var onRevealRequested: ((StashSession) -> Void)?
+    var onPresentationRequested: ((StashSession, StashPresentationRequest) -> Void)?
+    var onChanged: (() -> Void)?
     var onControlReady: ((StashSession) -> Void)?
     var onExpanded: ((StashSession) -> Void)?
     var onCollapsed: ((StashSession) -> Void)?
@@ -168,8 +203,8 @@ final class StashSession {
         guard let displayID, let edge else { return nil }
         return ScreenSetPlacement(windowNumber: 42, bundleID: bundleID, displayID: displayID, edge: edge.rawValue)
     }
-    func diagnose(_ event: String, _ fields: [String: Any] = [:]) {}
-    func notifyChanged() {}
+    func diagnose(_ event: String, _ fields: [String: Any] = [:]) { StashDiagnostics.record(event, fields) }
+    func notifyChanged() { onChanged?() }
     func activateApp() {}
     func refreshPinControl() {}
     func showMarker(windowQuartz: CGRect) {}
@@ -180,11 +215,18 @@ final class StashSession {
         (DisplayCatalog.external, 1)
     }
     func playEffects(collapsing: Bool, merged: Bool, frame: CGRect, primaryHeight: CGFloat) {}
-    func slide(from: CGPoint, to: CGPoint, collapsing: Bool, merged: Bool, completion: (Bool) -> Void) {
-        _ = StashAX.setFrame(windowElement, CGRect(origin: to, size: restoreFrame!.size))
-        completion(true)
+    var delaySlide = false
+    var pendingSlide: (() -> Void)?
+    func slide(from: CGPoint, to: CGPoint, collapsing: Bool, merged: Bool, completion: @escaping (Bool) -> Void) {
+        busy = true
+        let finish = { [self] in
+            _ = StashAX.setFrame(windowElement, CGRect(origin: to, size: restoreFrame!.size))
+            completion(true)
+        }
+        if delaySlide { pendingSlide = finish } else { finish() }
     }
     func refreshCollapsePresentation() -> Bool { true }
+    func replayMinimizeObservation() { confirmOwnedMinimize() }
     func retainRecoveryIntent(_ intent: ScreenSetRecoveryIntent) { pendingScreenSetRecovery = intent }
     func markWindowControlUnavailable() { awaitingWindowControl = true; busy = false }
     func shutdown(event: SessionLifecyclePolicy.Event) { fatalError("Unexpected shutdown in this replay") }
@@ -199,6 +241,66 @@ final class StashSession {
     }
 
     // INSERT_CURRENT_SESSION_METHODS
+}
+
+// The actual models and entire merge coordinator are inserted, not reimplemented.
+// INSERT_CURRENT_MERGE_MODELS
+final class StashMergeStrip {
+    var onHoverSegment: ((ObjectIdentifier?) -> Void)?
+    var onClickSegment: ((ObjectIdentifier) -> Void)?
+    var model: StashMergeStripModel?
+    func orderOut(_ value: Any?) {}
+    func present(_ model: StashMergeStripModel) { self.model = model }
+    func updateHover(_ id: ObjectIdentifier?) {}
+    func segmentAtPointer() -> ObjectIdentifier? { nil }
+    func rearmHoverAfterMouseUp() {}
+}
+enum EdgeAlert {
+    enum Style { case informational }
+    static func run(style: Style, title: String, detail: String, buttons: [String]) {}
+}
+enum L10n {
+    static let stripOverloadTitle = "", stripOverloadBody = "", stripOverloadOK = ""
+}
+// INSERT_CURRENT_MERGE_COORDINATOR
+extension StashMergeCoordinator {
+    func replayHover(_ session: StashSession) -> (String, HoverRevealTicket, UInt)? {
+        guard let key = groupSessions.keys.first(where: { groupSessions[$0]?[session.mergeID] != nil }) else { return nil }
+        handleHover(ObjectIdentifier(session), key: key, lookup: groupSessions[key]!)
+        guard let ticket = interactions[key]?.pending else { return nil }
+        return (key, ticket, session.presentationRequests.revision)
+    }
+    func replayFire(_ value: (String, HoverRevealTicket, UInt), session: StashSession) {
+        fireHover(value.1, key: value.0, session: session, revision: value.2)
+    }
+    func replayLeave() {
+        for key in Array(groupSessions.keys) { handleHover(nil, key: key, lookup: groupSessions[key]!) }
+    }
+}
+final class EngineAdapter {
+    var sessions: [StashSession]
+    var presentationCommandSequence: UInt = 0
+    let merged = StashMergeCoordinator()
+    var lastPreferredSession: [String: ObjectIdentifier] = [:]
+    init(_ sessions: [StashSession]) {
+        self.sessions = sessions
+        for session in sessions {
+            session.onPresentationRequested = { [weak self] session, request in
+                self?.merged.notePresentationRequest(session, request: request)
+            }
+            session.onChanged = { [weak self] in
+                guard let self else { return }
+                self.merged.reconcile(sessions: self.sessions)
+            }
+        }
+        merged.reconcile(sessions: sessions)
+    }
+    func discoverEnabledWindows(bundleID: String) {}
+    func preferredIdle(in group: [StashSession], bundleID: String) -> StashSession? { nil }
+    func preferred(in group: [StashSession], bundleID: String) -> StashSession? { group.first }
+    func shortcut(_ bundleID: String) { handleAppShortcut(bundleID) }
+    func showAll() { applyShowAll(bundleIDs: Array(Set(sessions.map(\.bundleID)))) }
+    // INSERT_CURRENT_ENGINE_METHODS
 }
 
 @main enum Replay {
@@ -226,6 +328,8 @@ final class StashSession {
             StashSurface.observedAlpha = expanded ? 0 : 1
             DisplaySpaceTransport.shared.preparations = 0
             DisplaySpaceTransport.shared.confirmations = 0
+            DisplaySpaceTransport.shared.delayPreparation = false
+            DisplaySpaceTransport.shared.delayedPreparations = []
             let session = StashSession()
             if outer { session.edge = .right; session.presentation = .slideOffscreen; session.usingSharedMinimize = false }
             if expanded { session.phase = .expanded; session.usingSharedMinimize = false }
@@ -321,6 +425,178 @@ final class StashSession {
         DispatchQueue.main.drain()
         expect(deferred.phase == .collapsed && DisplaySpaceTransport.shared.preparations == 0,
                "environment cancellation also rejects an already deferred replay")
+
+        // MARK: presentation_ownership live handoff rejects lost toggles and explicit no-ops.
+        let gap = pendingRecovery()
+        gap.toggleFromShortcut()
+        StashAX.minimized = true
+        _ = confirm(gap)
+        expect(gap.desiredPresentationIsExpanded, "deferred recovery target remains visible to the second toggle")
+        gap.toggleFromShortcut()
+        DispatchQueue.main.drain()
+        expect(gap.phase == .collapsed && !gap.desiredPresentationIsExpanded && StashAX.writes == [true],
+               "two toggles across the actual recovery/main-queue boundary end collapsed without another write")
+        let explicit = pendingRecovery()
+        _ = explicit.expand(fromDock: true)
+        StashAX.minimized = true
+        _ = confirm(explicit)
+        expect(explicit.collapse(), "new explicit close is accepted even when the committed phase is already collapsed")
+        DispatchQueue.main.drain()
+        expect(explicit.phase == .collapsed && !explicit.presentationRequests.hasOutstandingRequest,
+               "newer no-op close invalidates the older deferred reveal")
+
+        func outer(_ app: String = "test.app") -> StashSession {
+            let session = StashSession()
+            session.bundleID = app
+            session.edge = .right
+            session.presentation = .slideOffscreen
+            session.usingSharedMinimize = false
+            return session
+        }
+
+        // MARK: command_scope live engine and entire merge projection preserve named targets.
+        for reversed in [false, true] {
+            let first = outer(), second = outer()
+            first.delaySlide = true; second.delaySlide = true
+            let engine = EngineAdapter([first, second])
+            engine.shortcut("test.app")
+            expect(first.desiredPresentationIsExpanded && second.desiredPresentationIsExpanded,
+                   "one application command names both merged members before completion")
+            for session in reversed ? [second, first] : [first, second] {
+                let completion = session.pendingSlide
+                session.pendingSlide = nil
+                completion?()
+                engine.merged.reconcile(sessions: engine.sessions)
+            }
+            expect(first.isExpanded && second.isExpanded && !first.busy && !second.busy,
+                   "both merged members stay expanded under either completion order")
+            first.delaySlide = false; second.delaySlide = false
+            engine.shortcut("test.app")
+            expect(first.isCollapsed && second.isCollapsed, "the next application command collapses both members")
+            engine.merged.tearDown()
+        }
+        let crossA = outer("app.A"), crossB = outer("app.B")
+        let cross = EngineAdapter([crossA, crossB])
+        cross.shortcut("app.A")
+        cross.shortcut("app.B")
+        expect(crossA.isExpanded && crossB.isExpanded, "an app B command cannot collapse unnamed app A through merge reconciliation")
+        cross.shortcut("app.A")
+        cross.shortcut("app.B")
+        cross.showAll()
+        expect(crossA.isExpanded && crossB.isExpanded, "global show-all preserves every application's merged member")
+        crossA.isPinned = true
+        cross.merged.reconcile(sessions: cross.sessions)
+        expect(crossB.isExpanded, "a pinned highlight does not turn projection into a sibling close command")
+        cross.merged.tearDown()
+
+        let unavailable = outer(), healthy = outer()
+        unavailable.phase = .expanded
+        unavailable.awaitingWindowControl = true
+        let partial = EngineAdapter([unavailable, healthy])
+        for expectedExpanded in [true, false, true] {
+            partial.shortcut("test.app")
+            expect(healthy.isExpanded == expectedExpanded && unavailable.isExpanded,
+                   "each app shortcut advances the healthy sibling while the unavailable member remains untouched")
+        }
+        expect(StashDiagnostics.events.contains { $0.0 == "session.command-skipped" },
+               "partial batch refusal is diagnosed instead of silently blocking the group")
+        Preferences.shared.scope = .recentWindow
+        partial.shortcut("test.app")
+        expect(healthy.isCollapsed, "recent-window scope also chooses a controllable managed member")
+        Preferences.shared.scope = .allManagedWindows
+        partial.merged.tearDown()
+
+        // MARK: merged_hover live timers cannot replace newer explicit intent.
+        StashAX.minimized = true
+        DisplaySpaceTransport.shared.delayPreparation = true
+        let hovered = StashSession(), sibling = StashSession()
+        NSEvent.pressedMouseButtons = 1
+        let hoverEngine = EngineAdapter([hovered, sibling])
+        expect(hoverEngine.merged.seamApproachSegments.count == 2
+               && hoverEngine.merged.replayHover(hovered) == nil,
+               "button-down reconciliation keeps approach geometry but cannot arm hover")
+        NSEvent.pressedMouseButtons = 0
+        hovered.clickCollapseLockActive = true
+        guard let oldDwell = hoverEngine.merged.replayHover(hovered) else {
+            expect(false, "settled merged window must arm a dwell"); report(); exit(1)
+        }
+        expect(!hovered.canBeginHoverReveal() && hovered.canBeginHoverReveal(merged: true),
+               "merged visits use their own click lock after an individual marker becomes suppressed")
+        _ = hovered.expand(fromDock: true)
+        expect(hovered.busy && hoverEngine.merged.replayHover(hovered) == nil,
+               "merged hover cannot rearm during an owned Space reveal")
+        hovered.toggleFromShortcut()
+        ReplayClock.now += 1
+        hoverEngine.merged.replayFire(oldDwell, session: hovered)
+        expect(!hovered.desiredPresentationIsExpanded && hovered.busy,
+               "old merged dwell cannot overwrite the newer shortcut collapse")
+        DisplaySpaceTransport.shared.delayPreparation = false
+        let preparations = DisplaySpaceTransport.shared.delayedPreparations
+        DisplaySpaceTransport.shared.delayedPreparations = []
+        preparations.forEach { $0(.success(1)) }
+        StashAX.minimized = true
+        hovered.replayMinimizeObservation()
+        expect(hovered.isCollapsed && !hovered.busy, "the preserved close actually completes after Space preparation")
+        hoverEngine.merged.replayLeave()
+        expect(hoverEngine.merged.replayHover(hovered) != nil, "a fresh settled pointer visit can reveal again")
+        hoverEngine.merged.tearDown()
+
+        let hoverA = outer("app.A"), explicitB = outer("app.B")
+        let competing = EngineAdapter([hoverA, explicitB])
+        let otherDwell = competing.merged.replayHover(hoverA)!
+        competing.shortcut("app.B")
+        ReplayClock.now += 1
+        competing.merged.replayFire(otherDwell, session: hoverA)
+        expect(hoverA.isCollapsed && explicitB.isExpanded,
+               "explicit input for another merged member cancels the group's earlier pending dwell")
+        competing.merged.tearDown()
+
+        // MARK: presentation_ownership callbacks, failures and pins share operation identity.
+        let reentrant = outer()
+        let beforeReentrantWrites = StashAX.frameWrites
+        reentrant.onPresentationRequested = { session, request in
+            if request.expanded { _ = session.collapse() }
+        }
+        _ = reentrant.expand(fromDock: true)
+        expect(reentrant.isCollapsed && !reentrant.busy && !reentrant.presentationRequests.hasOutstandingRequest
+               && StashAX.frameWrites == beforeReentrantWrites,
+               "a request callback superseding admission cannot execute the old reveal afterward")
+
+        let refused = outer()
+        refused.phase = .expanded
+        StashRescue.saveHook = {
+            StashRescue.saveHook = nil
+            _ = refused.expand(fromDock: true)
+            return false
+        }
+        expect(!refused.collapse() && refused.isExpanded && !refused.busy
+               && !refused.presentationRequests.hasOutstandingRequest,
+               "native refusal clears its operation and queued input even when input revision advanced")
+
+        let pinnedDeferred = pendingRecovery(expanded: true)
+        _ = pinnedDeferred.collapse(merged: true, source: .mergeClick)
+        StashSurface.observedAlpha = 1
+        _ = confirm(pinnedDeferred)
+        pinnedDeferred.isPinned = true
+        DispatchQueue.main.drain()
+        expect(pinnedDeferred.isExpanded && pinnedDeferred.isPinned && !pinnedDeferred.busy
+               && !pinnedDeferred.presentationRequests.hasOutstandingRequest,
+               "execution rechecks pin protection before a deferred close can write")
+
+        let replaced = outer()
+        replaced.delaySlide = true
+        _ = replaced.expand(fromDock: true)
+        let oldCompletion = replaced.pendingSlide!
+        replaced.prepareForScreenSetChange()
+        _ = replaced.expand(fromDock: true)
+        let newCompletion = replaced.pendingSlide!
+        let newOperation = replaced.presentationRequests.operation
+        oldCompletion()
+        expect(replaced.busy && replaced.isCollapsed && replaced.presentationRequests.owns(operation: newOperation),
+               "cancelled animation completion cannot consume a replacement operation")
+        newCompletion()
+        expect(replaced.isExpanded && !replaced.busy && !replaced.presentationRequests.hasOutstandingRequest,
+               "the replacement operation alone may commit its final phase")
 
         report()
         if !failures.isEmpty { exit(1) }

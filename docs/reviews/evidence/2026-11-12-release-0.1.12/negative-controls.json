@@ -1,0 +1,55 @@
+{
+  "scope": "Isolated mutations of the generated current-method replay; production sources unchanged",
+  "inputReplaySHA256": "33e103a4de6b6a2519849a804a865ac2f7488917606e75813346570827b1ce6c",
+  "controls": [
+    {
+      "mutation": "deferred-target-hidden-from-toggle",
+      "rejected": true,
+      "assertions": 71,
+      "failures": [
+        "deferred recovery target remains visible to the second toggle",
+        "two toggles across the actual recovery/main-queue boundary end collapsed without another write"
+      ]
+    },
+    {
+      "mutation": "unavailable-member-selects-batch-direction",
+      "rejected": true,
+      "assertions": 71,
+      "failures": [
+        "each app shortcut advances the healthy sibling while the unavailable member remains untouched",
+        "each app shortcut advances the healthy sibling while the unavailable member remains untouched",
+        "partial batch refusal is diagnosed instead of silently blocking the group",
+        "recent-window scope also chooses a controllable managed member"
+      ]
+    },
+    {
+      "mutation": "merge-projection-closes-siblings",
+      "rejected": true,
+      "assertions": 71,
+      "failures": [
+        "both merged members stay expanded under either completion order",
+        "the next application command collapses both members",
+        "both merged members stay expanded under either completion order",
+        "the next application command collapses both members",
+        "an app B command cannot collapse unnamed app A through merge reconciliation",
+        "global show-all preserves every application's merged member"
+      ]
+    },
+    {
+      "mutation": "stale-animation-consumes-new-operation",
+      "rejected": true,
+      "assertions": 71,
+      "failures": [
+        "cancelled animation completion cannot consume a replacement operation"
+      ]
+    },
+    {
+      "mutation": "deferred-execution-ignores-pin",
+      "rejected": true,
+      "assertions": 71,
+      "failures": [
+        "execution rechecks pin protection before a deferred close can write"
+      ]
+    }
+  ]
+}

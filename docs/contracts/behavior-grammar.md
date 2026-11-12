@@ -4,7 +4,7 @@ status: current
 authority: normative
 implementation: implemented
 verification_status: partial
-last_reconciled: 2026-11-11
+last_reconciled: 2026-11-12
 ---
 
 # Behavior grammar and the expectation check
@@ -180,6 +180,32 @@ rejects superseded callbacks; expiry and environment/release cancellation clear
 the queue and busy gate. `scripts/check-session-recovery.py` exercises the live
 session methods with injected AX, UI, clock and main-queue boundaries. It adds no
 polling timer or presentation anchor and does not prove native AX completion.
+
+For 0.1.12 the [presentation ownership contract](presentation-ownership.md)
+defines a single admission point for explicit and passive presentation requests.
+The coordinator retains deferred intent through main-queue handoff, and separates
+input revision from native operation identity. Explicit no-ops invalidate older
+replay; passive hover/leave cannot replace outstanding work. The engine freezes
+batch scope and direction from controllable members; unavailable members are
+logged and skipped. Merge reconciliation projects multiple expanded members
+without emitting any collapse. Only an actual input can request a change.
+
+`Tests/InteractionContinuityTests.swift` exercises toggle parity across every
+handoff split for one through eight toggles, admission priority, operation
+ownership and partial batch scope. `scripts/check-session-recovery.py` now also
+executes the current engine command methods and the complete merge coordinator,
+with injected native/clock/UI boundaries. It covers completion order, cross-app
+and show-all scope, merged hover versus newer commands, reentrant admission,
+native refusal, pin protection and stale animation completion. This is adapter
+evidence, not physical AX or presentation cardinality proof.
+
+`Tests/ScreenSetMemoryTests.swift` and the live coordinator replay additionally
+check partial-edge reflow/increment, unchanged sibling segments, reverse changes
+and duplicate observations. Refresh reasons derive from saved window geometry,
+never minimized AX bounds. The existing bounded local diagnostic writer records
+request admission, replay/operation ownership, skipped batch members and geometry
+decisions. No timer, popup, overlay anchor, retry budget or capability is added;
+the twelve manifest rows and their coverage classifications remain unchanged.
 
 Session completion requires acknowledgement of the final AX frame writes.
 Exposed-edge Nudge/Fade additionally checks every opacity write: reveal hides

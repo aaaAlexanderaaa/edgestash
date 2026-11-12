@@ -136,6 +136,94 @@ func runInteractionContinuityTests(_ expect: (Bool, String) -> Void) {
     expect(presentation.revision != completionRevision,
            "a synchronous newer operation supersedes a target retained by an older completion")
 
+    // MARK: presentation_ownership deferred handoff and passive priority.
+    for initialExpanded in [false, true] {
+        for toggleCount in 1...8 {
+            for beforeCompletion in 0...toggleCount {
+                var state = StashPresentationCoordinator()
+                let phase: StashSessionPhase = initialExpanded ? .expanded : .collapsed
+                state.begin(StashPresentationRequest(expanded: initialExpanded, source: .recovery))
+                for _ in 0..<beforeCompletion {
+                    let request = StashPresentationRequest(expanded: !state.desiredExpanded(phase: phase), source: .shortcut)
+                    expect(state.submit(request, phase: phase, busy: true) == .queued, "recovery retains each newest toggle")
+                }
+                _ = state.complete()
+                let completedRevision = state.revision
+                var committed = phase
+                for _ in beforeCompletion..<toggleCount {
+                    let request = StashPresentationRequest(expanded: !state.desiredExpanded(phase: committed), source: .shortcut)
+                    let decision = state.submit(request, phase: committed, busy: false)
+                    if decision == .start {
+                        committed = request.expanded ? .expanded : .collapsed
+                        _ = state.complete()
+                    }
+                }
+                if let request = state.resume(revision: completedRevision, phase: committed) {
+                    committed = request.expanded ? .expanded : .collapsed
+                    _ = state.complete()
+                }
+                expect((committed == .expanded) == (initialExpanded != (toggleCount % 2 == 1)),
+                       "toggle parity survives every recovery/deferred split without duplicated replay")
+                expect(!state.hasOutstandingRequest, "completed toggles leave no deferred owner")
+            }
+        }
+    }
+    var handoff = StashPresentationCoordinator()
+    handoff.begin(close)
+    _ = handoff.queue(open)
+    _ = handoff.complete()
+    let oldRevision = handoff.revision
+    expect(handoff.desiredExpanded(phase: .collapsed), "deferred reveal remains the desired appearance")
+    expect(handoff.submit(StashPresentationRequest(expanded: true, source: .hover), phase: .collapsed, busy: false) == .unsettled,
+           "hover cannot replace a deferred owner after busy clears")
+    expect(handoff.submit(close, phase: .collapsed, busy: false) == .satisfied
+           && handoff.resume(revision: oldRevision, phase: .collapsed) == nil,
+           "an explicit no-op close cancels an older deferred reveal")
+    expect(handoff.submit(StashPresentationRequest(expanded: true, source: .hover), phase: .collapsed,
+                          busy: false, expectedRevision: oldRevision) == .stale,
+           "an old dwell cannot cross a newer explicit command even after it settles")
+    handoff.begin(open)
+    _ = handoff.queue(close)
+    expect(handoff.submit(StashPresentationRequest(expanded: true, source: .hover), phase: .collapsed, busy: true) == .unsettled
+           && !handoff.desiredExpanded(phase: .collapsed), "passive reveal cannot erase queued explicit collapse")
+    expect(handoff.submit(open, phase: .collapsed, busy: true, available: false) == .unavailable,
+           "lost control refuses input without changing desired appearance")
+    handoff.cancel()
+    expect(!handoff.hasOutstandingRequest, "cancellation releases all stages of intent ownership")
+    handoff.begin(open)
+    let operation = handoff.operation
+    let inputRevision = handoff.revision
+    _ = handoff.queue(close)
+    expect(handoff.owns(operation: operation) && handoff.revision != inputRevision,
+           "queueing input does not steal native operation ownership, including failure cleanup")
+    handoff.cancel()
+    handoff.begin(open)
+    expect(!handoff.owns(operation: operation), "replacement operation rejects a cancelled operation's callback")
+
+    // MARK: command_scope excludes unavailable members without narrowing healthy scope.
+    let unavailableMember = StashCommandMember(id: "unavailable", available: false, desiredExpanded: true)
+    let healthyMember = StashCommandMember(id: "healthy", available: true, desiredExpanded: false)
+    let command = StashCommandPlan(members: [unavailableMember, healthyMember])
+    expect(command.expanded == true && command.targets == ["healthy"] && command.skipped == ["unavailable"],
+           "unavailable expanded member cannot force healthy siblings to collapse forever")
+    expect(StashCommandPlan(members: [unavailableMember]).expanded == nil,
+           "an entirely unavailable group produces an explicit empty command")
+    let mixed = StashCommandPlan(members: [healthyMember, .init(id: "open", available: true, desiredExpanded: true)])
+    expect(mixed.expanded == false && Set(mixed.targets) == ["healthy", "open"],
+           "batch direction is fixed before execution and includes satisfied targets to invalidate old dwells")
+    let all = StashCommandPlan(members: [healthyMember, .init(id: "open", available: true, desiredExpanded: true)], expanded: true)
+    expect(all.expanded == true && all.targets.count == 2, "show-all preserves its full named scope")
+
+    var invalidatedHover = HoverRevealCoordinator()
+    let pendingVisit = invalidatedHover.updateTarget("A", now: start, delay: 0.15, buttonPressed: false)!
+    invalidatedHover.invalidateVisit()
+    expect(invalidatedHover.consume(pendingVisit, now: start.addingTimeInterval(1), buttonPressed: false) == nil
+           && invalidatedHover.updateTarget("A", now: start, delay: 0, buttonPressed: false) == nil,
+           "explicit input cancels both the old merged timer and same-visit rearming")
+    _ = invalidatedHover.updateTarget(nil, now: start, delay: 0, buttonPressed: false)
+    expect(invalidatedHover.updateTarget("A", now: start, delay: 0, buttonPressed: false) != nil,
+           "a later fresh pointer visit remains usable")
+
     // MARK: marker_mouse_up preserves explicit target invariants.
     var clickedReveal = StashPresentationCoordinator()
     var markerHover = HoverRevealCoordinator()

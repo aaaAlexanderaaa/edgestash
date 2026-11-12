@@ -420,12 +420,43 @@ struct AdapterReplay {
         scatterCoordinator.invalidate()
         reliabilityTimelines += 1
 
+        // MARK: screen_set live partial-edge reflow and increment repair.
+        let owner = DisplayGeometry(id: "A", frame: CGRect(x: 0, y: 0, width: 1440, height: 1080))
+        let top = DisplayGeometry(id: "B", frame: CGRect(x: 1440, y: 0, width: 1000, height: 400))
+        let moved = DisplayGeometry(id: "B", frame: CGRect(x: 1440, y: 500, width: 1000, height: 400))
+        let added = DisplayGeometry(id: "C", frame: CGRect(x: 1440, y: 500, width: 1000, height: 580))
+        let original = [owner, top]
+        for next in [[owner, moved], [owner, top, added]] {
+            DisplayCatalog.show(original)
+            let lower = ScreenSetPlacement(windowNumber: 200, bundleID: "segments.test", displayID: "A", edge: 2)
+            let upper = ScreenSetPlacement(windowNumber: 201, bundleID: "segments.test", displayID: "A", edge: 2)
+            Preferences.shared.storedScreenSets = [ScreenSetConfiguration(
+                fingerprint: ScreenSetObservation(displays: original).fingerprint, slots: [lower, upper])]
+            let lowerSession = StashSession(lower, managed: true), upperSession = StashSession(upper, managed: true)
+            lowerSession.restoreFrame = CGRect(x: 940, y: 550, width: 500, height: 300)
+            upperSession.restoreFrame = CGRect(x: 940, y: 50, width: 500, height: 200)
+            let coordinator = ScreenSetCoordinator()
+            coordinator.captureBaseline { [lowerSession, upperSession] }
+            coordinator.replayApply(next)
+            check(lowerSession.attempts == 1 && lowerSession.scatters == 0 && lowerSession.isManaged,
+                  "changed occupied edge segment reaches the live session repair exactly once")
+            if next.count == 3 {
+                check(upperSession.attempts == 0, "increment leaves a sibling on the unchanged segment untouched")
+            }
+            let attempts = [lowerSession.attempts, upperSession.attempts]
+            coordinator.replayApply(next)
+            check([lowerSession.attempts, upperSession.attempts] == attempts, "duplicate layout does not repeat segment repair")
+            coordinator.replayApply(original)
+            check(lowerSession.attempts == 2 && lowerSession.isManaged, "reverse segment change repairs without losing membership")
+            coordinator.invalidate()
+        }
         let result: [String: Any] = [
             "reliabilityTimelines": reliabilityTimelines,
             "scope": "unmodified live ScreenSetCoordinator with injected display/session boundaries; no physical cable or native AX claim",
             "roundTripTimelines": timelines,
             "retryTimelines": retryTimelines,
             "powerAndSettleTimelines": powerTimelines,
+            "partialEdgeTimelines": 2,
             "assertions": assertions,
             "failures": failures
         ]

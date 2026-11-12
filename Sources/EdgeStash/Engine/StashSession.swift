@@ -67,7 +67,7 @@ final class StashSession {
     var onChanged: ((StashSession) -> Void)?
     var onCollapsed: ((StashSession) -> Void)?
     var onExpanded: ((StashSession) -> Void)?
-    var onRevealRequested: ((StashSession) -> Void)?
+    var onPresentationRequested: ((StashSession, StashPresentationRequest) -> Void)?
     var onSeamMarkerActivity: ((StashSession) -> Void)?
     var focusContext: (() -> (settingsIsKey: Bool, collapsedPIDs: Set<pid_t>))?
 
@@ -112,6 +112,7 @@ final class StashSession {
     var focusReturn = FocusReturnCoordinator()
     var presentationRequests = StashPresentationCoordinator()
     var desiredPresentationIsExpanded: Bool { presentationRequests.desiredExpanded(phase: phase) }
+    var acceptsPresentationRequests: Bool { isManaged && !awaitingWindowControl && !ScreenSetCoordinator.blocksUserGeometry }
     var lifecycleGeneration = 0
     var spaceRevealGeneration = 0
     /// AX moved/miniaturized notifications during a coordinator or shutdown
@@ -368,19 +369,72 @@ final class StashSession {
 
     func toggleFromShortcut() {
         guard isManaged else { return }
-        if !desiredPresentationIsExpanded {
-            // Shortcut reveals are deliberate like Dock reveals: they
-            // participate in focus return.
-            _ = expand(fromDock: true)
-        } else {
-            if isPinned { isPinned = false }
-            _ = collapse()
-        }
+        setPresentation(expanded: !desiredPresentationIsExpanded, source: .shortcut)
     }
 
-    func expandFromDock() {
-        guard isManaged else { return }
-        _ = expand(fromDock: true)
+    func expandFromDock(source: StashRequestSource = .dock) {
+        setPresentation(expanded: true, source: source)
+    }
+
+    func setPresentation(expanded: Bool, source: StashRequestSource, commandID: UInt? = nil) {
+        guard acceptsPresentationRequests else {
+            diagnose("session.presentation-rejected", ["source": source.rawValue, "targetExpanded": expanded,
+                                                       "reason": "unavailable", "command": commandID ?? 0])
+            return
+        }
+        if !expanded, source == .shortcut { isPinned = false }
+        _ = requestPresentation(StashPresentationRequest(expanded: expanded, fromDock: expanded,
+                                                        source: source, commandID: commandID))
+    }
+
+    /// Marker and merged hover share admission and revision ownership. The
+    /// merged rail owns its own suppression and per-visit click lock.
+    func canBeginHoverReveal(merged: Bool = false) -> Bool {
+        acceptsPresentationRequests && !recoveryEpochActive && !presentationRequests.hasOutstandingRequest
+            && HoverRevealPolicy.shouldBegin(phase: phase, isBusy: busy,
+                markerSuppressed: !merged && markerSuppressed, clickLocked: !merged && clickCollapseLockActive,
+                buttonPressed: NSEvent.pressedMouseButtons != 0)
+            && (presentation != .systemMinimize || canBeginSeamReveal)
+    }
+
+    @discardableResult
+    private func requestPresentation(_ request: StashPresentationRequest, expectedRevision: UInt? = nil) -> Bool {
+        let before = presentationRequests.revision
+        let decision = presentationRequests.submit(request, phase: phase, busy: busy,
+            available: acceptsPresentationRequests, pinned: isPinned, expectedRevision: expectedRevision)
+        diagnose("session.presentation-request", ["source": request.source.rawValue, "targetExpanded": request.expanded,
+            "decision": decision.rawValue, "revisionBefore": before, "command": request.commandID ?? 0])
+        guard decision.accepted else { return false }
+        let operation = presentationRequests.operation
+        if !request.source.isPassive { cancelHoverReveal() }
+        onPresentationRequested?(self, request)
+        guard decision == .start else { return true }
+        return performPresentation(request, operation: operation)
+    }
+
+    private func performPresentation(_ request: StashPresentationRequest, operation: UInt) -> Bool {
+        guard presentationRequests.owns(operation: operation) else {
+            diagnose("session.presentation-execution-dropped", ["operation": operation, "reason": "superseded-before-write"])
+            return false
+        }
+        guard acceptsPresentationRequests, request.expanded || !isPinned else {
+            presentationRequests.cancel()
+            diagnose("session.presentation-execution-dropped", ["operation": operation, "reason": "unavailable-or-pinned"])
+            return false
+        }
+        busy = true
+        let accepted = request.expanded
+            ? performExpand(fromDock: request.fromDock, merged: request.merged)
+            : performCollapse(merged: request.merged)
+        // A synchronous native refusal must release the target it admitted,
+        // but cannot erase a newer operation begun by a completion callback.
+        if !accepted, presentationRequests.owns(operation: operation) {
+            presentationRequests.cancel()
+            busy = false
+        }
+        diagnose("session.presentation-execution", ["source": request.source.rawValue, "targetExpanded": request.expanded,
+            "accepted": accepted, "operation": operation, "command": request.commandID ?? 0])
+        return accepted
     }
 
     /// Invalidate callbacks carrying pre-change coordinates before waiting for
@@ -580,7 +634,7 @@ final class StashSession {
             phase = .collapsed
         }
         presentation = next
-        presentationRequests.begin(StashPresentationRequest(expanded: isExpanded))
+        presentationRequests.begin(StashPresentationRequest(expanded: isExpanded, source: .recovery))
         busy = true
         pendingPresentation = (WindowWriteConfirmation(now: ProcessInfo.processInfo.systemUptime),
                                phase, next, isExpanded ? rebased : hidden)
@@ -607,6 +661,7 @@ final class StashSession {
             cancelPresentationConfirmation()
             return .failed
         case .confirmed:
+            let completedOperation = presentationRequests.operation
             let request = presentationRequests.complete()
             let revision = presentationRequests.revision
             pendingPresentation = nil
@@ -615,6 +670,7 @@ final class StashSession {
             presentation = pending.presentation
             unconfirmedOwnedMinimize = false
             finishScreenSetRepair()
+            diagnose("session.presentation-complete", ["boundary": "recovery", "completedOperation": completedOperation])
             deferPendingPresentation(request, revision: revision)
             return .succeeded
         }
@@ -859,14 +915,14 @@ final class StashSession {
         shutdown(event: .detachedFromEdge)
     }
 
-    func mergeReveal() {
+    func mergeReveal(source: StashRequestSource = .mergeClick, expectedRevision: UInt? = nil) {
         guard !isPinned else { return }
-        _ = expand(fromDock: false, merged: true)
+        _ = expand(fromDock: false, merged: true, source: source, expectedRevision: expectedRevision)
     }
 
     func mergeHide() {
         guard !isPinned else { return }
-        _ = collapse(merged: true)
+        _ = collapse(merged: true, source: .mergeClick)
     }
 
     func hideMarkerForSpaceChange() {
@@ -914,8 +970,9 @@ final class StashSession {
     }
 
     func togglePin() {
-        guard !awaitingWindowControl, isExpanded || isPinned else { return }
+        guard !awaitingWindowControl, !busy, isExpanded || isPinned else { return }
         cancelPendingRecovery()
+        presentationRequests.discardPending()
         focusReturn.cancel()
         isPinned.toggle()
         if isPinned {
@@ -1124,20 +1181,20 @@ final class StashSession {
         )
         rescueVisibleFrame = restoreFrame
         phase = .captured
-        if collapse() { return true }
+        if collapse(source: .capture) { return true }
         restoreFrame = frame
         shutdown(event: .miniaturized)
         return false
     }
 
     @discardableResult
-    func collapse(merged: Bool = false) -> Bool {
+    func collapse(merged: Bool = false, source: StashRequestSource = .explicit) -> Bool {
+        requestPresentation(StashPresentationRequest(expanded: false, merged: merged, source: source))
+    }
+
+    private func performCollapse(merged: Bool) -> Bool {
+        let operation = presentationRequests.operation
         diagnose("session.collapse-request", ["merged": merged])
-        guard !ScreenSetCoordinator.blocksUserGeometry, !awaitingWindowControl else { return false }
-        guard !isPinned else { return false }
-        if busy {
-            return presentationRequests.queue(StashPresentationRequest(expanded: false, merged: merged))
-        }
         guard let next = StashSessionPolicy.phase(after: .collapse, from: phase),
               let edge,
               let frame = StashAX.frame(of: windowElement) ?? restoreFrame else {
@@ -1193,9 +1250,7 @@ final class StashSession {
         leaveTimer?.invalidate()
         pinWindow.conceal()
         var collapseStarted = false
-        presentationRequests.begin(StashPresentationRequest(expanded: false, merged: merged))
         defer {
-            if !collapseStarted { presentationRequests.cancel() }
             if !collapseStarted, phase == .expanded, !isPinned, !awaitingWindowControl {
                 outsideSince = nil
                 startLeaveWatch()
@@ -1245,7 +1300,7 @@ final class StashSession {
                 collapsing: true,
                 merged: merged
             ) { [weak self] placed in
-                guard let self else { return }
+                guard let self, self.presentationRequests.owns(operation: operation) else { return }
                 // The 2pt positioning lip must not contribute content pixels.
                 // A failed hide cannot commit a falsely collapsed session.
                 guard placed, let windowID = self.windowID,
@@ -1324,23 +1379,22 @@ final class StashSession {
     }
 
     @discardableResult
-    func expand(fromDock: Bool, merged: Bool = false, recordsRequest: Bool = true) -> Bool {
+    func expand(fromDock: Bool, merged: Bool = false, source: StashRequestSource = .explicit,
+                expectedRevision: UInt? = nil) -> Bool {
+        requestPresentation(StashPresentationRequest(expanded: true, fromDock: fromDock, merged: merged, source: source),
+                            expectedRevision: expectedRevision)
+    }
+
+    private func performExpand(fromDock: Bool, merged: Bool) -> Bool {
+        let operation = presentationRequests.operation
         diagnose("session.expand-request", ["fromDock": fromDock, "merged": merged])
-        guard !ScreenSetCoordinator.blocksUserGeometry, !awaitingWindowControl else { return false }
-        if busy {
-            let accepted = presentationRequests.queue(StashPresentationRequest(expanded: true, fromDock: fromDock, merged: merged))
-            if accepted, recordsRequest { onRevealRequested?(self) }
-            return accepted
-        }
         guard let next = StashSessionPolicy.phase(after: .expand, from: phase),
               let restoreFrame else {
             return false
         }
         cancelPendingRecovery()
         focusReturn.beginOperation()
-        presentationRequests.begin(StashPresentationRequest(expanded: true, fromDock: fromDock, merged: merged))
         busy = true
-        if recordsRequest { onRevealRequested?(self) }
         hoverDelayTimer?.invalidate()
         markerHiddenForSpace = false
         if usingSharedMinimize {
@@ -1376,7 +1430,7 @@ final class StashSession {
             collapsing: false,
             merged: merged
         ) { [weak self] placed in
-            guard let self else { return }
+            guard let self, self.presentationRequests.owns(operation: operation) else { return }
             guard placed else {
                 self.presentationRequests.cancel()
                 self.busy = false
@@ -1404,8 +1458,8 @@ final class StashSession {
                 failSharedRevealAfterDeminimize()
                 return false
             }
-            finishExpand(next: next, frame: restoreFrame, fromDock: false, activatesApp: false)
             restoringShared = false
+            finishExpand(next: next, frame: restoreFrame, fromDock: false, activatesApp: false)
             return true
         }
         guard minimized == true else {
@@ -1431,11 +1485,13 @@ final class StashSession {
         spaceRevealGeneration += 1
         let revealToken = spaceRevealGeneration
         let lifecycleToken = lifecycleGeneration
+        let operation = presentationRequests.operation
         DisplaySpaceTransport.shared.prepareMinimizedWindow(
             windowID: windowID,
             for: cgDisplayID
         ) { [weak self] result in
             guard let self,
+                  self.presentationRequests.owns(operation: operation),
                   self.lifecycleGeneration == lifecycleToken,
                   self.spaceRevealGeneration == revealToken,
                   self.phase == .collapsed,
@@ -1449,8 +1505,8 @@ final class StashSession {
                                              spaceID: targetSpaceID, frame: restoreFrame) {
                 case .succeeded:
                     self.usingSharedMinimize = false
-                    self.finishExpand(next: next, frame: restoreFrame, fromDock: fromDock)
                     self.restoringShared = false
+                    self.finishExpand(next: next, frame: restoreFrame, fromDock: fromDock)
                 case .keptMinimized:
                     self.usingSharedMinimize = true
                     self.failSharedReveal(availability: .unavailable)
@@ -1574,15 +1630,17 @@ final class StashSession {
         fromDock: Bool,
         activatesApp: Bool = true
     ) {
+        let completedOperation = presentationRequests.operation
         let pending = presentationRequests.complete()
         let requestRevision = presentationRequests.revision
         phase = next
+        busy = false
         if activatesApp { activateApp() }
         showMarker(windowQuartz: frame)
         startLeaveWatch()
         outsideSince = nil
         lastSiblingInteractionAt = nil
-        busy = false
+        diagnose("session.presentation-complete", ["boundary": "expand", "completedOperation": completedOperation])
         refreshPinControl()
         if FocusReturnPolicy.shouldReleaseAfterExpand(fromDock: fromDock) {
             scheduleFocusRelease()
@@ -1606,12 +1664,14 @@ final class StashSession {
     }
 
     func finishCollapse(next: StashSessionPhase, frame: CGRect, merged: Bool) {
+        let completedOperation = presentationRequests.operation
         let pending = presentationRequests.complete()
         let requestRevision = presentationRequests.revision
         phase = next
+        busy = false
         StashRescue.persist(session: self)
         showMarker(windowQuartz: frame)
-        busy = false
+        diagnose("session.presentation-complete", ["boundary": "collapse", "completedOperation": completedOperation])
         refreshPinControl()
         if !merged {
             scheduleFocusRelease()
@@ -1622,15 +1682,15 @@ final class StashSession {
     }
 
     private func runPendingPresentation(_ request: StashPresentationRequest?, revision: UInt) {
-        guard let request, presentationRequests.revision == revision,
-              isManaged, !busy, !ScreenSetCoordinator.blocksUserGeometry else { return }
-        if request.expanded {
-            // This intent was already recorded when it was queued. Replaying
-            // it must not take preference back from a newer group request.
-            _ = expand(fromDock: request.fromDock, merged: request.merged, recordsRequest: false)
-        } else {
-            _ = collapse(merged: request.merged)
+        guard request != nil else { return }
+        guard acceptsPresentationRequests, !busy,
+              let replay = presentationRequests.resume(revision: revision, phase: phase) else {
+            diagnose("session.presentation-replay-dropped", ["expectedRevision": revision])
+            return
         }
+        diagnose("session.presentation-replay", ["expectedRevision": revision, "source": replay.source.rawValue,
+                                                 "command": replay.commandID ?? 0])
+        _ = performPresentation(replay, operation: presentationRequests.operation)
     }
 
     private func slide(
@@ -1696,6 +1756,7 @@ final class StashSession {
         guard StashDiagnostics.isEnabled else { return }
         var row = fields()
         row["app"] = bundleID
+        row["session"] = mergeID
         row["pid"] = pid
         row["subjectLaunch"] = processLaunchDate?.timeIntervalSince1970 ?? -1
         row["window"] = windowID ?? 0
@@ -1706,6 +1767,14 @@ final class StashSession {
         row["presentation"] = presentation.map { String(describing: $0) } ?? "none"
         row["pinned"] = isPinned
         row["busy"] = busy
+        row["desiredExpanded"] = desiredPresentationIsExpanded
+        row["requestRevision"] = presentationRequests.revision
+        row["presentationOperation"] = presentationRequests.operation
+        for (name, request) in [("active", presentationRequests.active), ("pending", presentationRequests.pending),
+                                ("deferred", presentationRequests.deferred)] {
+            row[name + "Request"] = request.map { ["expanded": $0.expanded, "source": $0.source.rawValue,
+                                                  "command": $0.commandID ?? 0] as [String: Any] } ?? [:]
+        }
         row["restoringShared"] = restoringShared
         row["usingSharedMinimize"] = usingSharedMinimize
         row["leaveWatch"] = leaveTimer?.isValid == true

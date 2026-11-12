@@ -81,6 +81,13 @@ public struct HoverRevealCoordinator {
         revealedForVisit = true
     }
 
+    /// New explicit input consumes this visit, including an armed dwell for
+    /// another member of the same rail. Only leaving/changing target rearms it.
+    public mutating func invalidateVisit() {
+        cancelPending()
+        revealedForVisit = true
+    }
+
     public mutating func consume(
         _ ticket: HoverRevealTicket, now: Date, buttonPressed: Bool
     ) -> String? {
@@ -184,15 +191,33 @@ public enum WindowSurfacePolicy {
     }
 }
 
+public enum StashRequestSource: String {
+    case explicit, shortcut, marker, mergeClick, dock, showAll, hover, automatic, recovery, capture, system
+
+    public var isPassive: Bool { self == .hover || self == .automatic }
+}
+
+public enum StashRequestDecision: String {
+    case start, queued, satisfied
+    case unavailable, pinned, stale, unsettled, invalidPhase
+
+    public var accepted: Bool { self == .start || self == .queued || self == .satisfied }
+}
+
 public struct StashPresentationRequest: Equatable {
     public let expanded: Bool
     public let fromDock: Bool
     public let merged: Bool
+    public let source: StashRequestSource
+    public let commandID: UInt?
 
-    public init(expanded: Bool, fromDock: Bool = false, merged: Bool = false) {
+    public init(expanded: Bool, fromDock: Bool = false, merged: Bool = false,
+                source: StashRequestSource = .explicit, commandID: UInt? = nil) {
         self.expanded = expanded
         self.fromDock = fromDock
         self.merged = merged
+        self.source = source
+        self.commandID = commandID
     }
 }
 
@@ -200,19 +225,60 @@ public struct StashPresentationRequest: Equatable {
 /// appearance. Keep one target rather than replaying every intermediate click.
 public struct StashPresentationCoordinator {
     public private(set) var revision: UInt = 0
-    private var active: StashPresentationRequest?
-    private var pending: StashPresentationRequest?
+    /// Native ownership changes only when an operation starts or ends. Queueing
+    /// newer input changes revision without stealing the running operation.
+    public private(set) var operation: UInt = 0
+    public private(set) var active: StashPresentationRequest?
+    public private(set) var pending: StashPresentationRequest?
+    public private(set) var deferred: StashPresentationRequest?
 
     public init() {}
 
     public func desiredExpanded(phase: StashSessionPhase) -> Bool {
-        pending?.expanded ?? active?.expanded ?? (phase == .expanded)
+        pending?.expanded ?? deferred?.expanded ?? active?.expanded ?? (phase == .expanded)
+    }
+
+    public var hasOutstandingRequest: Bool { active != nil || deferred != nil }
+
+    public func owns(operation expected: UInt) -> Bool { active != nil && operation == expected }
+
+    /// All native inputs use this admission point. Passive observations cannot
+    /// replace owned work; explicit no-ops still supersede older deferred work.
+    public mutating func submit(
+        _ request: StashPresentationRequest, phase: StashSessionPhase, busy: Bool,
+        available: Bool = true, pinned: Bool = false, expectedRevision: UInt? = nil
+    ) -> StashRequestDecision {
+        guard available else { return .unavailable }
+        guard expectedRevision == nil || expectedRevision == revision else { return .stale }
+        guard request.expanded || !pinned else { return .pinned }
+        guard phase != .idle else { return .invalidPhase }
+        if request.source.isPassive && (busy || hasOutstandingRequest) { return .unsettled }
+        if busy { return queue(request) ? .queued : .unsettled }
+        if (phase == .expanded && request.expanded) || (phase == .collapsed && !request.expanded) {
+            cancel()
+            return .satisfied
+        }
+        begin(request)
+        return .start
+    }
+
+    /// Claim one completion-owned replay without re-admitting it as new input.
+    public mutating func resume(revision expected: UInt, phase: StashSessionPhase) -> StashPresentationRequest? {
+        guard expected == revision, let request = deferred else { return nil }
+        if (phase == .expanded) == request.expanded {
+            cancel()
+            return nil
+        }
+        begin(request)
+        return request
     }
 
     public mutating func begin(_ request: StashPresentationRequest) {
         revision &+= 1
+        operation &+= 1
         active = request
         pending = nil
+        deferred = nil
     }
 
     public mutating func queue(_ request: StashPresentationRequest) -> Bool {
@@ -223,19 +289,54 @@ public struct StashPresentationCoordinator {
     }
 
     public mutating func complete() -> StashPresentationRequest? {
+        guard active != nil else { return nil }
         let next = pending
-        cancel()
+        revision &+= 1
+        operation &+= 1
+        active = nil
+        pending = nil
+        deferred = next
         return next
     }
 
     public mutating func discardPending() {
         revision &+= 1
         pending = nil
+        deferred = nil
     }
 
     public mutating func cancel() {
         revision &+= 1
+        operation &+= 1
         active = nil
         pending = nil
+        deferred = nil
+    }
+}
+
+public struct StashCommandMember {
+    public let id: String
+    public let available: Bool
+    public let desiredExpanded: Bool
+
+    public init(id: String, available: Bool, desiredExpanded: Bool) {
+        self.id = id
+        self.available = available
+        self.desiredExpanded = desiredExpanded
+    }
+}
+
+/// Immutable scope/direction selection precedes the first native write.
+/// Unavailable members neither choose the direction nor block healthy members.
+public struct StashCommandPlan {
+    public let expanded: Bool?
+    public let targets: [String]
+    public let skipped: [String]
+
+    public init(members: [StashCommandMember], expanded: Bool? = nil) {
+        let available = members.filter(\.available)
+        self.expanded = available.isEmpty ? nil : expanded ?? !available.contains(where: \.desiredExpanded)
+        targets = available.map(\.id)
+        skipped = members.filter { !$0.available }.map(\.id)
     }
 }

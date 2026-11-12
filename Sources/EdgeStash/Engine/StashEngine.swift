@@ -5,6 +5,7 @@ import EdgeStashLogic
 
 /// Live stash coordinator. Starts only after Accessibility is already trusted.
 final class StashEngine {
+    private var presentationCommandSequence: UInt = 0
     private var sessions: [StashSession] = []
     private var appObservers: [pid_t: (AXObserver, CFRunLoopSource)] = [:]
     private var mouseDownMonitor: Any?
@@ -278,16 +279,7 @@ final class StashEngine {
     }
 
     private func applyShowAll(bundleIDs: [String]) {
-        for bundleID in bundleIDs {
-            let group = sessions.filter { $0.bundleID == bundleID }
-            let decision = StashActivationPolicy.decision(
-                kind: .showAllWindows,
-                hasOnDesktopWindow: group.contains(where: \.isOnDesktop),
-                allStandardWindowsStashed: !group.isEmpty && group.allSatisfy(\.isManaged),
-                allStashedDock: Preferences.shared.allStashedDockAction(for: bundleID)
-            )
-            applyActivation(decision, bundleID: bundleID, group: group)
-        }
+        applyPresentationCommand(sessions.filter { bundleIDs.contains($0.bundleID) }, expanded: true, source: .showAll)
     }
 
     /// A seam beacon's own panel is only a few points wide and cannot reach
@@ -749,8 +741,8 @@ final class StashEngine {
         session.onExpanded = { [weak self] expanded in
             self?.lastPreferredSession[expanded.bundleID] = ObjectIdentifier(expanded)
         }
-        session.onRevealRequested = { [weak self] requested in
-            self?.merged.noteRevealRequest(requested)
+        session.onPresentationRequested = { [weak self] session, request in
+            self?.merged.notePresentationRequest(session, request: request)
         }
         session.onSeamMarkerActivity = { [weak self] _ in
             self?.reevaluateSeamApproach()
@@ -832,18 +824,34 @@ final class StashEngine {
         }
         switch Preferences.shared.chordScope(for: bundleID) {
         case .allManagedWindows:
-            let target = AppShortcutPolicy.targetExpanded(
-                hasVisibleWindow: group.contains { $0.isManaged && $0.desiredPresentationIsExpanded },
-                hasHiddenWindow: group.contains { $0.isManaged && !$0.desiredPresentationIsExpanded }
-            )
-            guard let target else { return }
-            if target {
-                group.filter { $0.isManaged && !$0.desiredPresentationIsExpanded }.forEach { $0.expandFromDock() }
-            } else {
-                group.filter { $0.isManaged && $0.desiredPresentationIsExpanded }.forEach { $0.toggleFromShortcut() }
-            }
+            applyPresentationCommand(group, source: .shortcut)
         case .recentWindow:
-            preferred(in: group.filter(\.isManaged), bundleID: bundleID)?.toggleFromShortcut()
+            let eligible = group.filter(\.acceptsPresentationRequests)
+            if let target = preferred(in: eligible, bundleID: bundleID) {
+                applyPresentationCommand([target], source: .shortcut)
+            } else {
+                applyPresentationCommand(group.filter(\.isManaged), source: .shortcut)
+            }
+        }
+    }
+
+    private func applyPresentationCommand(_ group: [StashSession], expanded: Bool? = nil, source: StashRequestSource) {
+        let members = group.filter(\.isManaged)
+        let plan = StashCommandPlan(members: members.map {
+            StashCommandMember(id: $0.mergeID, available: $0.acceptsPresentationRequests,
+                               desiredExpanded: $0.desiredPresentationIsExpanded)
+        }, expanded: expanded)
+        presentationCommandSequence &+= 1
+        let commandID = presentationCommandSequence
+        StashDiagnostics.record("presentation.command", ["command": commandID, "source": source.rawValue,
+            "targetExpanded": plan.expanded.map { $0 as Any } ?? "none", "targets": plan.targets, "skipped": plan.skipped])
+        for session in members where plan.skipped.contains(session.mergeID) {
+            session.diagnose("session.command-skipped", ["command": commandID, "source": source.rawValue,
+                                                       "reason": "control-or-environment-unavailable"])
+        }
+        guard let target = plan.expanded else { return }
+        for session in members where plan.targets.contains(session.mergeID) {
+            session.setPresentation(expanded: target, source: source, commandID: commandID)
         }
     }
 
@@ -1011,17 +1019,17 @@ final class StashEngine {
         case .raiseOnDesktopOnly, .doNotOpenStash, .followSystem:
             return
         case .openMostRecent:
-            let collapsed = group.filter { $0.isManaged && !$0.desiredPresentationIsExpanded }
+            let collapsed = group.filter { $0.acceptsPresentationRequests && !$0.desiredPresentationIsExpanded }
             guard let session = preferred(in: collapsed, bundleID: bundleID) else { return }
             session.expandFromDock()
             lastPreferredSession[bundleID] = ObjectIdentifier(session)
         case .openOnPointerDisplay:
             guard let displayID = pointerDisplayID() else { return }
-            let matches = group.filter { $0.isManaged && !$0.desiredPresentationIsExpanded && $0.displayID == displayID }
+            let matches = group.filter { $0.isManaged && $0.displayID == displayID }
             guard !matches.isEmpty else { return }
-            matches.forEach { $0.expandFromDock() }
+            applyPresentationCommand(matches, expanded: true, source: .dock)
         case .openAllStashes:
-            group.filter { $0.isManaged && !$0.desiredPresentationIsExpanded }.forEach { $0.expandFromDock() }
+            applyPresentationCommand(group, expanded: true, source: .dock)
         case .openThumbnail:
             let title = pendingThumbnailTitle
             pendingThumbnailTitle = nil

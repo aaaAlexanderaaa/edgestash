@@ -4,11 +4,16 @@ status: current
 authority: normative
 implementation: implemented
 verification_status: partial
-last_reconciled: 2026-11-09
+last_reconciled: 2026-11-12
 supersedes: []
 ---
 
 # EdgeStash
+
+Presentation state, command scope and passive-input priority follow the
+owner-requested [presentation ownership contract](presentation-ownership.md)
+for 0.1.12. Merge selection is a visual preference, not permission to collapse
+unnamed windows.
 
 Recovery persistence, capture admission, and input-source precedence are further
 specified by [Recovery safety and input identity](reliability-and-input-sources.md),

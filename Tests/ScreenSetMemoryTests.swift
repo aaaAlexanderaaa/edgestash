@@ -18,6 +18,36 @@ func runScreenSetMemoryTests(_ expect: (Bool, String) -> Void) {
     let deskConfig = ScreenSetConfiguration(fingerprint: desk.fingerprint, slots: [aDesk, b])
     let laptopConfig = ScreenSetConfiguration(fingerprint: laptop.fingerprint, slots: [aLaptop])
 
+    // MARK: screen_set partial-edge geometry refresh uses occupied segments.
+    do {
+        let owner = DisplayGeometry(id: "A", frame: CGRect(x: 0, y: 0, width: 1440, height: 1080))
+        let top = DisplayGeometry(id: "B", frame: CGRect(x: 1440, y: 0, width: 1000, height: 400))
+        let moved = DisplayGeometry(id: "B", frame: CGRect(x: 1440, y: 500, width: 1000, height: 400))
+        let added = DisplayGeometry(id: "C", frame: CGRect(x: 1440, y: 500, width: 1000, height: 580))
+        let before = ScreenSetObservation(displays: [owner, top])
+        let lower = slot(200, "A", edge: 2), upper = slot(201, "A", edge: 2)
+        let lowerFrame = CGRect(x: 940, y: 550, width: 500, height: 300)
+        let upperFrame = CGRect(x: 940, y: 50, width: 500, height: 200)
+        for after in [ScreenSetObservation(displays: [owner, moved]), ScreenSetObservation(displays: [owner, top, added])] {
+            var memory = ScreenSetMemoryCoordinator(baseline: before)
+            let frames = [lower.key: lowerFrame, upper.key: upperFrame]
+            let plan = memory.settle(on: after, configurations: [], live: [lower, upper], windowFrames: frames)
+            expect(plan.refresh.contains(lower.key) && plan.refreshReasons[lower.key] == .windowSegment,
+                   "a window changing from exposed to shared refreshes even when its whole edge was already shared")
+            expect(plan.release.isEmpty && plan.restore.isEmpty, "partial adjacency does not change stash membership")
+            if after.displays.count == 3 {
+                expect(!plan.refresh.contains(upper.key), "increment leaves the unchanged upper segment quiet")
+            }
+            expect(memory.settle(on: after, configurations: [], live: [lower, upper], windowFrames: frames).refresh.isEmpty,
+                   "duplicate adjacency observations do not repeat repairs")
+            let returning = memory.settle(on: before, configurations: [], live: [lower, upper], windowFrames: frames)
+            expect(returning.refresh.contains(lower.key), "removal/reflow back also refreshes the exposed segment")
+            var unknown = ScreenSetMemoryCoordinator(baseline: before)
+            expect(unknown.settle(on: after, configurations: [], live: [lower]).refreshReasons[lower.key] == .sharedIntervals,
+                   "missing saved geometry conservatively compares shared intervals instead of a whole-edge Boolean")
+        }
+    }
+
     // MARK: screen_set round-trip membership and memory invariants.
     // MARK: screen_set unchanged-layout wake repairs presentation.
     do {

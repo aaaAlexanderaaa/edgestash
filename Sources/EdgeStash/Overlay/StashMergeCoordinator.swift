@@ -19,6 +19,7 @@ final class StashMergeCoordinator {
     private var approachSegments: [String: [SeamApproachSegment]] = [:]
     private var approachGroups = Set<String>()
     private var groupSessions: [String: [String: StashSession]] = [:]
+    private var diagnosticSelections: [String: String] = [:]
     var onPointerActivity: (() -> Void)?
     var seamApproachSegments: [SeamApproachSegment] { approachSegments.values.flatMap { $0 } }
     private var warnedOverload = false
@@ -56,6 +57,7 @@ final class StashMergeCoordinator {
             approachSegments.removeValue(forKey: stale)
             approachGroups.remove(stale)
             groupSessions.removeValue(forKey: stale)
+            diagnosticSelections.removeValue(forKey: stale)
         }
 
         let lookup = Dictionary(uniqueKeysWithValues: sessions.map { ($0.mergeID, $0) })
@@ -76,9 +78,14 @@ final class StashMergeCoordinator {
             let activeID = (selections[key] ?? MergeRevealSelection()).active(
                 expandedIDs: expanded, hoveredID: interactions[key]?.hoveredID, pinnedID: pinned
             )
-            if let activeID {
-                for member in group.members where member.id != activeID && lookup[member.id]?.isExpanded == true {
-                    lookup[member.id]?.mergeHide()
+            // A rail projects window state; it never invents a close command.
+            // Batch and independently named reveals may have several open members.
+            if StashDiagnostics.isEnabled {
+                let state = expanded.sorted().joined(separator: "|") + ":" + (activeID ?? "none")
+                if diagnosticSelections[key] != state {
+                    diagnosticSelections[key] = state
+                    StashDiagnostics.record("merge.projection", ["group": key, "expanded": expanded.sorted(),
+                                                                "highlighted": activeID ?? "none"])
                 }
             }
             let hovered = interactions[key]?.hoveredID.flatMap { lookup[$0] }.map { ObjectIdentifier($0) }
@@ -94,6 +101,8 @@ final class StashMergeCoordinator {
             }
             let primaryHeight = DisplayCatalog.primaryHeight(screens: NSScreen.screens)
             approachSegments[key] = presented.segments.enumerated().compactMap { index, slot in
+                // Cache geometry, not momentary button/busy admission. Mouse-up
+                // must not need a five-second reconcile to recover this band.
                 guard let session = lookup[slot.id], session.isCollapsed,
                       session.presentation == .systemMinimize, session.canBeginSeamReveal,
                       let displayID = session.displayID else { return nil }
@@ -154,6 +163,7 @@ final class StashMergeCoordinator {
         approachSegments.removeAll()
         approachGroups.removeAll()
         groupSessions.removeAll()
+        diagnosticSelections.removeAll()
     }
 
     /// Uses the engine's one combined seam target selection, so a fused rail
@@ -180,10 +190,14 @@ final class StashMergeCoordinator {
 
     /// Called for accepted requests from all native reveal paths, including
     /// Dock unminimize and shortcuts, before completion can reconcile the group.
-    func noteRevealRequest(_ session: StashSession) {
+    func notePresentationRequest(_ session: StashSession, request: StashPresentationRequest) {
         let id = session.mergeID
-        for key in groupSessions.keys where groupSessions[key]?[id] != nil {
-            selections[key, default: MergeRevealSelection()].request(id)
+        for key in Array(groupSessions.keys) where groupSessions[key]?[id] != nil {
+            if request.expanded { selections[key, default: MergeRevealSelection()].request(id) }
+            if !request.source.isPassive {
+                interactions[key]?.invalidateVisit()
+                hoverTimers.removeValue(forKey: key)?.invalidate()
+            }
         }
     }
 
@@ -204,6 +218,15 @@ final class StashMergeCoordinator {
         var interaction = interactions[key] ?? HoverRevealCoordinator()
         let previous = interaction.hoveredID
         let delay = TimeInterval(Preferences.shared.revealDelayMS) / 1000
+        let targetSession = id.flatMap { session($0, in: lookup) }
+        // Keep the hover highlight, but an owned transition cannot arm a dwell.
+        if let targetSession, !targetSession.canBeginHoverReveal(merged: true) {
+            _ = interaction.updateTarget(id.map(sessionID), now: Date(), delay: delay, buttonPressed: true)
+            interactions[key] = interaction
+            hoverTimers.removeValue(forKey: key)?.invalidate()
+            if interaction.hoveredID != previous { overlays[key]?.updateHover(id) }
+            return
+        }
         let ticket = interaction.updateTarget(
             id.map(sessionID), now: Date(), delay: delay, buttonPressed: NSEvent.pressedMouseButtons != 0
         )
@@ -213,36 +236,40 @@ final class StashMergeCoordinator {
         }
         if interaction.hoveredID != previous { overlays[key]?.updateHover(id) }
         if let ticket, let id, let session = session(id, in: lookup) {
-            armHover(ticket, key: key, session: session)
+            armHover(ticket, key: key, session: session, revision: session.presentationRequests.revision)
         }
     }
 
-    private func armHover(_ ticket: HoverRevealTicket, key: String, session: StashSession) {
+    private func armHover(_ ticket: HoverRevealTicket, key: String, session: StashSession, revision: UInt) {
         hoverTimers.removeValue(forKey: key)?.invalidate()
         let delay = ticket.deadline.timeIntervalSinceNow
         if delay <= 0 {
-            fireHover(ticket, key: key, session: session)
+            fireHover(ticket, key: key, session: session, revision: revision)
             return
         }
         hoverTimers[key] = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self, weak session] _ in
             guard let session else { return }
-            self?.fireHover(ticket, key: key, session: session)
+            self?.fireHover(ticket, key: key, session: session, revision: revision)
         }
     }
 
-    private func fireHover(_ ticket: HoverRevealTicket, key: String, session: StashSession) {
+    private func fireHover(_ ticket: HoverRevealTicket, key: String, session: StashSession, revision: UInt) {
         guard var interaction = interactions[key], interaction.pending == ticket else { return }
         let now = Date()
         if now < ticket.deadline {
-            armHover(ticket, key: key, session: session)
+            armHover(ticket, key: key, session: session, revision: revision)
             return
         }
         let target = interaction.consume(ticket, now: now, buttonPressed: NSEvent.pressedMouseButtons != 0)
         interactions[key] = interaction
         hoverTimers.removeValue(forKey: key)?.invalidate()
-        if target == session.mergeID, session.isManaged {
-            noteRevealRequest(session)
-            session.mergeReveal()
+        if target == session.mergeID {
+            guard session.canBeginHoverReveal(merged: true), session.presentationRequests.revision == revision else {
+                session.diagnose("session.hover-rejected", ["merged": true, "expectedRevision": revision,
+                                                           "reason": "stale-or-unsettled"])
+                return
+            }
+            session.mergeReveal(source: .hover, expectedRevision: revision)
         }
     }
 
@@ -261,7 +288,6 @@ final class StashMergeCoordinator {
         if collapsing {
             session.mergeHide()
         } else {
-            noteRevealRequest(session)
             session.mergeReveal()
         }
     }
