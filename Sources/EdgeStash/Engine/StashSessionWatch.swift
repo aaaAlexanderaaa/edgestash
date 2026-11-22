@@ -87,6 +87,9 @@ extension StashSession {
 
     func startLeaveWatch() {
         leaveTimer?.invalidate()
+        lastLeaveFrameReadAt = .distantPast
+        lastLeaveMouseLocation = nil
+        lastLeaveSiblingCheckResult = false
         leaveTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
             self?.checkLeaveToCollapse()
         }
@@ -280,21 +283,35 @@ extension StashSession {
     private func checkLeaveToCollapse() {
         guard !ScreenSetCoordinator.blocksUserGeometry else { diagnoseLeaveGate("environment-quiet"); return }
         guard !awaitingWindowControl, !recoveryEpochActive else { diagnoseLeaveGate("window-control-wait"); return }
-        refreshPinControl()
-        guard phase == .expanded, !busy else { diagnoseLeaveGate("phase-or-busy"); return }
         let mouse = NSEvent.mouseLocation
-        let screens = NSScreen.screens
-        let primaryHeight = DisplayCatalog.primaryHeight(screens: screens)
-        guard let frame = StashAX.frame(of: windowElement) ?? restoreFrame else { diagnoseLeaveGate("no-frame"); return }
-        let windowAppKit = StashGeometryPolicy.appKitRect(fromQuartz: frame, primaryHeight: primaryHeight)
+        let mouseMoved = lastLeaveMouseLocation != mouse
+        if mouseMoved || isPinned || pinWindow.isVisible {
+            refreshPinControl()
+        }
+        guard phase == .expanded, !busy else { diagnoseLeaveGate("phase-or-busy"); return }
         guard PinControlPolicy.shouldAutoCollapse(isPinned: isPinned) else { diagnoseLeaveGate("pinned"); return }
         if usingSharedMinimize { diagnoseLeaveGate("owned-minimize"); return }
         let now = Date()
         if NSEvent.pressedMouseButtons != 0 {
             diagnoseLeaveGate("mouse-button")
             outsideSince = nil
+            lastLeaveMouseLocation = mouse
             return
         }
+        let frame: CGRect
+        if let cached = restoreFrame, now.timeIntervalSince(lastLeaveFrameReadAt) < 1.0 {
+            frame = cached
+        } else {
+            lastLeaveFrameReadAt = now
+            guard let live = StashAX.frame(of: windowElement) ?? restoreFrame else {
+                diagnoseLeaveGate("no-frame")
+                return
+            }
+            frame = live
+        }
+        let screens = NSScreen.screens
+        let primaryHeight = DisplayCatalog.primaryHeight(screens: screens)
+        let windowAppKit = StashGeometryPolicy.appKitRect(fromQuartz: frame, primaryHeight: primaryHeight)
         let screen = displayID.flatMap { DisplayCatalog.screen(withID: $0, screens: screens) }
             ?? owningDisplay(for: frame, screens: screens, primaryHeight: primaryHeight)?.1
             ?? NSScreen.main
@@ -314,20 +331,26 @@ extension StashSession {
         var pointerInSibling = false
         var siblingFocused = false
         if geometricallyOutside {
-            let mouseQuartz = CGPoint(
-                x: mouse.x,
-                y: StashGeometryPolicy.quartzOriginY(appKitY: mouse.y, height: 0, primaryHeight: primaryHeight)
-            )
-            pointerInSibling = StashSurface.isPointerInSiblingWindow(
-                pid: pid,
-                excluding: windowID,
-                atQuartz: mouseQuartz
-            )
+            if mouseMoved || outsideSince == nil {
+                let mouseQuartz = CGPoint(
+                    x: mouse.x,
+                    y: StashGeometryPolicy.quartzOriginY(appKitY: mouse.y, height: 0, primaryHeight: primaryHeight)
+                )
+                lastLeaveSiblingCheckResult = StashSurface.isPointerInSiblingWindow(
+                    pid: pid,
+                    excluding: windowID,
+                    atQuartz: mouseQuartz
+                )
+            }
+            pointerInSibling = lastLeaveSiblingCheckResult
             if pointerInSibling {
                 lastSiblingInteractionAt = now
             }
             siblingFocused = isSiblingWindowFocused()
+        } else {
+            lastLeaveSiblingCheckResult = false
         }
+        lastLeaveMouseLocation = mouse
         guard LeaveCollapsePolicy.countsAsInside(
             geometricallyOutside: geometricallyOutside,
             pointerInSibling: pointerInSibling,
@@ -406,6 +429,7 @@ extension StashSession {
             return
         }
         if (name == kAXMovedNotification as String || name == kAXResizedNotification as String), !busy, isManaged {
+            lastLeaveFrameReadAt = .distantPast
             if ScreenSetCoordinator.active?.reconcileUnannouncedTopology() == true { return }
             externalGeometryWasDragged = externalGeometryWasDragged || (NSEvent.pressedMouseButtons & 1) != 0
             scheduleDeferredGeometryReconciliation()

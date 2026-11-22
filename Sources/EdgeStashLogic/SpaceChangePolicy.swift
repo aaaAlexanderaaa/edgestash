@@ -46,6 +46,10 @@ public enum SeamRevealCommit {
         case frame, destinationAfterPlacement, compensation
     }
 
+    public enum AsyncStartResult: Equatable {
+        case succeeded, waitingDeminimize, keptMinimized, releaseRequired
+    }
+
     public static func perform(
         confirmsDestination: () -> Bool, restoreOpacity: () -> Bool,
         deminimize: () -> Bool, placeFrame: () -> Bool, reminimize: () -> Bool,
@@ -58,9 +62,68 @@ public enum SeamRevealCommit {
         }
         guard checked(confirmsDestination, .destinationBeforeReveal),
               checked(restoreOpacity, .opacity) else { return .keptMinimized }
-        guard checked(deminimize, .deminimize),
-              checked(confirmsDestination, .destinationAfterDeminimize),
-              checked(placeFrame, .frame), checked(confirmsDestination, .destinationAfterPlacement) else {
+        guard checked(deminimize, .deminimize) else {
+            return checked(reminimize, .compensation) ? .keptMinimized : .releaseRequired
+        }
+        return finishAfterDeminimize(
+            confirmsDestination: confirmsDestination,
+            placeFrame: placeFrame,
+            reminimize: reminimize,
+            onFailure: onFailure
+        )
+    }
+
+    /// Two-phase commit for apps whose AXMinimized write settles asynchronously
+    /// (for example Stickies taking ~0.6s). Synchronous apps complete in one
+    /// pass with the same three Space checks as `perform`.
+    public static func begin(
+        confirmsDestination: () -> Bool,
+        restoreOpacity: () -> Bool,
+        deminimize: () -> Bool,
+        isDeminimized: () -> Bool,
+        placeFrame: () -> Bool,
+        reminimize: () -> Bool,
+        onFailure: (Failure) -> Void = { _ in }
+    ) -> AsyncStartResult {
+        func checked(_ operation: () -> Bool, _ failure: Failure) -> Bool {
+            let succeeded = operation()
+            if !succeeded { onFailure(failure) }
+            return succeeded
+        }
+        guard checked(confirmsDestination, .destinationBeforeReveal),
+              checked(restoreOpacity, .opacity) else { return .keptMinimized }
+        guard checked(deminimize, .deminimize) else {
+            return checked(reminimize, .compensation) ? .keptMinimized : .releaseRequired
+        }
+        guard isDeminimized() else {
+            return .waitingDeminimize
+        }
+        switch finishAfterDeminimize(
+            confirmsDestination: confirmsDestination,
+            placeFrame: placeFrame,
+            reminimize: reminimize,
+            onFailure: onFailure
+        ) {
+        case .succeeded: return .succeeded
+        case .keptMinimized: return .keptMinimized
+        case .releaseRequired: return .releaseRequired
+        }
+    }
+
+    public static func finishAfterDeminimize(
+        confirmsDestination: () -> Bool,
+        placeFrame: () -> Bool,
+        reminimize: () -> Bool,
+        onFailure: (Failure) -> Void = { _ in }
+    ) -> SeamRevealCommitResult {
+        func checked(_ operation: () -> Bool, _ failure: Failure) -> Bool {
+            let succeeded = operation()
+            if !succeeded { onFailure(failure) }
+            return succeeded
+        }
+        guard checked(confirmsDestination, .destinationAfterDeminimize),
+              checked(placeFrame, .frame),
+              checked(confirmsDestination, .destinationAfterPlacement) else {
             return checked(reminimize, .compensation) ? .keptMinimized : .releaseRequired
         }
         return .succeeded

@@ -22,6 +22,7 @@ final class StashSession {
     private(set) var pendingVisibleFallbackOrigin: CGPoint?
     var onControlUnavailable: ((StashSession) -> Void)?
     var onControlReady: ((StashSession) -> Void)?
+    var onPendingWriteChanged: (() -> Void)?
     /// The application's bundle icon is stable for this window/process life.
     /// Reuse its image in merge models instead of loading two new image objects
     /// per member on every discovery poll (which also defeats model equality).
@@ -48,11 +49,15 @@ final class StashSession {
     }
     var screenSetSlot: StoredScreenSetSlot? {
         guard isManaged, let windowID, let displayID, let edge else { return nil }
+        let size = preferredSize ?? restoreFrame?.size
         return StoredScreenSetSlot(
             windowNumber: windowID,
             bundleID: bundleID,
             displayID: displayID,
-            edge: edge.rawValue
+            edge: edge.rawValue,
+            preferredWidth: size?.width,
+            preferredHeight: size?.height,
+            relativeY: preferredRelativeY
         )
     }
     var captureGestureFrame: CGRect? {
@@ -74,12 +79,27 @@ final class StashSession {
     var presentation: StashCollapsePresentation?
     var lockedWidth: CGFloat = 0
     var restoreFrame: CGRect?
+    /// Original user-chosen window size and normalized vertical position on its
+    /// display's visible frame. Preserved non-destructively across smaller
+    /// displays and fallback scatters so returning displays restore exact size.
+    var preferredSize: CGSize?
+    var preferredRelativeY: CGFloat?
     var displayID: String?
     var usingSharedMinimize = false
     var restoringShared = false
     var seamSpaceAvailability: SeamSpaceAvailability = .unavailable
     var canBeginSeamReveal: Bool {
         SpaceChangePolicy.shouldBeginSeamDwell(availability: seamSpaceAvailability)
+    }
+    var hasPendingWriteConfirmation: Bool {
+        pendingMinimize != nil || pendingPresentation != nil
+            || pendingMinimizeRelease != nil || pendingSeamReveal != nil
+    }
+    var needsSeamApproach: Bool {
+        isCollapsed && presentation == .systemMinimize && !awaitingWindowControl && !recoveryEpochActive
+    }
+    static func withSharedRecoverySnapshot<T>(_ body: () -> T) -> T {
+        StashSurface.withSharedRecoverySnapshot(body)
     }
     /// After a click-collapse, marker hover stays locked until the pointer
     /// leaves the marker once — a parked pointer must not bounce the window
@@ -123,11 +143,29 @@ final class StashSession {
     private(set) var needsScreenSetRepair = false
     private var recoverySpacePreparation = SeamRecoveryPreparation()
     private var pendingMinimize: (confirmation: WindowWriteConfirmation, next: StashSessionPhase,
-                                  frame: CGRect, merged: Bool)?
+                                  frame: CGRect, merged: Bool)? {
+        didSet { onPendingWriteChanged?() }
+    }
     private var pendingPresentation: (confirmation: WindowWriteConfirmation, phase: StashSessionPhase,
-                                      presentation: StashCollapsePresentation, frame: CGRect)?
+                                      presentation: StashCollapsePresentation, frame: CGRect,
+                                      displayFrame: CGRect, edge: DisplayEdge)? {
+        didSet { onPendingWriteChanged?() }
+    }
+    private var pendingSeamReveal: (confirmation: WindowWriteConfirmation, windowID: UInt32,
+                                    displayID: CGDirectDisplayID, spaceID: UInt64, frame: CGRect,
+                                    displayFrame: CGRect, edge: DisplayEdge, alpha: Float,
+                                    next: StashSessionPhase, fromDock: Bool, operation: UInt,
+                                    forRecovery: Bool, recoveryNext: StashCollapsePresentation?,
+                                    recoveryPinned: Bool)? {
+        didSet { onPendingWriteChanged?() }
+    }
     private var unconfirmedOwnedMinimize = false
-    private var pendingMinimizeRelease: WindowWriteConfirmation?
+    private var pendingMinimizeRelease: WindowWriteConfirmation? {
+        didSet { onPendingWriteChanged?() }
+    }
+    var lastLeaveFrameReadAt = Date.distantPast
+    var lastLeaveMouseLocation: CGPoint?
+    var lastLeaveSiblingCheckResult = false
 
     init(appElement: AXUIElement, windowElement: AXUIElement, pid: pid_t, bundleID: String) {
         self.appElement = appElement
@@ -183,7 +221,9 @@ final class StashSession {
         if let pendingScreenSetRecovery { return pendingScreenSetRecovery }
         guard let slot = screenSetSlot else { return nil }
         return ScreenSetRecoveryIntent(placement: slot, expanded: isExpanded, pinned: isPinned,
-                                       frame: restoreFrame, displayFrame: rescueDisplayFrame)
+                                       frame: restoreFrame, displayFrame: rescueDisplayFrame,
+                                       preferredSize: preferredSize ?? slot.preferredSize,
+                                       relativeY: preferredRelativeY ?? slot.relativeY)
     }
 
     func retainRecoveryIntent(_ intent: ScreenSetRecoveryIntent) {
@@ -225,6 +265,11 @@ final class StashSession {
     func cancelPendingRecovery() {
         recoverySpacePreparation.cancel()
         cancelPresentationConfirmation()
+        if pendingSeamReveal?.forRecovery == true {
+            pendingSeamReveal = nil
+            restoringShared = false
+            busy = false
+        }
         pendingScreenSetRecovery = nil
         pendingVisibleFallbackOrigin = nil
         recoveryEpochActive = false
@@ -442,14 +487,16 @@ final class StashSession {
     func prepareForScreenSetChange(invalidateSpacePreparation: Bool = true) {
         // Re-entering the same pending target cannot invalidate the callback
         // whose completion is the only event able to resume its control wait.
-        if !invalidateSpacePreparation, recoverySpacePreparation.state == .pending { return }
+        if !invalidateSpacePreparation,
+           recoverySpacePreparation.state == .pending || pendingSeamReveal?.forRecovery == true { return }
         if invalidateSpacePreparation {
             if recoverySpacePreparation.state == .pending { onControlReady?(self) }
-            if pendingPresentation != nil { onControlReady?(self) }
+            if pendingPresentation != nil || pendingSeamReveal?.forRecovery == true { onControlReady?(self) }
             recoverySpacePreparation.cancel()
             cancelPresentationConfirmation()
         }
         pendingMinimize = nil
+        pendingSeamReveal = nil
         diagnose("session.environment-pause")
         recoveryEpochActive = isManaged || pendingScreenSetRecovery != nil
         externalGeometryWasDragged = false
@@ -490,6 +537,8 @@ final class StashSession {
         restoreFrame = frame
         rescueDisplayFrame = display.frame
         lockedWidth = frame.width
+        preferredSize = frame.size
+        preferredRelativeY = StashGeometryPolicy.relativeY(of: frame, in: display.visibleFrame)
         if !refreshCollapsePresentation(), !awaitingWindowControl { shutdown(event: .miniaturized) }
     }
 
@@ -499,6 +548,8 @@ final class StashSession {
         // without issuing another frame write back to the app.
         restoreFrame = frame
         lockedWidth = frame.width
+        preferredSize = frame.size
+        preferredRelativeY = StashGeometryPolicy.relativeY(of: frame, in: display.visibleFrame)
         rescueVisibleFrame = frame
         rescueDisplayFrame = display.frame
         presentation = StashSessionPolicy.collapsePresentation(
@@ -526,7 +577,7 @@ final class StashSession {
 
     func reconcileScreenSetPresentation(
         inspectFirst: Bool = false,
-        readWindows: () -> [StashRecoverySurface]? = { StashSurface.allWindows() }
+        readWindows: () -> [StashRecoverySurface]? = { StashSurface.recoverySnapshot() }
     ) -> ScreenSetApplicationResult {
         guard isManaged, let edge, let displayID else { return .failed }
         guard !awaitingWindowControl else { return .waitingForControl }
@@ -539,6 +590,9 @@ final class StashSession {
         }
         let displays = DisplayCatalog.adjacencyGeometries()
         guard let display = displays.first(where: { $0.id == displayID }) else { return .failed }
+        if pendingSeamReveal?.forRecovery == true {
+            return advancePendingSeamReveal()
+        }
         if pendingPresentation != nil {
             return confirmScreenSetPresentation(readWindows: readWindows)
         }
@@ -556,9 +610,15 @@ final class StashSession {
         }
         let frame = restoreFrame ?? frameRead.value!
         let rebased = StashGeometryPolicy.screenSetFrame(
-            frame: frame, previousDisplay: rescueDisplayFrame, display: display.frame, edge: edge
+            frame: frame, previousDisplay: rescueDisplayFrame, display: display.frame,
+            visibleDisplay: display.visibleFrame, edge: edge,
+            preferredSize: preferredSize, relativeY: preferredRelativeY
         )
-        let next = StashSessionPolicy.collapsePresentation(at: edge, of: display, windowFrame: rebased, in: displays)
+        let computedNext = StashSessionPolicy.collapsePresentation(at: edge, of: display, windowFrame: rebased, in: displays)
+        let next = WindowRecoveryPolicy.effectiveCollapsedPresentation(
+            computed: computedNext, expanded: isExpanded,
+            currentlyMinimized: isMinimized, ownsMinimize: usingSharedMinimize
+        )
         let needsSpaceTransaction = WindowRecoveryPolicy.requiresSpacePreparation(
             expanded: isExpanded, minimized: isMinimized, previous: presentation,
             next: next, ownsMinimize: usingSharedMinimize)
@@ -570,11 +630,14 @@ final class StashSession {
         diagnose("session.recovery-observed", [
             "minimized": isMinimized, "frameReadable": frameRead.value != nil,
             "ownerObserved": surface != nil, "alpha": surface?.alpha.map { Double($0) } ?? -1,
-            "observedFrame": frameRead.value.map { [Double($0.minX), Double($0.minY), Double($0.width), Double($0.height)] } ?? []
+            "observedFrame": frameRead.value.map { [Double($0.minX), Double($0.minY), Double($0.width), Double($0.height)] } ?? [],
+            "computedPresentation": String(describing: computedNext),
+            "effectivePresentation": String(describing: next)
         ])
         let matches = WindowRecoveryPolicy.presentationMatches(
             phase: phase, presentation: next, expectedFrame: isExpanded ? rebased : hidden,
-            actualFrame: frameRead.value, minimized: isMinimized, alpha: surface?.alpha
+            actualFrame: frameRead.value, minimized: isMinimized, alpha: surface?.alpha,
+            displayFrame: display.frame, edge: edge, requiresZeroAlphaReadback: true
         )
         // A settled healthy wake is a read-only presentation check. In
         // particular it must not rewrite every already-minimized seam window.
@@ -624,7 +687,7 @@ final class StashSession {
         if isExpanded {
             if isMinimized {
                 usingSharedMinimize = true
-                guard StashAX.setMinimized(windowElement, false) else { return .failed }
+                guard StashAX.requestMinimized(windowElement, false) else { return .failed }
             }
             if let windowID, !StashSurface.setAlpha(windowID: windowID, alpha: 1) { return .failed }
             usingSharedMinimize = false
@@ -637,7 +700,8 @@ final class StashSession {
         presentationRequests.begin(StashPresentationRequest(expanded: isExpanded, source: .recovery))
         busy = true
         pendingPresentation = (WindowWriteConfirmation(now: ProcessInfo.processInfo.systemUptime),
-                               phase, next, isExpanded ? rebased : hidden)
+                               phase, next, isExpanded ? rebased : hidden, display.frame, edge)
+        StashSurface.invalidateRecoverySnapshot()
         return confirmScreenSetPresentation(readWindows: readWindows)
     }
 
@@ -648,11 +712,13 @@ final class StashSession {
         let observedSurface = readWindows()?.first { $0.windowID == windowID && $0.pid == pid }
         let confirmed = WindowRecoveryPolicy.presentationMatches(
             phase: pending.phase, presentation: pending.presentation, expectedFrame: pending.frame,
-            actualFrame: observedFrame, minimized: observedMinimized, alpha: observedSurface?.alpha
+            actualFrame: observedFrame, minimized: observedMinimized, alpha: observedSurface?.alpha,
+            displayFrame: pending.displayFrame, edge: pending.edge, requiresZeroAlphaReadback: false
         )
         let result = pending.confirmation.observe(matches: confirmed, now: ProcessInfo.processInfo.systemUptime)
         diagnose("session.recovery-readback", ["confirmed": confirmed, "minimized": observedMinimized.map { $0 as Any } ?? "unknown",
             "alpha": observedSurface?.alpha.map { Double($0) } ?? -1, "confirmation": String(describing: result),
+            "visibleOverlap": observedFrame.map { Double(WindowRecoveryPolicy.visibleOverlapWidth(of: $0, on: pending.displayFrame)) } ?? -1,
             "expectedFrame": [Double(pending.frame.minX), Double(pending.frame.minY), Double(pending.frame.width), Double(pending.frame.height)],
             "observedFrame": observedFrame.map { [Double($0.minX), Double($0.minY), Double($0.width), Double($0.height)] } ?? []])
         switch result {
@@ -668,6 +734,10 @@ final class StashSession {
             busy = false
             phase = pending.phase
             presentation = pending.presentation
+            if pending.phase == .expanded, let observedFrame, WindowRecoveryPolicy.isUsableFrame(observedFrame) {
+                restoreFrame = observedFrame
+                lockedWidth = observedFrame.width
+            }
             unconfirmedOwnedMinimize = false
             finishScreenSetRepair()
             diagnose("session.presentation-complete", ["boundary": "recovery", "completedOperation": completedOperation])
@@ -770,19 +840,37 @@ final class StashSession {
             }
         }
         usingSharedMinimize = true
+        let revealEdge = edge ?? .left
         let destination = intent.expanded ? frame : CGRect(
-            origin: StashGeometryPolicy.visualHiddenOrigin(edge: edge ?? .left, frame: frame,
+            origin: StashGeometryPolicy.visualHiddenOrigin(edge: revealEdge, frame: frame,
                 display: display.frame, lockedWidth: frame.width), size: frame.size)
+        let targetAlpha: Float = intent.expanded ? 1 : 0
         let result = commitSeamReveal(windowID: windowID, displayID: cgID, spaceID: target,
-                                     frame: destination, alpha: intent.expanded ? 1 : 0)
+                                     frame: destination, displayFrame: display.frame,
+                                     edge: revealEdge, alpha: targetAlpha)
         switch result {
         case .succeeded:
             phase = intent.expanded ? .expanded : .collapsed
             isPinned = intent.pinned
             usingSharedMinimize = false
             presentation = next
+            if intent.expanded, let observed = StashAX.frame(of: windowElement),
+               WindowRecoveryPolicy.isUsableFrame(observed) {
+                restoreFrame = observed
+                lockedWidth = observed.width
+            }
             finishScreenSetRepair()
             return .succeeded
+        case .waitingDeminimize:
+            restoringShared = true
+            busy = true
+            pendingSeamReveal = (
+                WindowWriteConfirmation(now: ProcessInfo.processInfo.systemUptime),
+                windowID, cgID, target, destination, display.frame, revealEdge, targetAlpha,
+                intent.expanded ? .expanded : .collapsed, false, presentationRequests.operation,
+                true, next, intent.pinned
+            )
+            return .waitingForControl
         case .keptMinimized:
             holdMinimizedRecovery(intent, availability: .unavailable, waiting: false)
             return .blockedSpace
@@ -791,39 +879,169 @@ final class StashSession {
         }
     }
 
+    private func placeSeamFrame(_ frame: CGRect, on displayFrame: CGRect,
+                                edge: DisplayEdge, alpha: Float) -> Bool {
+        let written = StashAX.setFrame(windowElement, frame)
+        let minimized = StashAX.isMinimized(windowElement)
+        let observed = StashAX.frame(of: windowElement)
+        let frameOK: Bool
+        if let observed {
+            if alpha >= 0.99 {
+                frameOK = WindowRecoveryPolicy.expandedFrameMatches(
+                    observed, expected: frame, on: displayFrame, edge: edge
+                )
+            } else {
+                frameOK = WindowRecoveryPolicy.framesMatch(observed, frame)
+                    || StashGeometryPolicy.parkedEdge(of: observed, in: displayFrame) == edge
+            }
+        } else {
+            frameOK = false
+        }
+        let confirmed = written && minimized == false && frameOK
+        if !confirmed {
+            diagnose("session.seam-frame-rejected", [
+                "written": written, "minimized": minimized.map { $0 as Any } ?? "unknown",
+                "expectedFrame": [Double(frame.minX), Double(frame.minY), Double(frame.width), Double(frame.height)],
+                "observedFrame": observed.map { [Double($0.minX), Double($0.minY), Double($0.width), Double($0.height)] } ?? []
+            ])
+        }
+        return confirmed
+    }
+
     private func commitSeamReveal(windowID: UInt32, displayID: CGDirectDisplayID,
-                                  spaceID: UInt64, frame: CGRect, alpha: Float = 1) -> SeamRevealCommitResult {
-        SeamRevealCommit.perform(
+                                  spaceID: UInt64, frame: CGRect,
+                                  displayFrame: CGRect, edge: DisplayEdge,
+                                  alpha: Float = 1) -> SeamRevealCommit.AsyncStartResult {
+        SeamRevealCommit.begin(
             confirmsDestination: {
                 DisplaySpaceTransport.shared.confirmsDestination(
                     windowID: windowID, displayID: displayID, targetSpaceID: spaceID)
             },
             restoreOpacity: { StashSurface.setAlpha(windowID: windowID, alpha: alpha) },
-            deminimize: { StashAX.setMinimized(self.windowElement, false) },
-            placeFrame: {
-                let written = StashAX.setFrame(self.windowElement, frame)
-                let minimized = StashAX.isMinimized(self.windowElement)
-                let observed = StashAX.frame(of: self.windowElement)
-                let confirmed = written && minimized == false
-                    && observed.map { WindowRecoveryPolicy.framesMatch($0, frame) } == true
-                if !confirmed {
-                    self.diagnose("session.seam-frame-rejected", [
-                        "written": written, "minimized": minimized.map { $0 as Any } ?? "unknown",
-                        "expectedFrame": [Double(frame.minX), Double(frame.minY), Double(frame.width), Double(frame.height)],
-                        "observedFrame": observed.map { [Double($0.minX), Double($0.minY), Double($0.width), Double($0.height)] } ?? []
-                    ])
-                }
-                return confirmed
-            },
+            deminimize: { StashAX.requestMinimized(self.windowElement, false) },
+            isDeminimized: { StashAX.isMinimized(self.windowElement) == false },
+            placeFrame: { self.placeSeamFrame(frame, on: displayFrame, edge: edge, alpha: alpha) },
             reminimize: {
                 self.lastOwnedMinimizeAt = Date()
-                return StashAX.setMinimized(self.windowElement, true)
+                self.unconfirmedOwnedMinimize = true
+                return StashAX.requestMinimized(self.windowElement, true)
             },
             onFailure: { failure in
                 self.diagnose("session.seam-commit-failed", ["stage": failure.rawValue,
                     "targetSpace": spaceID, "targetDisplay": displayID])
             }
         )
+    }
+
+    @discardableResult
+    private func advancePendingSeamReveal() -> ScreenSetApplicationResult {
+        guard let pending = pendingSeamReveal else { return .failed }
+        if !pending.forRecovery, !presentationRequests.owns(operation: pending.operation) {
+            pendingSeamReveal = nil
+            return .failed
+        }
+        let observed = StashAX.isMinimized(windowElement)
+        let result = pending.confirmation.observe(matches: observed == false,
+                                                  now: ProcessInfo.processInfo.systemUptime)
+        diagnose("session.seam-deminimize-confirmation", [
+            "result": String(describing: result),
+            "observed": observed.map { $0 as Any } ?? "unknown",
+            "forRecovery": pending.forRecovery
+        ])
+        switch result {
+        case .waiting:
+            return .waitingForControl
+        case .expired:
+            pendingSeamReveal = nil
+            lastOwnedMinimizeAt = Date()
+            unconfirmedOwnedMinimize = true
+            let compensated = StashAX.requestMinimized(windowElement, true)
+            if pending.forRecovery {
+                restoringShared = false
+                busy = false
+                if compensated, let intent = recoveryIntent {
+                    holdMinimizedRecovery(intent, availability: .unavailable, waiting: false)
+                    return .blockedSpace
+                }
+                return .failed
+            }
+            if compensated {
+                usingSharedMinimize = true
+                failSharedReveal(availability: .unavailable)
+            } else {
+                shutdown(event: .miniaturized)
+            }
+            return .failed
+        case .confirmed:
+            pendingSeamReveal = nil
+            let commit = SeamRevealCommit.finishAfterDeminimize(
+                confirmsDestination: {
+                    DisplaySpaceTransport.shared.confirmsDestination(
+                        windowID: pending.windowID, displayID: pending.displayID, targetSpaceID: pending.spaceID)
+                },
+                placeFrame: {
+                    self.placeSeamFrame(pending.frame, on: pending.displayFrame,
+                                        edge: pending.edge, alpha: pending.alpha)
+                },
+                reminimize: {
+                    self.lastOwnedMinimizeAt = Date()
+                    self.unconfirmedOwnedMinimize = true
+                    return StashAX.requestMinimized(self.windowElement, true)
+                },
+                onFailure: { failure in
+                    self.diagnose("session.seam-commit-failed", ["stage": failure.rawValue,
+                        "targetSpace": pending.spaceID, "targetDisplay": pending.displayID])
+                }
+            )
+            if pending.forRecovery {
+                switch commit {
+                case .succeeded:
+                    phase = pending.next
+                    isPinned = pending.recoveryPinned
+                    usingSharedMinimize = false
+                    restoringShared = false
+                    busy = false
+                    if let nextPresentation = pending.recoveryNext { presentation = nextPresentation }
+                    if pending.next == .expanded, let observedFrame = StashAX.frame(of: windowElement),
+                       WindowRecoveryPolicy.isUsableFrame(observedFrame) {
+                        restoreFrame = observedFrame
+                        lockedWidth = observedFrame.width
+                    }
+                    finishScreenSetRepair()
+                    return .succeeded
+                case .keptMinimized:
+                    restoringShared = false
+                    busy = false
+                    if let intent = recoveryIntent {
+                        holdMinimizedRecovery(intent, availability: .unavailable, waiting: false)
+                    }
+                    return .blockedSpace
+                case .releaseRequired:
+                    restoringShared = false
+                    busy = false
+                    return .failed
+                }
+            }
+            switch commit {
+            case .succeeded:
+                usingSharedMinimize = false
+                restoringShared = false
+                let finalFrame = StashAX.frame(of: windowElement) ?? pending.frame
+                if pending.next == .expanded, WindowRecoveryPolicy.isUsableFrame(finalFrame) {
+                    restoreFrame = finalFrame
+                    lockedWidth = finalFrame.width
+                }
+                finishExpand(next: pending.next, frame: finalFrame, fromDock: pending.fromDock)
+                return .succeeded
+            case .keptMinimized:
+                usingSharedMinimize = true
+                failSharedReveal(availability: .unavailable)
+                return .blockedSpace
+            case .releaseRequired:
+                shutdown(event: .miniaturized)
+                return .failed
+            }
+        }
     }
 
     private func finishScreenSetRepair() {
@@ -852,7 +1070,8 @@ final class StashSession {
         guard DisplayCatalog.screen(withID: displayID) != nil else { return .failed }
         guard !awaitingWindowControl else { return .waitingForControl }
         guard pendingMinimizeRelease == nil else { return .waitingForControl }
-        if self.displayID == displayID, self.edge == edge, pendingPresentation != nil {
+        if self.displayID == displayID, self.edge == edge,
+           pendingPresentation != nil || pendingSeamReveal?.forRecovery == true {
             // A read-only confirmation must not reinstall the pre-rebase
             // intent frame, reset phase, or cancel a newer named request.
             return reconcileScreenSetPresentation(inspectFirst: true)
@@ -863,6 +1082,8 @@ final class StashSession {
         if let intent {
             restoreFrame = intent.frame ?? restoreFrame
             rescueDisplayFrame = intent.displayFrame ?? rescueDisplayFrame
+            preferredSize = intent.preferredSize ?? intent.placement.preferredSize ?? preferredSize
+            preferredRelativeY = intent.relativeY ?? intent.placement.relativeY ?? preferredRelativeY
             pendingScreenSetRecovery = intent
         } else if phase == .idle {
             restoreFrame = StashAX.frame(of: windowElement) ?? restoreFrame
@@ -876,12 +1097,21 @@ final class StashSession {
         return reconcileScreenSetPresentation(inspectFirst: true)
     }
 
-    func leaveStash(to origin: CGPoint, preservingRecovery intent: ScreenSetRecoveryIntent? = nil) {
+    func leaveStash(to origin: CGPoint, maxSize: CGSize? = nil, preservingRecovery intent: ScreenSetRecoveryIntent? = nil) {
         pendingScreenSetRecovery = intent
         ignoringGeometryNotifications = true
-        let size = restoreFrame?.size
+        let rawSize = restoreFrame?.size
             ?? StashAX.frame(of: windowElement)?.size
             ?? CGSize(width: max(lockedWidth, 100), height: 400)
+        let size: CGSize
+        if let maxSize, maxSize.width > 0, maxSize.height > 0 {
+            size = CGSize(
+                width: min(rawSize.width, max(100, maxSize.width)),
+                height: min(rawSize.height, max(100, maxSize.height))
+            )
+        } else {
+            size = rawSize
+        }
         restoreFrame = CGRect(origin: origin, size: size)
         if awaitingWindowControl {
             // A genuine display departure can supersede a suspended stash.
@@ -989,6 +1219,7 @@ final class StashSession {
         let hadUnconfirmedMinimize = unconfirmedOwnedMinimize
         pendingMinimize = nil
         pendingPresentation = nil
+        pendingSeamReveal = nil
         pendingMinimizeRelease = nil
         let preservingRecovery = ScreenSetCoordinator.isApplying && event == .miniaturized
             && pendingScreenSetRecovery != nil
@@ -1070,6 +1301,10 @@ final class StashSession {
             restoreFrame = nil
             rescueVisibleFrame = nil
             rescueDisplayFrame = nil
+            if !preservingRecovery {
+                preferredSize = nil
+                preferredRelativeY = nil
+            }
         }
         if !ScreenSetCoordinator.isApplying {
             switch event {
@@ -1143,13 +1378,19 @@ final class StashSession {
             )
             // Hide before deminiaturizing so a topology conversion cannot flash
             // an ordinary window forward. No application activation is involved.
-            guard let windowID,
-                  StashSurface.setAlpha(windowID: windowID, alpha: StashGeometryPolicy.hiddenWindowAlpha) else { return false }
+            let alphaSet = windowID.map {
+                StashSurface.setAlpha(windowID: $0, alpha: StashGeometryPolicy.hiddenWindowAlpha)
+            } ?? false
             if StashAX.isMinimized(windowElement) == true {
-                guard StashAX.setMinimized(windowElement, false) else { return false }
+                guard StashAX.requestMinimized(windowElement, false) else { return false }
+            }
+            guard StashAX.setFrame(windowElement, CGRect(origin: hidden, size: restoreFrame.size)) else { return false }
+            if let observed = StashAX.frame(of: windowElement),
+               WindowRecoveryPolicy.visibleOverlapWidth(of: observed, on: display.frame) > 0.5,
+               !alphaSet {
+                return false
             }
             usingSharedMinimize = false
-            guard StashAX.setFrame(windowElement, CGRect(origin: hidden, size: restoreFrame.size)) else { return false }
         }
         return true
     }
@@ -1170,7 +1411,7 @@ final class StashSession {
         self.displayID = display.id
         self.rescueDisplayFrame = display.frame
         lockedWidth = frame.width
-        restoreFrame = CGRect(
+        let expanded = CGRect(
             origin: StashGeometryPolicy.expandedOrigin(
                 edge: edge,
                 frame: frame,
@@ -1179,6 +1420,9 @@ final class StashSession {
             ),
             size: CGSize(width: lockedWidth, height: frame.height)
         )
+        restoreFrame = expanded
+        preferredSize = expanded.size
+        preferredRelativeY = StashGeometryPolicy.relativeY(of: expanded, in: display.visibleFrame)
         rescueVisibleFrame = restoreFrame
         phase = .captured
         if collapse(source: .capture) { return true }
@@ -1243,6 +1487,12 @@ final class StashSession {
             size: CGSize(width: lockedWidth, height: frame.height)
         )
         restoreFrame = expanded
+        if preferredSize == nil {
+            preferredSize = expanded.size
+        }
+        if preferredRelativeY == nil {
+            preferredRelativeY = StashGeometryPolicy.relativeY(of: expanded, in: display.visibleFrame)
+        }
         rescueVisibleFrame = expanded
         rescueDisplayFrame = display.frame
         windowID = windowID ?? StashAX.windowID(of: windowElement)
@@ -1301,10 +1551,17 @@ final class StashSession {
                 merged: merged
             ) { [weak self] placed in
                 guard let self, self.presentationRequests.owns(operation: operation) else { return }
-                // The 2pt positioning lip must not contribute content pixels.
-                // A failed hide cannot commit a falsely collapsed session.
-                guard placed, let windowID = self.windowID,
-                      StashSurface.setAlpha(windowID: windowID, alpha: StashGeometryPolicy.hiddenWindowAlpha) else {
+                let observed = StashAX.frame(of: self.windowElement)
+                let overlap = observed.map { WindowRecoveryPolicy.visibleOverlapWidth(of: $0, on: display.frame) } ?? 1
+                let alphaSet = self.windowID.map {
+                    StashSurface.setAlpha(windowID: $0, alpha: StashGeometryPolicy.hiddenWindowAlpha)
+                } ?? false
+                self.diagnose("session.outer-park-observed", [
+                    "placed": placed, "visibleOverlap": Double(overlap), "alphaSet": alphaSet
+                ])
+                // Fully off-screen parking contributes zero pixels; a clamped
+                // sliver still requires zero window alpha so no content leaks.
+                guard placed, overlap <= 0.5 || alphaSet else {
                     self.shutdown(event: .miniaturized)
                     return
                 }
@@ -1336,6 +1593,14 @@ final class StashSession {
                 onControlReady?(self)
             } else {
                 shutdown(event: .miniaturized)
+            }
+            return true
+        }
+        if let reveal = pendingSeamReveal {
+            if reveal.forRecovery {
+                onControlReady?(self)
+            } else {
+                _ = advancePendingSeamReveal()
             }
             return true
         }
@@ -1486,6 +1751,11 @@ final class StashSession {
         let revealToken = spaceRevealGeneration
         let lifecycleToken = lifecycleGeneration
         let operation = presentationRequests.operation
+        let displayFrame = DisplayCatalog.adjacencyGeometries()
+            .first(where: { $0.id == displayID })?.frame
+            ?? rescueDisplayFrame
+            ?? restoreFrame
+        let revealEdge = edge ?? .left
         DisplaySpaceTransport.shared.prepareMinimizedWindow(
             windowID: windowID,
             for: cgDisplayID
@@ -1502,11 +1772,24 @@ final class StashSession {
             case let .success(targetSpaceID):
                 if fromDock { StashFocusReturn.remember(excluding: self.pid) }
                 switch self.commitSeamReveal(windowID: windowID, displayID: cgDisplayID,
-                                             spaceID: targetSpaceID, frame: restoreFrame) {
+                                             spaceID: targetSpaceID, frame: restoreFrame,
+                                             displayFrame: displayFrame, edge: revealEdge) {
                 case .succeeded:
                     self.usingSharedMinimize = false
                     self.restoringShared = false
-                    self.finishExpand(next: next, frame: restoreFrame, fromDock: fromDock)
+                    let finalFrame = StashAX.frame(of: self.windowElement) ?? restoreFrame
+                    if WindowRecoveryPolicy.isUsableFrame(finalFrame) {
+                        self.restoreFrame = finalFrame
+                        self.lockedWidth = finalFrame.width
+                    }
+                    self.finishExpand(next: next, frame: finalFrame, fromDock: fromDock)
+                case .waitingDeminimize:
+                    self.pendingSeamReveal = (
+                        WindowWriteConfirmation(now: ProcessInfo.processInfo.systemUptime),
+                        windowID, cgDisplayID, targetSpaceID, restoreFrame,
+                        displayFrame, revealEdge, 1, next, fromDock, operation,
+                        false, nil, false
+                    )
                 case .keptMinimized:
                     self.usingSharedMinimize = true
                     self.failSharedReveal(availability: .unavailable)
@@ -1525,6 +1808,8 @@ final class StashSession {
     }
 
     func cancelPendingSpaceReveal() {
+        let hadPendingDeminimize = pendingSeamReveal != nil
+        pendingSeamReveal = nil
         if recoverySpacePreparation.state == .pending { onControlReady?(self) }
         recoverySpacePreparation.cancel()
         focusReturn.cancel()
@@ -1548,6 +1833,11 @@ final class StashSession {
         case .clearTransaction:
             if phase == .collapsed {
                 usingSharedMinimize = true
+                if hadPendingDeminimize {
+                    lastOwnedMinimizeAt = Date()
+                    unconfirmedOwnedMinimize = true
+                    _ = StashAX.requestMinimized(windowElement, true)
+                }
             }
             restoringShared = false
             busy = false
@@ -1557,7 +1847,8 @@ final class StashSession {
             // mistaken for a system-owned Dock reveal.
             usingSharedMinimize = true
             lastOwnedMinimizeAt = Date()
-            let reminimized = StashAX.setMinimized(windowElement, true)
+            unconfirmedOwnedMinimize = true
+            let reminimized = StashAX.requestMinimized(windowElement, true)
             restoringShared = false
             busy = false
             guard reminimized else {
@@ -1661,6 +1952,7 @@ final class StashSession {
         }
         _ = StashAX.setBool(windowElement, kAXMainAttribute as String, true)
         _ = StashAX.setBool(windowElement, kAXFocusedAttribute as String, true)
+        _ = StashAX.raise(windowElement)
     }
 
     func finishCollapse(next: StashSessionPhase, frame: CGRect, merged: Bool) {
@@ -1787,6 +2079,7 @@ final class StashSession {
         row["recoveryPending"] = pendingScreenSetRecovery != nil
         row["minimizeConfirmationPending"] = pendingMinimize != nil
         row["presentationConfirmationPending"] = pendingPresentation != nil
+        row["seamRevealPending"] = pendingSeamReveal != nil
         row["minimizeReleaseConfirmationPending"] = pendingMinimizeRelease != nil
         row["unconfirmedOwnedMinimize"] = unconfirmedOwnedMinimize
         StashDiagnostics.record(event, row)

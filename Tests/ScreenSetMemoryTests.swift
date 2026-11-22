@@ -155,11 +155,20 @@ func runScreenSetMemoryTests(_ expect: (Bool, String) -> Void) {
         expect(retry.pending == [b], "another failed target cannot rearm an exhausted window")
     }
     do {
-        // Terminal glyphs behind the lip must contribute no pixels, even at
-        // maximum black/white contrast; the rail is a separate visible panel.
+        // Exposed-edge parking moves the entire window off-screen (0pt overlap)
+        // so macOS marks it occluded and stops hidden GPU rendering. Apps whose
+        // frame constraints clamp a small sliver still receive alpha 0.
         let channelDifference: Float = 255
         expect(channelDifference * StashGeometryPolicy.hiddenWindowAlpha == 0, "parked content is completely transparent, not a faint terminal stripe")
-        expect(StashGeometryPolicy.edgeLip > 0 && StashGeometryPolicy.barThickness == 5, "content hiding preserves the positioning lip and accepted 5pt rail")
+        expect(StashGeometryPolicy.edgeLip == 0 && StashGeometryPolicy.barThickness == 5, "zero-overlap occlusion parking preserves the accepted 5pt rail")
+        let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)
+        let zeroOverlapLeft = CGRect(x: -500, y: 100, width: 500, height: 400)
+        let clampedLeft = CGRect(x: -480, y: 100, width: 500, height: 400)
+        let onScreen = CGRect(x: 0, y: 100, width: 500, height: 400)
+        expect(StashGeometryPolicy.parkedEdge(of: zeroOverlapLeft, in: screen) == .left
+               && StashGeometryPolicy.parkedEdge(of: clampedLeft, in: screen) == .left
+               && StashGeometryPolicy.parkedEdge(of: onScreen, in: screen) == nil,
+               "parkedEdge recognizes both zero-overlap offscreen frames and AppKit-clamped lips")
     }
     do {
         var f = ScreenSetFixture(baseline: desk, configurations: [deskConfig, laptopConfig], live: [aDesk, b])
@@ -328,6 +337,50 @@ func runScreenSetMemoryTests(_ expect: (Bool, String) -> Void) {
         expect(restored == frame, "outward and return coordinate rebasing preserve display-relative position")
         let small = CGRect(x: 0, y: 0, width: 640, height: 480)
         expect(small.contains(StashGeometryPolicy.screenSetFrame(frame: frame, previousDisplay: original, display: small, edge: .right)), "scale keeps the entire requested frame on a small display")
+
+        // Non-destructive preferredSize + relativeY + visibleFrame clamping:
+        let largeVisible = CGRect(x: 0, y: 37, width: 2560, height: 1330)
+        let laptopVisible = CGRect(x: 0, y: 37, width: 1440, height: 800)
+        let tallWindow = CGRect(x: 0, y: 102, width: 1000, height: 1200)
+        let relY = StashGeometryPolicy.relativeY(of: tallWindow, in: largeVisible)
+        let clampedOnLaptop = StashGeometryPolicy.screenSetFrame(
+            frame: tallWindow, previousDisplay: largeVisible,
+            display: CGRect(x: 0, y: 0, width: 1440, height: 900),
+            visibleDisplay: laptopVisible, edge: .left,
+            preferredSize: tallWindow.size, relativeY: relY
+        )
+        expect(clampedOnLaptop.size == CGSize(width: 1000, height: 800) && clampedOnLaptop.minY >= laptopVisible.minY,
+               "smaller display clamps height into visibleFrame clear of menu bar and Dock")
+        let backOnLarge = StashGeometryPolicy.screenSetFrame(
+            frame: clampedOnLaptop, previousDisplay: laptopVisible,
+            display: CGRect(x: 0, y: 0, width: 2560, height: 1440),
+            visibleDisplay: largeVisible, edge: .left,
+            preferredSize: tallWindow.size, relativeY: relY
+        )
+        expect(backOnLarge.size == tallWindow.size && abs(backOnLarge.minY - tallWindow.minY) <= 1,
+               "returning to the large display restores exact preferredSize and vertical position non-destructively")
+
+        // Vertical stagger jitter (e.g. 5pt drift on wake) must still resolve
+        // the unique horizontal-relation memory even when another layout shares IDs.
+        let sideBySide = ScreenSetObservation(displays: [display("laptop", 0, 0), display("external", 1920, 0)])
+        let swappedSide = ScreenSetObservation(displays: [display("laptop", 1920, 0), display("external", 0, 0)])
+        let jittered = ScreenSetObservation(displays: [display("laptop", 0, 0), display("external", 1920, 5)])
+        let bothConfigs = [
+            ScreenSetConfiguration(fingerprint: sideBySide.fingerprint, slots: [aDesk, b]),
+            ScreenSetConfiguration(fingerprint: swappedSide.fingerprint, slots: [aLaptop])
+        ]
+        let coordinator = ScreenSetMemoryCoordinator(baseline: laptop)
+        expect(coordinator.resolveConfiguredFingerprint(for: jittered, configurations: bothConfigs) == sideBySide.fingerprint,
+               "minor vertical alignment jitter still resolves the matching horizontal-relation configuration")
+
+        // Quiet increment preserves pending retries on surviving displays.
+        var incRetry = ScreenSetRestorationRetry()
+        incRetry.failed(b, now: Date(timeIntervalSince1970: 1000))
+        let incTargets = incRetry.beginApplication(
+            restoring: [aDesk], retainingPending: false, preservingDisplayIDs: ["laptop", "external"]
+        )
+        expect(incTargets == [aDesk] && incRetry.pending == [b],
+               "increment preserves surviving-display retries while queuing newly arriving displays")
     }
     do {
         let data = try! JSONEncoder().encode(deskConfig)

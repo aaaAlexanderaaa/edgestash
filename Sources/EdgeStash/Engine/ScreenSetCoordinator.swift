@@ -1,6 +1,19 @@
 import AppKit
 import CoreGraphics
+import Darwin
 import EdgeStashLogic
+
+private func screenSetDisplayReconfigCallback(
+    _ display: CGDirectDisplayID,
+    _ flags: CGDisplayChangeSummaryFlags,
+    _ userInfo: UnsafeMutableRawPointer?
+) {
+    let began = flags.contains(.beginConfigurationFlag)
+    let raw = flags.rawValue
+    DispatchQueue.main.async {
+        ScreenSetCoordinator.active?.handleDisplayReconfiguration(display: display, began: began, flags: raw)
+    }
+}
 
 /// AppKit adapter for the tested screen-set memory coordinator. Observations
 /// settle here; membership selection and memory writes stay in the logic layer.
@@ -10,8 +23,12 @@ final class ScreenSetCoordinator {
     private(set) static var isApplying = false
     /// True while asleep, waking, or waiting for a topology to stop changing.
     private(set) static var isQuiet = false
+    /// True between `kCGDisplayBeginConfigurationFlag` and completion so
+    /// WindowServer pre-relocation `AXMoved` storms cannot detach stashes
+    /// before AppKit posts `didChangeScreenParametersNotification`.
+    private(set) static var isReconfiguringDisplays = false
 
-    static var blocksUserGeometry: Bool { isApplying || isQuiet }
+    static var blocksUserGeometry: Bool { isApplying || isQuiet || isReconfiguringDisplays }
 
     private var memory: ScreenSetMemoryCoordinator?
     private var committedFingerprint: ScreenSetFingerprint? { memory?.observation.fingerprint }
@@ -21,6 +38,7 @@ final class ScreenSetCoordinator {
     private var preSleepFingerprint: ScreenSetFingerprint?
     private var settleWork: DispatchWorkItem?
     private var settleScheduledAt: Date?
+    private var settleSleepBaseline: TimeInterval?
     private var settleDelay: TimeInterval = 0
     private var wakeSubsetSince: Date?
     private var knownBuiltinID: String?
@@ -28,11 +46,12 @@ final class ScreenSetCoordinator {
     private var restorationRetry = ScreenSetRestorationRetry()
     private var fallbackLayout = ScreenSetFallbackLayout()
     private var retryWork: DispatchWorkItem?
+    private var displayReconfigRegistered = false
     var onSettled: ((_ validateBindings: Bool) -> Void)?
 
     static weak var active: ScreenSetCoordinator?
 
-    func captureBaseline(sessions: @escaping () -> [StashSession]) {
+    func captureBaseline(sessions: @escaping () -> [StashSession], registerDisplayCallback: Bool = true) {
         Self.active = self
         sessionSource = sessions
         let baseline = Self.metrics()
@@ -40,9 +59,19 @@ final class ScreenSetCoordinator {
         lastObserved = baseline
         knownBuiltinID = DisplayCatalog.builtinIdentifier()
         Self.isQuiet = false
+        Self.isReconfiguringDisplays = false
+        if registerDisplayCallback, !displayReconfigRegistered {
+            if CGDisplayRegisterReconfigurationCallback(screenSetDisplayReconfigCallback, nil) == .success {
+                displayReconfigRegistered = true
+            }
+        }
     }
 
     func invalidate() {
+        if displayReconfigRegistered {
+            CGDisplayRemoveReconfigurationCallback(screenSetDisplayReconfigCallback, nil)
+            displayReconfigRegistered = false
+        }
         settleWork?.cancel()
         settleWork = nil
         retryWork?.cancel()
@@ -55,10 +84,25 @@ final class ScreenSetCoordinator {
         preSleepFingerprint = nil
         wakeSubsetSince = nil
         settleScheduledAt = nil
+        settleSleepBaseline = nil
         lastObserved = nil
         memory = nil
         Self.isQuiet = false
+        Self.isReconfiguringDisplays = false
         Self.active = nil
+    }
+
+    func handleDisplayReconfiguration(display: CGDirectDisplayID, began: Bool, flags: UInt32) {
+        if began {
+            Self.isReconfiguringDisplays = true
+            diagnose("display.reconfig-begin", ["cgDisplay": display, "flags": flags])
+        } else {
+            Self.isReconfiguringDisplays = false
+            diagnose("display.reconfig-end", ["cgDisplay": display, "flags": flags])
+            if !power.blocksEnumeration, let sessionSource {
+                noteTopologyChanged(sessions: sessionSource)
+            }
+        }
     }
 
     func beginQuiet() {
@@ -211,6 +255,7 @@ final class ScreenSetCoordinator {
         )
         settleDelay = delay
         settleScheduledAt = Date()
+        settleSleepBaseline = Self.kernelSleepSeconds()
         diagnose("screens.settle-scheduled", ["delay": delay])
         let work = DispatchWorkItem { [weak self] in
             self?.finishSettle()
@@ -223,13 +268,16 @@ final class ScreenSetCoordinator {
         guard !power.screensSleeping else { return }
         let snapshot = Self.metrics()
         let elapsed = settleScheduledAt.map { Date().timeIntervalSince($0) } ?? 0
+        let kernelSleepDelta = settleSleepBaseline.map { max(0, Self.kernelSleepSeconds() - $0) }
         let decision = ScreenSetSettlePolicy.decision(
             sleepingAndNotWakePass: power.blocksEnumeration,
             currentMatchesLastObserved: snapshot == lastObserved,
             elapsedSinceScheduled: elapsed,
-            scheduledDelay: settleDelay
+            scheduledDelay: settleDelay,
+            kernelSleepDelta: kernelSleepDelta
         )
-        diagnose("screens.settle-decision", ["decision": String(describing: decision), "elapsed": elapsed])
+        diagnose("screens.settle-decision", ["decision": String(describing: decision), "elapsed": elapsed,
+                                             "kernelSleepDelta": kernelSleepDelta ?? -1])
         switch decision {
         case .ignoreSleepBlip:
             settleWork = nil
@@ -246,6 +294,7 @@ final class ScreenSetCoordinator {
         case .apply:
             settleWork = nil
             settleScheduledAt = nil
+            settleSleepBaseline = nil
             if wakePass {
                 finishWake(snapshot: snapshot)
             } else {
@@ -265,10 +314,14 @@ final class ScreenSetCoordinator {
             wakeSubsetSince = Date()
         }
         let subsetHold = wakeSubsetSince.map { Date().timeIntervalSince($0) } ?? 0
+        let resolvedFingerprint = memory?.resolveConfiguredFingerprint(
+            for: snapshot,
+            configurations: Preferences.shared.storedScreenSets
+        ) ?? snapshot.fingerprint
         let decision = ScreenSetSettlePolicy.wakeDecision(
             preSleepIDs: preIDs,
             currentIDs: currentIDs,
-            currentIsConfigured: Preferences.shared.configuredFingerprints().contains(snapshot.fingerprint),
+            currentIsConfigured: Preferences.shared.configuredFingerprints().contains(resolvedFingerprint),
             onlyBuiltinMissing: power.preservesClosedLid && ScreenSetSettlePolicy.onlyBuiltinMissing(
                 preSleepIDs: preIDs ?? [],
                 currentIDs: currentIDs,
@@ -323,9 +376,12 @@ final class ScreenSetCoordinator {
                 "restore": plan.restore.contains(where: { $0.key == slot.key }), "release": plan.release.contains(slot.key)])
         }
         let sameMemory = previousKey != nil && previousKey == memory?.memoryFingerprint
+        let preservingDisplays: Set<String>? = plan.event == .increment
+            ? Set(snapshot.fingerprint.displayIDs) : nil
         let targets = restorationRetry.beginApplication(
             restoring: plan.restore,
-            retainingPending: sameMemory || previousObservation == snapshot
+            retainingPending: sameMemory || previousObservation == snapshot,
+            preservingDisplayIDs: preservingDisplays
         ).filter { snapshot.fingerprint.displayIDs.contains($0.displayID) && !plan.release.contains($0.key) }
         for key in plan.release { restorationRetry.remove(key) }
         for session in sessions {
@@ -344,61 +400,65 @@ final class ScreenSetCoordinator {
             onSettled?(true)
             scheduleRestorationRetry()
         }
-        var toScatter = sessions.filter { session in
-            guard let number = session.windowID else { return false }
-            return plan.release.contains(ScreenSetWindowKey(windowNumber: number, bundleID: session.bundleID))
-        }
-        var applied = Set<ScreenSetWindowKey>()
-        for slot in targets {
-            guard let edge = DisplayEdge(rawValue: slot.edge) else { continue }
-            guard let session = sessions.first(where: { $0.bundleID == slot.bundleID && $0.windowID == slot.windowNumber }) else {
-                restorationRetry.waitForControl(slot, intent: ScreenSetRecoveryIntent(placement: slot))
-                continue
+        StashSession.withSharedRecoverySnapshot {
+            var toScatter = sessions.filter { session in
+                guard let number = session.windowID else { return false }
+                return plan.release.contains(ScreenSetWindowKey(windowNumber: number, bundleID: session.bundleID))
             }
-            let intent = session.recoveryIntent.flatMap { $0.placement == slot ? $0 : nil }
-                ?? ScreenSetRecoveryIntent(placement: slot, frame: session.restoreFrame, displayFrame: session.rescueDisplayFrame)
-            let result = session.screenSetSlot == slot
-                ? session.reconcileScreenSetPresentation(inspectFirst: afterWake)
-                : session.applyScreenSetSlot(displayID: slot.displayID, edge: edge, intent: intent)
-            applied.insert(slot.key)
-            switch result {
-            case .succeeded:
-                memory?.didRestore(slot)
-                restorationRetry.remove(slot.key)
-                fallbackLayout.remove(slot.key)
-            case .waitingForControl:
-                session.retainRecoveryIntent(intent)
-                restorationRetry.waitForControl(slot, intent: intent)
-            case .blockedSpace, .waitingForPersistence:
-                restorationRetry.failed(slot, intent: intent)
-            case .failed:
-                restorationRetry.failed(slot, intent: intent)
-                toScatter.append(session)
+            var applied = Set<ScreenSetWindowKey>()
+            for slot in targets {
+                guard let edge = DisplayEdge(rawValue: slot.edge) else { continue }
+                guard let session = sessions.first(where: { $0.bundleID == slot.bundleID && $0.windowID == slot.windowNumber }) else {
+                    restorationRetry.waitForControl(slot, intent: ScreenSetRecoveryIntent(placement: slot))
+                    continue
+                }
+                let intent = session.recoveryIntent.flatMap { $0.placement.sameAnchor(as: slot) ? $0 : nil }
+                    ?? ScreenSetRecoveryIntent(placement: slot, frame: session.restoreFrame,
+                                               displayFrame: session.rescueDisplayFrame,
+                                               preferredSize: slot.preferredSize, relativeY: slot.relativeY)
+                let result = session.screenSetSlot?.sameAnchor(as: slot) == true
+                    ? session.reconcileScreenSetPresentation(inspectFirst: afterWake)
+                    : session.applyScreenSetSlot(displayID: slot.displayID, edge: edge, intent: intent)
+                applied.insert(slot.key)
+                switch result {
+                case .succeeded:
+                    memory?.didRestore(slot)
+                    restorationRetry.remove(slot.key)
+                    fallbackLayout.remove(slot.key)
+                case .waitingForControl:
+                    session.retainRecoveryIntent(intent)
+                    restorationRetry.waitForControl(slot, intent: intent)
+                case .blockedSpace, .waitingForPersistence:
+                    restorationRetry.failed(slot, intent: intent)
+                case .failed:
+                    restorationRetry.failed(slot, intent: intent)
+                    toScatter.append(session)
+                }
+                diagnoseRecoveryResult("session.restore-result", session: session, slot: slot, result: result)
             }
-            diagnoseRecoveryResult("session.restore-result", session: session, slot: slot, result: result)
-        }
-        for session in sessions where session.isManaged {
-            guard !toScatter.contains(where: { $0 === session }),
-                  let slot = session.screenSetSlot,
-                  !applied.contains(slot.key), restorationRetry.intent(for: slot.key) == nil,
-                  plan.refresh.contains(slot.key) || session.needsScreenSetRepair else { continue }
-            let intent = session.recoveryIntent ?? ScreenSetRecoveryIntent(placement: slot)
-            let result = session.reconcileScreenSetPresentation(inspectFirst: afterWake)
-            switch result {
-            case .succeeded:
-                fallbackLayout.remove(slot.key)
-            case .waitingForControl:
-                session.retainRecoveryIntent(intent)
-                restorationRetry.waitForControl(slot, intent: intent)
-            case .blockedSpace, .waitingForPersistence:
-                restorationRetry.failed(slot, intent: intent)
-            case .failed:
-                restorationRetry.failed(slot, intent: intent)
-                toScatter.append(session)
+            for session in sessions where session.isManaged {
+                guard !toScatter.contains(where: { $0 === session }),
+                      let slot = session.screenSetSlot,
+                      !applied.contains(slot.key), restorationRetry.intent(for: slot.key) == nil,
+                      plan.refresh.contains(slot.key) || session.needsScreenSetRepair else { continue }
+                let intent = session.recoveryIntent ?? ScreenSetRecoveryIntent(placement: slot)
+                let result = session.reconcileScreenSetPresentation(inspectFirst: afterWake)
+                switch result {
+                case .succeeded:
+                    fallbackLayout.remove(slot.key)
+                case .waitingForControl:
+                    session.retainRecoveryIntent(intent)
+                    restorationRetry.waitForControl(slot, intent: intent)
+                case .blockedSpace, .waitingForPersistence:
+                    restorationRetry.failed(slot, intent: intent)
+                case .failed:
+                    restorationRetry.failed(slot, intent: intent)
+                    toScatter.append(session)
+                }
+                diagnoseRecoveryResult("session.refresh-result", session: session, slot: slot, result: result)
             }
-            diagnoseRecoveryResult("session.refresh-result", session: session, slot: slot, result: result)
+            scatterLeavingStash(toScatter, on: snapshot.displays)
         }
-        scatterLeavingStash(toScatter, on: snapshot.displays)
     }
 
     private func diagnoseRecoveryResult(_ event: String, session: StashSession,
@@ -434,35 +494,37 @@ final class ScreenSetCoordinator {
             scheduleRestorationRetry()
         }
         let sessions = sessionSource?() ?? []
-        var failures: [StashSession] = []
-        for slot in due {
-            guard let edge = DisplayEdge(rawValue: slot.edge) else {
-                restorationRetry.remove(slot.key)
-                continue
+        StashSession.withSharedRecoverySnapshot {
+            var failures: [StashSession] = []
+            for slot in due {
+                guard let edge = DisplayEdge(rawValue: slot.edge) else {
+                    restorationRetry.remove(slot.key)
+                    continue
+                }
+                let intent = restorationRetry.intent(for: slot.key) ?? ScreenSetRecoveryIntent(placement: slot)
+                guard let session = sessions.first(where: { $0.bundleID == slot.bundleID && $0.windowID == slot.windowNumber }) else {
+                    restorationRetry.waitForControl(slot, intent: intent)
+                    continue
+                }
+                let result = session.applyScreenSetSlot(displayID: slot.displayID, edge: edge, intent: intent)
+                switch result {
+                case .succeeded:
+                    memory?.didRestore(slot)
+                    restorationRetry.remove(slot.key)
+                    fallbackLayout.remove(slot.key)
+                case .waitingForControl:
+                    session.retainRecoveryIntent(intent)
+                    restorationRetry.waitForControl(slot, intent: intent)
+                case .blockedSpace, .waitingForPersistence:
+                    restorationRetry.failed(slot, intent: intent)
+                case .failed:
+                    restorationRetry.failed(slot, intent: intent)
+                    failures.append(session)
+                }
+                diagnoseRecoveryResult("session.retry-result", session: session, slot: slot, result: result)
             }
-            let intent = restorationRetry.intent(for: slot.key) ?? ScreenSetRecoveryIntent(placement: slot)
-            guard let session = sessions.first(where: { $0.bundleID == slot.bundleID && $0.windowID == slot.windowNumber }) else {
-                restorationRetry.waitForControl(slot, intent: intent)
-                continue
-            }
-            let result = session.applyScreenSetSlot(displayID: slot.displayID, edge: edge, intent: intent)
-            switch result {
-            case .succeeded:
-                memory?.didRestore(slot)
-                restorationRetry.remove(slot.key)
-                fallbackLayout.remove(slot.key)
-            case .waitingForControl:
-                session.retainRecoveryIntent(intent)
-                restorationRetry.waitForControl(slot, intent: intent)
-            case .blockedSpace, .waitingForPersistence:
-                restorationRetry.failed(slot, intent: intent)
-            case .failed:
-                restorationRetry.failed(slot, intent: intent)
-                failures.append(session)
-            }
-            diagnoseRecoveryResult("session.retry-result", session: session, slot: slot, result: result)
+            scatterLeavingStash(failures, on: snapshot.displays)
         }
-        scatterLeavingStash(failures, on: snapshot.displays)
     }
 
     private func scatterLeavingStash(_ sessions: [StashSession], on displays: [DisplayGeometry]) {
@@ -472,16 +534,39 @@ final class ScreenSetCoordinator {
             }
         }
         guard !unique.isEmpty else { return }
-        for session in unique {
+        // Sort deterministically by window identity so scatter origins never
+        // depend on unplug or retry arrival order.
+        let ordered = unique.sorted { lhs, rhs in
+            if lhs.bundleID != rhs.bundleID { return lhs.bundleID < rhs.bundleID }
+            return (lhs.windowID ?? 0) < (rhs.windowID ?? 0)
+        }
+        for session in ordered {
             guard let number = session.windowID else { continue }
             let key = ScreenSetWindowKey(windowNumber: number, bundleID: session.bundleID)
             session.diagnose("session.scatter-fallback")
-            if let origin = fallbackLayout.origin(for: key,
-                size: session.restoreFrame?.size ?? CGSize(width: 640, height: 480), on: displays) {
+            let rawSize = session.restoreFrame?.size ?? CGSize(width: 640, height: 480)
+            if let origin = fallbackLayout.origin(for: key, size: rawSize, on: displays) {
+                let host = displays.first { $0.visibleFrame.contains(origin) || $0.frame.contains(origin) } ?? displays.first
+                let clampedSize = host.map {
+                    CGSize(width: min(rawSize.width, $0.visibleFrame.width),
+                           height: min(rawSize.height, $0.visibleFrame.height))
+                } ?? rawSize
                 let intent = restorationRetry.intent(for: key)
-                session.leaveStash(to: origin, preservingRecovery: intent)
+                session.leaveStash(to: origin, maxSize: clampedSize, preservingRecovery: intent)
             }
         }
+    }
+
+    /// Exact kernel sleep time (continuous minus awake monotonic clock).
+    /// Immune to main-thread stalls that used to cause false `sleptThrough`.
+    private static func kernelSleepSeconds() -> TimeInterval {
+        var info = mach_timebase_info_data_t()
+        mach_timebase_info(&info)
+        guard info.denom > 0 else { return 0 }
+        let continuous = mach_continuous_time()
+        let awake = mach_absolute_time()
+        let sleepTicks = continuous >= awake ? continuous - awake : 0
+        return (Double(sleepTicks) * Double(info.numer) / Double(info.denom)) / 1_000_000_000
     }
 
     private static func geometries(screens: [NSScreen] = NSScreen.screens) -> [DisplayGeometry] {

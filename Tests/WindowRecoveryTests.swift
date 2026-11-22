@@ -290,4 +290,69 @@ func runWindowRecoveryTests(_ expect: (Bool, String) -> Void) {
     expect(crowded.count == 3 && Set(crowded.map { "\($0.x),\($0.y)" }).count == 3
            && crowded.allSatisfy { tiny.frame.contains($0) },
            "oversized windows still receive distinct title-bar origins on the remaining desktop")
+
+    // MARK: window_recovery Route A lazy seam conversion, 0pt occlusion readback, semantic frames and kernel sleep.
+    expect(WindowRecoveryPolicy.effectiveCollapsedPresentation(
+        computed: .slideOffscreen, expanded: false, currentlyMinimized: true, ownsMinimize: true) == .systemMinimize,
+           "Route A: unplugging a neighbor keeps an already-minimized collapsed seam window minimized")
+    expect(WindowRecoveryPolicy.effectiveCollapsedPresentation(
+        computed: .slideOffscreen, expanded: true, currentlyMinimized: true, ownsMinimize: true) == .slideOffscreen,
+           "Route A: an expanded window whose edge becomes exposed converts to slideOffscreen")
+    expect(WindowRecoveryPolicy.effectiveCollapsedPresentation(
+        computed: .systemMinimize, expanded: false, currentlyMinimized: false, ownsMinimize: false) == .systemMinimize,
+           "Route A: plugging a neighbor next to an outer stash converts it to systemMinimize")
+    expect(WindowRecoveryPolicy.effectiveCollapsedPresentation(
+        computed: .slideOffscreen, expanded: false, currentlyMinimized: true, ownsMinimize: false) == .slideOffscreen,
+           "Route A: an unowned external minimize does not masquerade as a lazy seam hide")
+
+    let zeroParkedLeft = CGRect(x: -500, y: 50, width: 500, height: 400)
+    let clampedLeft = CGRect(x: -484, y: 50, width: 500, height: 400)
+    expect(WindowRecoveryPolicy.presentationMatches(
+        phase: .collapsed, presentation: .slideOffscreen, expectedFrame: zeroParkedLeft,
+        actualFrame: zeroParkedLeft, minimized: false, alpha: 1,
+        displayFrame: display.frame, edge: .left, requiresZeroAlphaReadback: true),
+           "zero-overlap offscreen parking confirms even when CGWindowList reports alpha == 1")
+    expect(!WindowRecoveryPolicy.presentationMatches(
+        phase: .collapsed, presentation: .slideOffscreen, expectedFrame: zeroParkedLeft,
+        actualFrame: clampedLeft, minimized: false, alpha: 1,
+        displayFrame: display.frame, edge: .left, requiresZeroAlphaReadback: true),
+           "wake inspection still re-applies alpha=0 when an app clamps a lip onto screen")
+    expect(WindowRecoveryPolicy.presentationMatches(
+        phase: .collapsed, presentation: .slideOffscreen, expectedFrame: zeroParkedLeft,
+        actualFrame: clampedLeft, minimized: false, alpha: 1,
+        displayFrame: display.frame, edge: .left, requiresZeroAlphaReadback: false),
+           "post-write confirmation accepts a clamped parked lip after acknowledged setAlpha(0)")
+    expect(!WindowRecoveryPolicy.presentationMatches(
+        phase: .collapsed, presentation: .slideOffscreen, expectedFrame: zeroParkedLeft,
+        actualFrame: centered, minimized: false, alpha: 1,
+        displayFrame: display.frame, edge: .left, requiresZeroAlphaReadback: false),
+           "post-write confirmation still rejects a window that remained on screen")
+
+    let notchedClamped = CGRect(x: 0, y: 88, width: 496, height: 392)
+    expect(WindowRecoveryPolicy.expandedFrameMatches(
+        notchedClamped, expected: visible, on: display.frame, edge: .left),
+           "expanded frame matching tolerates menu-bar clamping and character-cell rounding")
+    expect(!WindowRecoveryPolicy.expandedFrameMatches(
+        CGRect(x: 1440, y: 50, width: 500, height: 400), expected: visible, on: display.frame, edge: .left),
+           "expanded frame matching rejects a window stuck on another display")
+
+    expect(!ScreenSetSettlePolicy.sleptThrough(elapsed: 5.0, scheduledDelay: 1.0, kernelSleepDelta: 0.0),
+           "a main-thread stall with zero kernel sleep delta is not misclassified as sleep")
+    expect(ScreenSetSettlePolicy.sleptThrough(elapsed: 1.2, scheduledDelay: 1.0, kernelSleepDelta: 2.5),
+           "genuine kernel sleep delta triggers sleep reconciliation")
+
+    var asyncReminimized = false
+    let asyncStart = SeamRevealCommit.begin(
+        confirmsDestination: { true }, restoreOpacity: { true },
+        deminimize: { true }, isDeminimized: { false },
+        placeFrame: { false }, reminimize: { asyncReminimized = true; return true }
+    )
+    expect(asyncStart == .waitingDeminimize && !asyncReminimized,
+           "async AX deminimize waits cleanly instead of prematurely re-minimizing")
+    let asyncFinish = SeamRevealCommit.finishAfterDeminimize(
+        confirmsDestination: { true }, placeFrame: { true },
+        reminimize: { asyncReminimized = true; return true }
+    )
+    expect(asyncFinish == .succeeded && !asyncReminimized,
+           "completing placement after async deminimize succeeds without compensation")
 }

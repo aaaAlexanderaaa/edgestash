@@ -4,7 +4,7 @@ status: current
 authority: normative
 implementation: implemented
 verification_status: partial
-last_reconciled: 2026-11-12
+last_reconciled: 2026-11-22
 supersedes: []
 ---
 
@@ -101,10 +101,16 @@ logical display map, edge halo, and seam beacon, and defer later product ideas.
   capture, or window-content snapshot APIs.
 - **INV-5 — permission boundary.** Settings does not start Accessibility
   observers. The engine starts only after trust is already present.
-- **INV-6 — geometry safety.** Exposed segments park offscreen at zero opacity;
-  their Slide, Nudge, or Fade presentation follows
+- **INV-6 — geometry safety.** Exposed segments park completely offscreen
+  (zero display overlap) so macOS marks the window occluded and stops hidden
+  GPU/WindowServer rendering; if an application's frame constraints clamp a
+  sliver back onto the display, zero window opacity hides that sliver. Their
+  Slide, Nudge, or Fade presentation follows
   `docs/design/appearance-and-settings.md`. Shared
   segments use system minimization so the window truly leaves the screen.
+  When a display departure exposes a formerly shared edge, an already-minimized
+  collapsed stash may stay minimized lazily until its next reveal and
+  re-collapse rather than forcing an online deminimize during hotplug.
   The seam beacon stays wholly inside the owning display. A clipped
   slide-through is not a permitted hide: the window would remain on the
   owning display, ghost-visible and hit-testable, and sliding fully through
@@ -266,6 +272,23 @@ logical display map, edge halo, and seam beacon, and defer later product ideas.
   `docs/contracts/screen-set-and-window-life.md`.
 
 ## Reconciliation log
+
+- **2026-11-22 — Route A multi-display consistency and WindowServer performance:**
+  owner selected Route A (dual hide strategy with lazy seam-to-outer
+  conversion on hotplug), exact original-location/size restoration regardless
+  of plug/unplug order, and elimination of sustained WindowServer/background
+  load. Exposed outer edges now park at zero overlap (`edgeLip = 0`) so macOS
+  occludes hidden windows instead of keeping them compositing; post-write
+  confirmation no longer deadlocks when cross-process `CGWindowList` reports
+  `alpha = 1` on a parked window. Seam reveal now supports asynchronous
+  `AXMinimized` completion (up to the existing 1.5-second settle bound) and
+  semantic expanded-frame acceptance (tolerating menu-bar/Dock clamping and
+  character-cell increments). Global mouse-move monitoring, minimize polling,
+  and discovery intervals are now demand-driven, AX calls use bounded timeouts,
+  transient effect panels size tightly to the rail instead of the full screen,
+  and rescue saves no longer rewrite `store.json`. Verified by logic tests,
+  live coordinator/session replays, and local CLT Debug/diagnostic Release
+  builds; full Xcode CI and physical multi-display macOS 27 review remain open.
 
 - **2026-09-30 — review follow-up:** the owner requested fixes for two
   independently replayed regressions. Every accepted named reveal now updates

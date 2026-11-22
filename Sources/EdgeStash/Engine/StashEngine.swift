@@ -30,7 +30,11 @@ final class StashEngine {
     private var captureGesture: (session: StashSession, initialFrame: CGRect)?
     private var captureRetryGeneration = 0
     private var syncTimer: Timer?
+    private var syncTimerInterval: TimeInterval = 0
     private var minimizeTimer: Timer?
+    private var minimizeTimerInterval: TimeInterval = 0
+    private var cachedDisplays: [DisplayGeometry] = []
+    private var cachedPrimaryHeight: CGFloat = 0
     private let hotkeys = StashHotkeys()
     private let merged = StashMergeCoordinator()
     private var lastPreferredSession: [String: ObjectIdentifier] = [:]
@@ -45,11 +49,14 @@ final class StashEngine {
         guard !isRunning else { return }
         guard AccessibilityGrant.isTrusted(prompt: false) else { return }
         isRunning = true
+        StashAX.configureDefaultTimeout(0.5)
         StashDiagnostics.record("engine.start")
         StashRescue.recoverPending(reason: "engine-start")
+        refreshDisplayCache()
         screenSets.captureBaseline { [weak self] in self?.sessions ?? [] }
         screenSets.onSettled = { [weak self] validateBindings in
             guard let self else { return }
+            self.refreshDisplayCache()
             let current = self.sessions
             current.forEach { $0.resumeAfterScreenSetChange() }
             if validateBindings { self.syncSessions() }
@@ -57,6 +64,8 @@ final class StashEngine {
             self.approachSuppressedIDs.formUnion(current.filter(\.isCollapsed).map(\.mergeID))
             self.merged.reconcile(sessions: self.sessions)
             self.reevaluateSeamApproach()
+            self.updateSeamMouseMonitor()
+            self.updatePollingCadence()
         }
         lastTopologyRevision = Preferences.shared.displayTopologyRevision
         observeWorkspace()
@@ -72,21 +81,8 @@ final class StashEngine {
             object: nil
         )
         syncSessions()
-        syncTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
-            self?.syncSessions()
-        }
-        minimizeTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-            guard let self else { return }
-            let now = Date()
-            var spaces = SeamSpaceObservationBatch()
-            for session in self.sessions {
-                session.reconcileMinimized(now: now) { displayID in
-                    spaces.availability(for: displayID) {
-                        DisplaySpaceTransport.shared.availability(for: displayID)
-                    }
-                }
-            }
-        }
+        updateSeamMouseMonitor()
+        updatePollingCadence()
     }
 
     func suspendTrustLost() {
@@ -156,6 +152,7 @@ final class StashEngine {
         let revision = Preferences.shared.displayTopologyRevision
         if revision != lastTopologyRevision {
             lastTopologyRevision = revision
+            refreshDisplayCache()
             screenSets.noteTopologyChanged { [weak self] in self?.sessions ?? [] }
         }
         if SessionLifecyclePolicy.shouldRecoverOnPreferenceChange() {
@@ -244,9 +241,7 @@ final class StashEngine {
             self?.handleMouseUp()
             return event
         }
-        mouseMoveMonitor = NSEvent.addGlobalMonitorForEvents(matching: .mouseMoved) { [weak self] _ in
-            self?.reevaluateSeamApproach()
-        }
+        updateSeamMouseMonitor()
         observeKeyboard()
     }
 
@@ -282,6 +277,66 @@ final class StashEngine {
         applyPresentationCommand(sessions.filter { bundleIDs.contains($0.bundleID) }, expanded: true, source: .showAll)
     }
 
+    private func refreshDisplayCache() {
+        let screens = NSScreen.screens
+        cachedPrimaryHeight = DisplayCatalog.primaryHeight(screens: screens)
+        cachedDisplays = DisplayCatalog.adjacencyGeometries(screens: screens)
+    }
+
+    private func updateSeamMouseMonitor(needed: Bool? = nil) {
+        guard isRunning else { return }
+        let shouldWatch = needed ?? (!merged.seamApproachSegments.isEmpty || sessions.contains(where: \.needsSeamApproach))
+        if shouldWatch {
+            if mouseMoveMonitor == nil {
+                mouseMoveMonitor = NSEvent.addGlobalMonitorForEvents(matching: .mouseMoved) { [weak self] _ in
+                    self?.reevaluateSeamApproach()
+                }
+            }
+        } else if let monitor = mouseMoveMonitor {
+            NSEvent.removeMonitor(monitor)
+            mouseMoveMonitor = nil
+        }
+    }
+
+    private func updatePollingCadence() {
+        guard isRunning else { return }
+        let hasPending = sessions.contains(where: \.hasPendingWriteConfirmation)
+        let hasCollapsedSeam = sessions.contains { $0.usingSharedMinimize && $0.isCollapsed }
+        let desiredMinimize: TimeInterval = hasPending ? 0.25 : (hasCollapsedSeam ? 4.0 : 0)
+        if desiredMinimize != minimizeTimerInterval {
+            minimizeTimer?.invalidate()
+            minimizeTimer = nil
+            minimizeTimerInterval = desiredMinimize
+            if desiredMinimize > 0 {
+                minimizeTimer = Timer.scheduledTimer(withTimeInterval: desiredMinimize, repeats: true) { [weak self] _ in
+                    self?.pollMinimizedSessions()
+                }
+            }
+        }
+
+        let desiredSync: TimeInterval = sessions.contains(where: \.awaitingWindowControl) ? 5.0 : 15.0
+        if desiredSync != syncTimerInterval {
+            syncTimer?.invalidate()
+            syncTimerInterval = desiredSync
+            syncTimer = Timer.scheduledTimer(withTimeInterval: desiredSync, repeats: true) { [weak self] _ in
+                self?.syncSessions()
+            }
+        }
+    }
+
+    private func pollMinimizedSessions() {
+        let now = Date()
+        var spaces = SeamSpaceObservationBatch()
+        for session in sessions where session.hasPendingWriteConfirmation || (session.usingSharedMinimize && session.isCollapsed) {
+            session.reconcileMinimized(now: now) { displayID in
+                spaces.availability(for: displayID) {
+                    DisplaySpaceTransport.shared.availability(for: displayID)
+                }
+            }
+        }
+        updatePollingCadence()
+    }
+
     /// A seam beacon's own panel is only a few points wide and cannot reach
     /// past the seam, so collapsed seam stashes additionally own an approach
     /// band (see `SeamApproachPolicy`). Only a target change starts or cancels
@@ -289,14 +344,6 @@ final class StashEngine {
     /// dwell finish.
     private func reevaluateSeamApproach(rearm: Bool = false) {
         guard !ScreenSetCoordinator.blocksUserGeometry else { return }
-        let screens = NSScreen.screens
-        let primaryHeight = DisplayCatalog.primaryHeight(screens: screens)
-        let mouse = NSEvent.mouseLocation
-        let pointer = CGPoint(
-            x: mouse.x,
-            y: StashGeometryPolicy.quartzOriginY(appKitY: mouse.y, height: 0, primaryHeight: primaryHeight)
-        )
-        let displays = DisplayCatalog.adjacencyGeometries(screens: screens)
         let segments = sessions.compactMap { session -> SeamApproachSegment? in
             guard session.isCollapsed, !session.awaitingWindowControl, !session.recoveryEpochActive,
                   !session.markerSuppressed,
@@ -315,6 +362,25 @@ final class StashEngine {
                 maxY: frame.maxY + StashGeometryPolicy.panelBleed
             )
         } + merged.seamApproachSegments
+        if segments.isEmpty {
+            if let previous = approachTargetID,
+               let session = sessions.first(where: { $0.mergeID == previous }) {
+                session.cancelHoverReveal()
+            }
+            approachTargetID = nil
+            merged.updateSeamApproachTarget(nil)
+            updateSeamMouseMonitor(needed: false)
+            return
+        }
+        updateSeamMouseMonitor(needed: true)
+        if cachedDisplays.isEmpty { refreshDisplayCache() }
+        let displays = cachedDisplays
+        let primaryHeight = cachedPrimaryHeight
+        let mouse = NSEvent.mouseLocation
+        let pointer = CGPoint(
+            x: mouse.x,
+            y: StashGeometryPolicy.quartzOriginY(appKitY: mouse.y, height: 0, primaryHeight: primaryHeight)
+        )
         for segment in segments where approachSuppressedIDs.contains(segment.id) {
             if !SeamApproachPolicy.contains(pointer: pointer, segment: segment, displays: displays) {
                 approachSuppressedIDs.remove(segment.id)
@@ -595,6 +661,7 @@ final class StashEngine {
         pruneAppObservers(validPIDs: pids)
         merged.reconcile(sessions: sessions)
         reevaluateSeamApproach()
+        updatePollingCadence()
         Set(sessions.map(\.bundleID)).forEach { considerMultiWindowTip(for: $0) }
     }
 
@@ -610,6 +677,7 @@ final class StashEngine {
         guard !ScreenSetCoordinator.blocksUserGeometry else { return }
         let pid = app.processIdentifier
         let appElement = AXUIElementCreateApplication(pid)
+        StashAX.setTimeout(appElement, seconds: 0.25)
         watchFocusedWindow(pid: pid, appElement: appElement)
         let enumeration = StashAX.windowsResult(of: appElement)
         var windows = enumeration.value ?? []
@@ -713,9 +781,14 @@ final class StashEngine {
         session.onControlUnavailable = { [weak self] waiting in
             self?.screenSets.waitForControl(of: waiting)
             self?.queueControlValidation(waiting)
+            self?.updatePollingCadence()
         }
         session.onControlReady = { [weak self] ready in
             self?.screenSets.controlBecameReady(ready)
+            self?.updatePollingCadence()
+        }
+        session.onPendingWriteChanged = { [weak self] in
+            self?.updatePollingCadence()
         }
         session.onEnded = { [weak self] ended, _ in
             self?.sessions.removeAll { $0 === ended }
@@ -725,10 +798,12 @@ final class StashEngine {
             }
             self?.merged.reconcile(sessions: self?.sessions ?? [])
             self?.reevaluateSeamApproach()
+            self?.updatePollingCadence()
         }
         session.onChanged = { [weak self] changed in
             self?.merged.reconcile(sessions: self?.sessions ?? [])
             self?.reevaluateSeamApproach()
+            self?.updatePollingCadence()
             if changed.isManaged {
                 self?.recordLiveScreenSetPlacement(of: changed)
             }
@@ -737,9 +812,12 @@ final class StashEngine {
             self?.approachSuppressedIDs.insert(collapsed.mergeID)
             self?.recordLiveScreenSetPlacement(of: collapsed)
             self?.reevaluateSeamApproach()
+            self?.updatePollingCadence()
         }
         session.onExpanded = { [weak self] expanded in
             self?.lastPreferredSession[expanded.bundleID] = ObjectIdentifier(expanded)
+            self?.updateSeamMouseMonitor()
+            self?.updatePollingCadence()
         }
         session.onPresentationRequested = { [weak self] session, request in
             self?.merged.notePresentationRequest(session, request: request)
@@ -966,6 +1044,10 @@ final class StashEngine {
         minimizeTimer?.invalidate()
         syncTimer = nil
         minimizeTimer = nil
+        syncTimerInterval = 0
+        minimizeTimerInterval = 0
+        cachedDisplays = []
+        cachedPrimaryHeight = 0
         for info in appObservers.values {
             CFRunLoopRemoveSource(CFRunLoopGetCurrent(), info.1, .defaultMode)
         }

@@ -14,6 +14,21 @@ enum StashAXRead<Value> {
 }
 
 enum StashAX {
+    /// Bound synchronous cross-process AX IPCs so an unresponsive target app
+    /// cannot freeze EdgeStash's main thread or disable the session event tap.
+    static func configureDefaultTimeout(_ seconds: Float = 0.5) {
+        AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), seconds)
+    }
+
+    static func setTimeout(_ element: AXUIElement, seconds: Float) {
+        AXUIElementSetMessagingTimeout(element, seconds)
+    }
+
+    @discardableResult
+    static func raise(_ element: AXUIElement) -> Bool {
+        AXUIElementPerformAction(element, kAXRaiseAction as CFString) == .success
+    }
+
     static func read(_ element: AXUIElement, _ attribute: String) -> StashAXRead<CFTypeRef> {
         var value: CFTypeRef?
         let start = StashDiagnostics.isEnabled ? ProcessInfo.processInfo.systemUptime : nil
@@ -108,9 +123,55 @@ enum StashAX {
         return set(element, kAXSizeAttribute as String, value: value)
     }
 
+    /// Cross-display safe frame application. Disables AXEnhancedUserInterface
+    /// temporarily (Chromium/Electron animation smoothing), moves before sizing
+    /// when growing or crossing displays so AppKit does not clamp to the old
+    /// display, and re-aligns position after resize.
     static func applyFrame(_ element: AXUIElement, _ frame: CGRect) -> (sized: Bool, moved: Bool) {
         guard WindowRecoveryPolicy.isUsableFrame(frame) else { return (false, false) }
-        return (setSize(element, frame.size), setPosition(element, frame.origin))
+        var pid: pid_t = 0
+        var enhancedApp: AXUIElement?
+        if AXUIElementGetPid(element, &pid) == .success, pid > 0 {
+            let app = AXUIElementCreateApplication(pid)
+            if bool(app, "AXEnhancedUserInterface") == true {
+                if setBool(app, "AXEnhancedUserInterface", false) {
+                    enhancedApp = app
+                }
+            }
+        }
+        defer {
+            if let enhancedApp {
+                _ = setBool(enhancedApp, "AXEnhancedUserInterface", true)
+            }
+        }
+
+        let current = self.frame(of: element)
+        let crossesOrGrows: Bool
+        if let current {
+            crossesOrGrows = frame.width > current.width + 1
+                || frame.height > current.height + 1
+                || abs(frame.minX - current.minX) > 200
+                || abs(frame.minY - current.minY) > 200
+        } else {
+            crossesOrGrows = true
+        }
+
+        if crossesOrGrows {
+            let movedFirst = setPosition(element, frame.origin)
+            var sized = setSize(element, frame.size)
+            var moved = setPosition(element, frame.origin) || movedFirst
+            // Aspect-ratio flips (e.g. portrait <-> landscape) can clamp one
+            // axis on the first resize before the window finishes relocating.
+            if let after = self.frame(of: element),
+               abs(after.width - frame.width) > 4 || abs(after.height - frame.height) > 4 {
+                if setSize(element, frame.size) { sized = true }
+                if setPosition(element, frame.origin) { moved = true }
+            }
+            return (sized, moved)
+        }
+        let sized = setSize(element, frame.size)
+        let moved = setPosition(element, frame.origin)
+        return (sized, moved)
     }
 
     @discardableResult

@@ -37,10 +37,12 @@ public struct DisplayEdgeSelection: Codable, Equatable {
 public struct DisplayGeometry: Equatable {
     public let id: String
     public let frame: CGRect
+    public let visibleFrame: CGRect
 
-    public init(id: String, frame: CGRect) {
+    public init(id: String, frame: CGRect, visibleFrame: CGRect? = nil) {
         self.id = id
         self.frame = frame
+        self.visibleFrame = visibleFrame ?? frame
     }
 }
 

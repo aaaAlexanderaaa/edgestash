@@ -1,6 +1,6 @@
 # Window operations and recovery: diagnostic Release builds
 
-Version 0.1.12 (13) retains explicit local diagnostics in the optimized Release
+Version 0.1.13 (14) retains explicit local diagnostics in the optimized Release
 package. `blockedSpace` means environment recovery was refused by the current
 Space safety gate. The window stays minimized, preserves its original expanded
 or pinned recovery intent, and uses the existing bounded retry budget. It cannot
@@ -8,7 +8,7 @@ bypass refusal through a deminimized desktop fallback. Completing Space
 preparation resumes that same budget without adding a background polling clock.
 Physical macOS 27 multi-display wake and WindowServer acceptance remain open.
 
-## Reconstructing a 0.1.12 operation
+## Reconstructing a 0.1.13 operation
 
 Use `run` and `session` to group records; `pid`, `subjectLaunch` and `window`
 identify the application/window lifetime. A `presentation.command` records one
@@ -100,13 +100,13 @@ An absent log entry does not prove that an event never arrived.
 
 | Event | Purpose |
 |---|---|
-| `workspace.*` / `power.*` / `screens.*` | Distinguish system sleep from display power; record unchanged-layout wake, settle, restoration plans, and retries. |
+| `workspace.*` / `power.*` / `screens.*` / `display.reconfig-*` | Distinguish system sleep from display power (`kernelSleepDelta` uses kernel sleep time); record CoreGraphics display reconfiguration boundaries, unchanged-layout wake, settle, restoration plans, and retries. |
 | `session.role-check-failed` / `ax.failure` | AX error and target reference; an error alone no longer means window death. |
 | `session.control-wait` / `session.binding-check` / `session.control-rebound` | Unavailable reference, enumeration success/failure/completeness, exact candidate count, server ownership, previous/current process launch time, waiting, and rebinding. |
 | `session.stale-ax-callback` | Rejected notification from an old binding or environment; snapshots also include binding/lifecycle generations. |
-| `session.recovery-observed` / `session.recovery-unchanged` | Pre-write frame/minimized/alpha and healthy windows that need no placement write. |
-| `session.recovery-readback` | Whether post-write observations match the target; API success alone does not establish recovery. New builds include `confirmation` (`waiting`, `confirmed`, `expired`) and expected/observed frames. Waiting reuses the original write and attempt. |
-| `session.minimize-confirmation` / `session.minimize-release-confirmation` | Delayed capture confirmation and settled cancellation of an unconfirmed hide. Session snapshots include pending confirmation flags and unconfirmed ownership. Added after 0.1.10. |
+| `session.recovery-observed` / `session.recovery-unchanged` | Pre-write frame/minimized/alpha, computed versus effective Route A presentation, and healthy windows that need no placement write. |
+| `session.recovery-readback` / `session.outer-park-observed` | Post-write readback confirmation (`waiting`, `confirmed`, `expired`), expected/observed frames, and `visibleOverlap` (0pt confirms offscreen occlusion; clamped lips confirm after acknowledged zero-alpha write). |
+| `session.minimize-confirmation` / `session.minimize-release-confirmation` / `session.seam-deminimize-confirmation` | Delayed capture confirmation, async seam deminimize confirmation (`seamRevealPending`), and settled cancellation of an unconfirmed hide. |
 | `session.external-geometry` | Observed frame, minimized state and geometry decision. `ignore` prevents minimized bounds from overwriting the saved desktop location. |
 | `session.seam-prepare-failed` / `session.seam-reveal-failed` | Exact preparation refusal and resulting availability for a named reveal. |
 | `session.seam-commit-failed` / `session.seam-frame-rejected` | Commit stage, target display/Space, and expected versus observed frame. Separates deminimization failure, frame mismatch, changed destination, and failed compensation. Added after 0.1.10; old packages cannot emit these details. |

@@ -4,7 +4,7 @@ status: target
 authority: normative
 implementation: implemented
 verification_status: partial
-last_reconciled: 2026-11-12
+last_reconciled: 2026-11-22
 supersedes_clauses_of: docs/contracts/edgestash.md
 ---
 
@@ -325,7 +325,24 @@ stash. Exiting full screen does not put it back on the edge.
   stashed”, defaulting to leave stashes closed.
 - After `return-configured`, stashes sit on the remembered display
   edges. Presentation (slide versus minimize) is decided from the
-  **current** adjacency, not from the remembered presentation kind.
+  **current** adjacency, with one Route A stability optimization: an
+  already-minimized collapsed seam stash whose edge becomes exposed during
+  hotplug remains minimized lazily until its next reveal and re-collapse.
+- Unplugging and replugging displays in any order — including through
+  unconfigured intermediate sets after `drop-configured` — preserves each
+  window's home anchor (display, edge, original preferred size, and normalized
+  vertical position within the display's usable frame clear of menu bar and
+  Dock). Visiting a smaller display or scattering onto a fallback clamps
+  visibly without destroying the remembered preferred size.
+- Display identity remains stable when an identical display without a hardware
+  UUID connects; adding a second unit does not rename the first. Display
+  reconfiguration callbacks freeze unsolicited geometry detachment before
+  WindowServer finishes relocating windows, and sleep overrun detection uses
+  kernel sleep time rather than raw wall-clock timer lag so main-thread stalls
+  cannot trigger false wake reconciliation.
+- A quiet `increment` preserves pending restoration retries on already-connected
+  surviving displays, and minor vertical alignment jitter still resolves a
+  unique horizontal-relation screen-set memory.
 - After `drop-unconfigured`, displaced windows are ordinary on-desktop
   windows until `return-configured` puts them back on the remembered
   edges.
@@ -439,6 +456,24 @@ do not.
   and that lid-sleep does not move stashes.
 
 ## Reconciliation log
+
+- **2026-11-22 — order-independent multi-display restoration, Route A lazy conversion, and performance:**
+  investigated cross-version multi-display consistency failures and sustained
+  WindowServer load. Preserved per-window home anchors across `drop-configured`
+  so unconfigured intermediate sets are strictly commutative regardless of
+  unplug/replug order; added non-destructive `preferredSize`, normalized
+  `relativeY`, and `visibleFrame` menu-bar/Dock clamping; stabilized
+  unit-number fallback display IDs; added `CGDisplayRegisterReconfigurationCallback`
+  geometry freeze and kernel-sleep-delta (`mach_continuous_time - mach_absolute_time`)
+  overrun detection; resolved minor vertical-stagger jitter in configured
+  fingerprint lookup; kept surviving-display retries across quiet increments;
+  adopted Route A lazy seam-to-outer conversion, zero-overlap outer parking,
+  semantic expanded-frame acceptance, and asynchronous seam deminimize
+  confirmation; and moved mouse-move monitoring, minimize polling, AX timeouts,
+  recovery window-list snapshots, transient effect panels, and rescue disk
+  writes onto demand-driven low-overhead paths. Logic tests, live coordinator
+  and session replays, and local CLT builds pass; full Xcode CI and physical
+  macOS 27 multi-display review remain open.
 
 - **2026-11-11 — asynchronous writes and fallback scatter:** the owner reports Stickies on
   macOS 27.0.1 with EdgeStash 0.1.10 remaining minimized after repeated shortcuts

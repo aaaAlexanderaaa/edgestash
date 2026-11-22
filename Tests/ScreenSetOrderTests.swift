@@ -149,6 +149,48 @@ func runScreenSetOrderTests(_ expect: (Bool, String) -> Void) {
             subsetHoldElapsed: ScreenSetSettlePolicy.wakeSubsetGrace) == .applyClassified,
                "a subset beyond grace is processed without forgetting the full destination")
     }
+
+    // MARK: screen_set unconfigured intermediate commutativity across any unplug/replug order.
+    // Unplugging {A,B,C} -> {A} in order C->B, B->C, or simultaneous BC (even when
+    // {A} is configured with its own slots) and then plugging only B (unconfigured
+    // {A,B}) or only C (unconfigured {A,C}) must produce identical placements.
+    do {
+        let aOnly = observation(1)
+        let ab = observation(3)
+        let ac = observation(5)
+        let aSlotRelocated = placement(1, on: displays[0].id, edge: 2)
+        let configsCases: [[ScreenSetConfiguration]] = [
+            [],
+            [fullConfiguration],
+            [fullConfiguration, ScreenSetConfiguration(fingerprint: aOnly.fingerprint, slots: [aSlotRelocated])]
+        ]
+        for (cfgIndex, configs) in configsCases.enumerated() {
+            for targetPair in [(ab, "AB"), (ac, "AC")] {
+                var outcomes: [[ScreenSetWindowKey: ScreenSetPlacement]] = []
+                let paths: [[Int]] = [
+                    [3, 1], // unplug C then B
+                    [5, 1], // unplug B then C
+                    [1]     // unplug B and C simultaneously
+                ]
+                for path in paths {
+                    var fixture = ScreenOrderFixture(baseline: destination, configurations: configs, live: desired)
+                    for mask in path { _ = fixture.move(to: observation(mask)) }
+                    _ = fixture.move(to: targetPair.0)
+                    outcomes.append(fixture.live)
+                    // Returning to full {A,B,C} must also restore every home anchor identically.
+                    _ = fixture.move(to: destination)
+                    expect(fixture.live == expected,
+                           "returning to full triple after \(targetPair.1) (config=\(cfgIndex), path=\(path)) restores exact original slots")
+                }
+                expect(outcomes.count == 3 && outcomes[0] == outcomes[1] && outcomes[1] == outcomes[2],
+                       "unconfigured intermediate \(targetPair.1) is strictly order-independent across C->B, B->C, and simultaneous BC (config=\(cfgIndex))")
+                let arrivedID = targetPair.0.displays[1].id
+                let expectedOnArrived = desired.filter { $0.displayID == arrivedID }
+                expect(expectedOnArrived.allSatisfy { outcomes[0][$0.key] == $0 },
+                       "arriving display \(arrivedID) in unconfigured \(targetPair.1) restores all of its home-anchored windows (config=\(cfgIndex))")
+            }
+        }
+    }
 }
 
 private struct ScreenOrderFixture {

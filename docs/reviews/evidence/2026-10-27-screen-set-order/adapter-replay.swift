@@ -91,7 +91,8 @@ final class StashSession {
         if outcome == .succeeded { pendingScreenSetRecovery = nil; needsScreenSetRepair = false }
         return outcome
     }
-    func leaveStash(to origin: CGPoint, preservingRecovery intent: ScreenSetRecoveryIntent?) {
+    static func withSharedRecoverySnapshot<T>(_ body: () -> T) -> T { body() }
+    func leaveStash(to origin: CGPoint, maxSize: CGSize? = nil, preservingRecovery intent: ScreenSetRecoveryIntent?) {
         scatters += 1
         landingOrigins.append(origin)
         if intent == nil { ScreenSetCoordinator.active?.cancelRestoration(of: self) }
@@ -119,14 +120,17 @@ extension ScreenSetCoordinator {
     func replayRetry() { retryRestoration(); retryWork?.cancel(); retryWork = nil }
     var replaySettleDelay: TimeInterval { settleDelay }
     var replayHasWakeBaseline: Bool { preSleepFingerprint != nil }
-    func replayFireSettle(subsetGraceElapsed: Bool = false, overran: Bool = false) {
+    func replayFireSettle(subsetGraceElapsed: Bool = false, overran: Bool = false, stallOnly: Bool = false) {
         // Inject timer delivery and elapsed timestamps, leaving every live
         // finishSettle/finishWake decision and its scheduling code unchanged.
         if subsetGraceElapsed {
             wakeSubsetSince = Date().addingTimeInterval(-ScreenSetSettlePolicy.wakeSubsetGrace)
         }
         settleScheduledAt = Date().addingTimeInterval(-settleDelay
-            - (overran ? ScreenSetSettlePolicy.sleptThroughSlack + 1 : 0))
+            - ((overran || stallOnly) ? ScreenSetSettlePolicy.sleptThroughSlack + 1 : 0))
+        settleSleepBaseline = overran
+            ? Self.kernelSleepSeconds() - ScreenSetSettlePolicy.sleptThroughSlack - 1
+            : Self.kernelSleepSeconds()
         finishSettle()
         settleWork?.cancel()
         settleWork = nil
@@ -449,6 +453,58 @@ struct AdapterReplay {
             coordinator.replayApply(original)
             check(lowerSession.attempts == 2 && lowerSession.isManaged, "reverse segment change repairs without losing membership")
             coordinator.invalidate()
+        }
+
+        // MARK: screen_set live unconfigured commutativity, increment retry preservation, and stall immunity.
+        do {
+            var intermediateMaps: [[ScreenSetWindowKey: ScreenSetPlacement]] = []
+            for removalPath in [[[0, 1], [0]], [[0, 2], [0]], [[0]]] {
+                DisplayCatalog.show(displays)
+                Preferences.shared.storedScreenSets = [full]
+                let sessions = allSlots.map { StashSession($0, managed: true) }
+                let coordinator = ScreenSetCoordinator()
+                coordinator.captureBaseline { sessions }
+                for indices in removalPath {
+                    coordinator.replayApply(indices.map { displays[$0] })
+                }
+                coordinator.replayApply([displays[0], displays[1]])
+                intermediateMaps.append(Dictionary(uniqueKeysWithValues: sessions.compactMap(\.screenSetSlot).map { ($0.key, $0) }))
+                coordinator.replayApply(displays)
+                let finalLive = Dictionary(uniqueKeysWithValues: sessions.compactMap(\.screenSetSlot).map { ($0.key, $0) })
+                check(finalLive == Dictionary(uniqueKeysWithValues: allSlots.map { ($0.key, $0) }),
+                      "live coordinator restores full set after unconfigured intermediate")
+                coordinator.invalidate()
+            }
+            check(intermediateMaps.count == 3 && intermediateMaps[0] == intermediateMaps[1] && intermediateMaps[1] == intermediateMaps[2],
+                  "live coordinator unconfigured {A,B} is identical across C->B, B->C, and simultaneous BC unplug orders")
+            reliabilityTimelines += 1
+
+            // Main-thread stall with zero kernel sleep delta must apply normally instead of triggering wake reconciliation.
+            DisplayCatalog.show(displays)
+            Preferences.shared.storedScreenSets = [full]
+            let stallSessions = allSlots.map { StashSession($0, managed: true) }
+            let stallCoordinator = ScreenSetCoordinator()
+            stallCoordinator.captureBaseline { stallSessions }
+            stallCoordinator.noteTopologyChanged { stallSessions }
+            stallCoordinator.replayFireSettle(overran: false, stallOnly: true)
+            check(!stallCoordinator.replayHasWakeBaseline && !ScreenSetCoordinator.isQuiet,
+                  "main-thread stall without kernel sleep delta does not trigger false wake reconciliation")
+            stallCoordinator.invalidate()
+            reliabilityTimelines += 1
+
+            // Quiet increment preserves surviving-display pending retries.
+            DisplayCatalog.show([displays[0]])
+            Preferences.shared.storedScreenSets = []
+            let retrySessions = [StashSession(allSlots[0], managed: true), StashSession(allSlots[1], managed: false)]
+            let incCoordinator = ScreenSetCoordinator()
+            incCoordinator.captureBaseline { retrySessions }
+            retrySessions[0].outcome = .waitingForControl
+            incCoordinator.waitForControl(of: retrySessions[0])
+            incCoordinator.replayApply([displays[0], displays[1]])
+            check(incCoordinator.replayPending.contains(where: { $0.key == allSlots[0].key }),
+                  "quiet increment preserves surviving-display pending retries")
+            incCoordinator.invalidate()
+            reliabilityTimelines += 1
         }
         let result: [String: Any] = [
             "reliabilityTimelines": reliabilityTimelines,

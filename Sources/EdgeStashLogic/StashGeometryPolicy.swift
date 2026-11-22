@@ -22,10 +22,15 @@ public enum StashGeometryPolicy {
     public static let seamInnerGap: CGFloat = 1
     /// How far the outer glass sits inside the display edge.
     public static let outerOnScreenClearance: CGFloat = 1
-    /// A parked window keeps a two-point positioning lip inside its display;
-    /// its surface is fully transparent. The separate glass rail is the only
-    /// visible content. A single point rounds away on scaled displays.
-    public static let edgeLip: CGFloat = 2
+    /// Exposed-edge stashes park completely outside the owning display so
+    /// macOS marks the window occluded (`NSWindow.OcclusionState.visible == false`)
+    /// and stops background GPU/WindowServer rendering. Apps whose
+    /// `constrainFrameRect` clamps a small sliver back onto the screen still
+    /// receive zero window alpha.
+    public static let edgeLip: CGFloat = 0
+    /// Maximum on-screen sliver width tolerated when an app's frame constraints
+    /// clamp a parked window slightly back inside the owning display.
+    public static let clampedLipTolerance: CGFloat = 48
     public static let hiddenWindowAlpha: Float = 0
     /// Marker panel windows: 5pt glass plus transparent margin.
     public static let outerPanelWidth: CGFloat = 11
@@ -160,23 +165,39 @@ public enum StashGeometryPolicy {
         return nil
     }
 
-    /// A window parked by a previous run shows only its edge lip: the sliver
-    /// inside the owning display is lip-sized, hugging one edge, with the
-    /// bulk of the window off-screen. Tolerance covers window-manager nudges
-    /// between sessions.
+    /// A parked window sits outside the owning display on one edge (zero
+    /// overlap when accepted by the app, or a small clamped lip when AppKit's
+    /// frame constraints keep a sliver inside the display).
     public static func parkedEdge(
         of frame: CGRect,
         in display: CGRect,
         overflowThreshold: CGFloat = 24,
-        tolerance: CGFloat = 6
+        tolerance: CGFloat = 6,
+        clampedReach: CGFloat = clampedLipTolerance
     ) -> DisplayEdge? {
+        guard frame.width.isFinite, frame.height.isFinite,
+              frame.origin.x.isFinite, frame.origin.y.isFinite,
+              frame.width > overflowThreshold else { return nil }
+        let verticalOverlap = min(frame.maxY, display.maxY) - max(frame.minY, display.minY)
+        guard verticalOverlap > 0 else { return nil }
+
         let visible = frame.intersection(display)
-        guard !visible.isNull, visible.width.isFinite, visible.height.isFinite else { return nil }
-        guard frame.width - visible.width > overflowThreshold else { return nil }
-        let reach = edgeLip + tolerance
-        guard visible.width <= reach else { return nil }
-        if visible.maxX - display.minX <= reach { return .left }
-        if display.maxX - visible.minX <= reach { return .right }
+        let visibleWidth: CGFloat = (!visible.isNull && visible.width.isFinite) ? max(0, visible.width) : 0
+        guard frame.width - visibleWidth > overflowThreshold else { return nil }
+
+        let maxAllowedLip = max(edgeLip + tolerance, clampedReach)
+        guard visibleWidth <= maxAllowedLip else { return nil }
+
+        if frame.minX < display.minX - overflowThreshold,
+           frame.maxX >= display.minX - tolerance,
+           frame.maxX <= display.minX + maxAllowedLip {
+            return .left
+        }
+        if frame.maxX > display.maxX + overflowThreshold,
+           frame.minX <= display.maxX + tolerance,
+           frame.minX >= display.maxX - maxAllowedLip {
+            return .right
+        }
         return nil
     }
 
@@ -260,18 +281,58 @@ public enum StashGeometryPolicy {
         }
     }
 
-    /// Rebase the vertical offset with the owning display, then keep the
-    /// window usable after a scale change. Absolute Quartz y is not memory.
+    /// Normalized vertical position in [0, 1] within a display's usable frame.
+    /// Allows returning a window to its original relative vertical band after
+    /// visiting a display of a different height or origin.
+    public static func relativeY(of frame: CGRect, in usable: CGRect) -> CGFloat {
+        let travel = usable.height - frame.height
+        guard travel > 1, frame.minY.isFinite, usable.minY.isFinite else { return 0 }
+        return min(max((frame.minY - usable.minY) / travel, 0), 1)
+    }
+
+    /// Rebase the vertical offset with the owning display's usable area (below
+    /// the menu bar and clear of the Dock) while preserving preferred size
+    /// non-destructively across smaller displays and temporary scale changes.
     public static func screenSetFrame(
-        frame: CGRect, previousDisplay: CGRect?, display: CGRect, edge: DisplayEdge
+        frame: CGRect,
+        previousDisplay: CGRect?,
+        display: CGRect,
+        visibleDisplay: CGRect? = nil,
+        edge: DisplayEdge,
+        preferredSize: CGSize? = nil,
+        relativeY: CGFloat? = nil
     ) -> CGRect {
-        let size = CGSize(width: min(frame.width, display.width), height: min(frame.height, display.height))
-        let y = previousDisplay.map { display.minY + frame.minY - $0.minY } ?? frame.minY
-        return CGRect(
-            x: edge == .left ? display.minX : display.maxX - size.width,
-            y: min(max(y, display.minY), display.maxY - size.height),
-            width: size.width, height: size.height
+        let usable = visibleDisplay ?? display
+        let sourceSize: CGSize
+        if let preferredSize,
+           preferredSize.width.isFinite, preferredSize.height.isFinite,
+           preferredSize.width > 0, preferredSize.height > 0 {
+            sourceSize = preferredSize
+        } else {
+            sourceSize = frame.size
+        }
+        let size = CGSize(
+            width: min(sourceSize.width, usable.width),
+            height: min(sourceSize.height, usable.height)
         )
+        let rawY: CGFloat
+        if let relativeY, relativeY.isFinite {
+            let maxTravel = max(0, usable.height - size.height)
+            rawY = usable.minY + min(max(relativeY, 0), 1) * maxTravel
+        } else if let previousDisplay {
+            rawY = usable.minY + (frame.minY - previousDisplay.minY)
+        } else {
+            rawY = frame.minY
+        }
+        let clampedY = min(max(rawY, usable.minY), max(usable.minY, usable.maxY - size.height))
+        let x: CGFloat
+        switch edge {
+        case .left:
+            x = usable.minX
+        case .right:
+            x = max(usable.minX, usable.maxX - size.width)
+        }
+        return CGRect(x: x, y: clampedY, width: size.width, height: size.height)
     }
 
     /// Leaves a narrow lip on the owning display so the marker can sit on the

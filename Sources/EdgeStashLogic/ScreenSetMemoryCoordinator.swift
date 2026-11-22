@@ -16,16 +16,47 @@ public struct ScreenSetPlacement: Codable, Equatable {
     public var bundleID: String
     public var displayID: String
     public var edge: Int
+    /// Optional preferred visible size and display-relative vertical ratio
+    /// remembered per screen set so visiting a smaller display does not
+    /// permanently crush the window's original geometry.
+    public var preferredWidth: CGFloat?
+    public var preferredHeight: CGFloat?
+    public var relativeY: CGFloat?
 
-    public init(windowNumber: UInt32, bundleID: String, displayID: String, edge: Int) {
+    public init(
+        windowNumber: UInt32,
+        bundleID: String,
+        displayID: String,
+        edge: Int,
+        preferredWidth: CGFloat? = nil,
+        preferredHeight: CGFloat? = nil,
+        relativeY: CGFloat? = nil
+    ) {
         self.windowNumber = windowNumber
         self.bundleID = bundleID
         self.displayID = displayID
         self.edge = edge
+        self.preferredWidth = preferredWidth
+        self.preferredHeight = preferredHeight
+        self.relativeY = relativeY
     }
 
     public var key: ScreenSetWindowKey {
         ScreenSetWindowKey(windowNumber: windowNumber, bundleID: bundleID)
+    }
+
+    public var preferredSize: CGSize? {
+        guard let preferredWidth, let preferredHeight,
+              preferredWidth.isFinite, preferredHeight.isFinite,
+              preferredWidth > 0, preferredHeight > 0 else { return nil }
+        return CGSize(width: preferredWidth, height: preferredHeight)
+    }
+
+    public func sameAnchor(as other: ScreenSetPlacement) -> Bool {
+        windowNumber == other.windowNumber
+            && bundleID == other.bundleID
+            && displayID == other.displayID
+            && edge == other.edge
     }
 }
 
@@ -83,6 +114,12 @@ public struct ScreenSetMemoryCoordinator {
     public private(set) var memoryFingerprint: ScreenSetFingerprint?
     private var scaleAliases: [ScreenSetFingerprint: ScreenSetFingerprint] = [:]
     private var displaced: [ScreenSetWindowKey: ScreenSetPlacement] = [:]
+    /// Per-window, per-display remembered home anchor. Unlike `displaced`, this
+    /// is never erased by `dropConfigured`, so unplugging and replugging
+    /// displays in any order converges to the same state even across
+    /// unconfigured intermediate sets.
+    private var homeAnchors: [ScreenSetWindowKey: [String: (slot: ScreenSetPlacement, order: UInt64)]] = [:]
+    private var anchorSequence: UInt64 = 0
     private var lastPlacements: [ScreenSetWindowKey: ScreenSetPlacement] = [:]
     /// A closed-lid wake is still the pre-sleep configuration until display
     /// identities or mirroring change. Repeated geometry observations are not
@@ -94,6 +131,50 @@ public struct ScreenSetMemoryCoordinator {
         memoryFingerprint = baseline.mirroring ? nil : baseline.fingerprint
     }
 
+    /// Resolve a live observation to its remembered configuration key across
+    /// resolution changes and minor vertical stagger differences.
+    public func resolveConfiguredFingerprint(
+        for current: ScreenSetObservation,
+        configurations: [ScreenSetConfiguration]
+    ) -> ScreenSetFingerprint {
+        let known = Set(configurations.map(\.fingerprint))
+        if let aliased = scaleAliases[current.fingerprint], known.contains(aliased) {
+            return aliased
+        }
+        if known.contains(current.fingerprint) {
+            return current.fingerprint
+        }
+        let sameDevices = known.filter { $0.displayIDs == current.fingerprint.displayIDs }
+        if sameDevices.count == 1, let only = sameDevices.first {
+            return only
+        }
+        if sameDevices.count > 1 {
+            let currentHorizontal = current.fingerprint.relations.filter { $0.axis == .horizontal }
+            let horizontalMatches = sameDevices.filter {
+                $0.relations.filter { $0.axis == .horizontal } == currentHorizontal
+            }
+            if horizontalMatches.count == 1, let match = horizontalMatches.first {
+                return match
+            }
+        }
+        return current.fingerprint
+    }
+
+    private mutating func rememberHomeAnchor(_ slot: ScreenSetPlacement) {
+        anchorSequence &+= 1
+        homeAnchors[slot.key, default: [:]][slot.displayID] = (slot, anchorSequence)
+    }
+
+    private mutating func seedHomeAnchors(from configurations: [ScreenSetConfiguration]) {
+        for config in configurations {
+            for slot in config.slots {
+                if homeAnchors[slot.key]?[slot.displayID] == nil {
+                    rememberHomeAnchor(slot)
+                }
+            }
+        }
+    }
+
     public mutating func settle(
         on current: ScreenSetObservation,
         configurations: [ScreenSetConfiguration],
@@ -102,6 +183,9 @@ public struct ScreenSetMemoryCoordinator {
         afterWake: Bool = false,
         windowFrames: [ScreenSetWindowKey: CGRect] = [:]
     ) -> ScreenSetTransition {
+        seedHomeAnchors(from: configurations)
+        for slot in live { rememberHomeAnchor(slot) }
+
         let previous = observation
         let sameIDs = previous.fingerprint.displayIDs == current.fingerprint.displayIDs
         let present = Set(current.fingerprint.displayIDs)
@@ -112,14 +196,7 @@ public struct ScreenSetMemoryCoordinator {
         }
         let scaleChanged = sameIDs && (previous.sizes != current.sizes || previous.scales != current.scales)
         let known = Set(configurations.map(\.fingerprint))
-        // A returning display may already have a new mode, so no same-ID scale
-        // notification was observable. An unambiguous memory of these same
-        // devices is still theirs; do not mistake that return for a new set.
-        let sameDevices = known.filter { $0.displayIDs == current.fingerprint.displayIDs }
-        let resolved = scaleAliases[current.fingerprint]
-            ?? (known.contains(current.fingerprint) ? current.fingerprint : nil)
-            ?? (sameDevices.count == 1 ? sameDevices.first : nil)
-            ?? current.fingerprint
+        let resolved = resolveConfiguredFingerprint(for: current, configurations: configurations)
         let event: ScreenSetEvent
 
         if sleepHeldDisplayID != nil {
@@ -156,7 +233,8 @@ public struct ScreenSetMemoryCoordinator {
         if event == .returnConfigured || event == .dropConfigured, let target {
             let keys = Set(target.slots.map(\.key))
             // A configured set is the whole target, never a union with the set
-            // we just left. In particular, surviving displays can have extras.
+            // we just left. Departed displays' anchors stay in `homeAnchors`
+            // so returning to an unconfigured intermediate set is order-independent.
             return transition(
                 event: event,
                 restore: target.slots,
@@ -166,11 +244,33 @@ public struct ScreenSetMemoryCoordinator {
         }
 
         let gone = live.filter { !present.contains($0.displayID) && $0.displayID != sleepHeldDisplayID }
-        for slot in gone { displaced[slot.key] = slot }
+        for slot in gone {
+            displaced[slot.key] = slot
+            rememberHomeAnchor(slot)
+        }
         let managed = Set(live.map(\.key))
-        let returning = current.mirroring || target != nil ? [] : displaced.values.filter {
-            present.contains($0.displayID) && !managed.contains($0.key)
-        }.sorted { $0.windowNumber < $1.windowNumber }
+        let addedDisplays = present.subtracting(Set(previous.fingerprint.displayIDs))
+        var returningByKey: [ScreenSetWindowKey: ScreenSetPlacement] = [:]
+        if !current.mirroring && target == nil {
+            for slot in displaced.values where present.contains(slot.displayID) && !managed.contains(slot.key) {
+                returningByKey[slot.key] = slot
+            }
+            if !addedDisplays.isEmpty {
+                for (key, perDisplay) in homeAnchors where !managed.contains(key) && returningByKey[key] == nil {
+                    let candidates = perDisplay.values.filter { addedDisplays.contains($0.slot.displayID) }
+                    if let best = candidates.max(by: { lhs, rhs in
+                        if lhs.order != rhs.order { return lhs.order < rhs.order }
+                        return lhs.slot.displayID > rhs.slot.displayID
+                    }) {
+                        returningByKey[key] = best.slot
+                    }
+                }
+            }
+        }
+        let returning = returningByKey.values.sorted {
+            if $0.bundleID != $1.bundleID { return $0.bundleID < $1.bundleID }
+            return $0.windowNumber < $1.windowNumber
+        }
         return transition(event: event, restore: returning, release: Set(gone.map(\.key)),
                           live: live, previous: previous, afterWake: afterWake, windowFrames: windowFrames)
     }
@@ -208,7 +308,7 @@ public struct ScreenSetMemoryCoordinator {
               let edge = DisplayEdge(rawValue: slot.edge) else { return .missingGeometry }
         // Repeated observations and unrelated display changes must not
         // rewrite stable windows. Changed adjacency or geometry still does.
-        if before.frame != after.frame { return .displayFrame }
+        if before.frame != after.frame || before.visibleFrame != after.visibleFrame { return .displayFrame }
         if previous.scales[slot.displayID] != current.scales[slot.displayID] { return .scale }
         if let frame = windowFrame, frame.width > 0, frame.height > 0,
            [frame.minX, frame.minY, frame.width, frame.height].allSatisfy(\.isFinite) {
@@ -240,6 +340,7 @@ public struct ScreenSetMemoryCoordinator {
               observation.fingerprint.displayIDs.contains(slot.displayID) else { return configurations }
         guard lastPlacements[slot.key] != slot else { return configurations }
         lastPlacements[slot.key] = slot
+        rememberHomeAnchor(slot)
         displaced.removeValue(forKey: slot.key)
         var result = configurations
         if let index = result.firstIndex(where: { $0.fingerprint == memoryFingerprint }) {
@@ -264,6 +365,16 @@ public struct ScreenSetMemoryCoordinator {
     ) -> [ScreenSetConfiguration] {
         displaced.removeValue(forKey: key)
         lastPlacements.removeValue(forKey: key)
+        if everywhere {
+            homeAnchors.removeValue(forKey: key)
+        } else {
+            let present = Set(observation.fingerprint.displayIDs)
+            if var anchors = homeAnchors[key] {
+                for id in present { anchors.removeValue(forKey: id) }
+                if anchors.isEmpty { homeAnchors.removeValue(forKey: key) }
+                else { homeAnchors[key] = anchors }
+            }
+        }
         var result = configurations
         for index in result.indices where everywhere || result[index].fingerprint == memoryFingerprint {
             result[index].slots.removeAll { $0.key == key }

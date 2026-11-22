@@ -5,7 +5,7 @@ status: target
 authority: normative
 implementation: in_progress
 verification_status: pending
-last_reconciled: 2026-09-30
+last_reconciled: 2026-11-22
 supersedes_visual_clauses_of: docs/design/logical-display-and-seam-beacon.md
 ---
 
@@ -144,11 +144,15 @@ single seam target selection. A group containing seam segments keeps its
 seam chips retain the quieter tint and inner gap.
 
 An exposed-edge stash's real window must contribute no content pixels while
-collapsed. The 2pt positioning lip is fully transparent (window alpha zero),
-including Terminal text and borders; only the separate glass rail remains
-visible. A failed transparency write cannot commit a collapsed presentation.
-Revealing or releasing the window restores full opacity. Shared seams continue
-to hide with system minimization.
+collapsed. It parks completely offscreen (`edgeLip = 0`) so macOS marks the
+window occluded (`NSWindow.OcclusionState.visible == false`) and stops hidden
+GPU/WindowServer rendering. When an application's frame constraints clamp a
+small sliver back onto the display, zero window opacity (`alpha = 0`) hides
+that sliver, including Terminal text and borders; only the separate 5pt glass
+rail remains visible. A failed opacity write cannot commit a collapsed
+presentation when a clamped sliver remains on screen. Revealing or releasing
+the window restores full opacity. Shared seams continue to hide with system
+minimization.
 
 ### Interaction map
 
@@ -236,6 +240,14 @@ leave a visible `seam-rail` in `glass-painted` (or `glass-system` on the pin).
   pin, halo, and sheen match; system minimization still hides the window.
 
 ## Reconciliation log
+
+- **2026-11-22 — zero-overlap offscreen parking for occlusion and WindowServer efficiency:**
+  replaced the 2pt on-screen lip with zero-overlap offscreen parking
+  (`edgeLip = 0`) so macOS marks hidden outer-edge windows occluded and stops
+  hidden compositor rendering, while retaining `alpha = 0` for apps whose frame
+  constraints clamp a sliver back onto the screen. The 5pt glass rail and its
+  panel geometry are unchanged. Transient expand/collapse flourish panels now
+  size tightly to the rail instead of allocating a full-display backing store.
 
 - **2026-09-30 — merged signal repair:** labels refresh on target change in
   a separate mouse-transparent panel; the interactive panel stays 21pt.

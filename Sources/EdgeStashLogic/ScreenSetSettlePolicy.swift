@@ -19,21 +19,24 @@ public struct ScreenSetFallbackLayout {
         let start = origins.count % displays.count
         for offset in displays.indices {
             let display = displays[(start + offset) % displays.count]
+            let usable = display.visibleFrame
+            let clampedSize = CGSize(width: min(size.width, usable.width), height: min(size.height, usable.height))
             let candidates = ScreenSetPolicy.scatterOrigins(count: used.count + 1,
-                                                            on: display.frame, windowSize: size)
+                                                            on: usable, windowSize: clampedSize)
             if let point = candidates.first(where: { !used.contains(Coordinate(x: $0.x, y: $0.y)) }) {
                 origins[key] = point
                 return point
             }
         }
         // Oversized windows may have only one fully fitting origin. Keep the
-        // title-bar origin on the desktop and distinct even if content clips.
+        // title-bar origin on the usable desktop and distinct even if content clips.
         for display in displays {
-            let columns = max(1, Int(display.frame.width))
+            let usable = display.visibleFrame
+            let columns = max(1, Int(usable.width))
             for index in 0...used.count {
-                let point = CGPoint(x: display.frame.minX + CGFloat(index % columns),
-                                    y: display.frame.minY + CGFloat(index / columns))
-                if display.frame.contains(point), !used.contains(Coordinate(x: point.x, y: point.y)) {
+                let point = CGPoint(x: usable.minX + CGFloat(index % columns),
+                                    y: usable.minY + CGFloat(index / columns))
+                if usable.contains(point), !used.contains(Coordinate(x: point.x, y: point.y)) {
                     origins[key] = point
                     return point
                 }
@@ -54,16 +57,25 @@ public struct ScreenSetRestorationRetry {
 
     public init() {}
 
-    /// A repeated observation in the same selected memory preserves pending
-    /// targets without spending their timed retry attempts early. A changed
-    /// target is a new placement and can be attempted immediately.
+    /// A repeated observation in the same selected memory, or a quiet increment
+    /// that leaves surviving displays intact, preserves pending targets without
+    /// spending their timed retry attempts early. A changed target is a new
+    /// placement and can be attempted immediately.
     public mutating func beginApplication(
-        restoring slots: [ScreenSetPlacement], retainingPending: Bool
+        restoring slots: [ScreenSetPlacement],
+        retainingPending: Bool,
+        preservingDisplayIDs: Set<String>? = nil
     ) -> [ScreenSetPlacement] {
-        if !retainingPending { failures.removeAll() }
+        if !retainingPending {
+            if let preservingDisplayIDs {
+                failures = failures.filter { preservingDisplayIDs.contains($0.value.intent.placement.displayID) }
+            } else {
+                failures.removeAll()
+            }
+        }
         return slots.filter { slot in
             guard let failed = failures[slot.key] else { return true }
-            return failed.intent.placement != slot
+            return !failed.intent.placement.sameAnchor(as: slot)
         }.sorted { ($0.bundleID, $0.windowNumber) < ($1.bundleID, $1.windowNumber) }
     }
 
@@ -91,7 +103,7 @@ public struct ScreenSetRestorationRetry {
     }
 
     public mutating func waitForControl(_ slot: ScreenSetPlacement, intent: ScreenSetRecoveryIntent, now: Date = Date()) {
-        let previous = failures[slot.key].flatMap { $0.intent.placement == slot ? $0 : nil }
+        let previous = failures[slot.key].flatMap { $0.intent.placement.sameAnchor(as: slot) ? $0 : nil }
         let count = previous?.count ?? 0
         failures[slot.key] = (previous?.intent ?? intent, count, previous?.dueAt, count <= Self.delays.count)
     }
@@ -107,7 +119,7 @@ public struct ScreenSetRestorationRetry {
     }
 
     public mutating func failed(_ slot: ScreenSetPlacement, intent: ScreenSetRecoveryIntent? = nil, now: Date = Date()) {
-        let previous = failures[slot.key].flatMap { $0.intent.placement == slot ? $0 : nil }
+        let previous = failures[slot.key].flatMap { $0.intent.placement.sameAnchor(as: slot) ? $0 : nil }
         let count = previous?.count ?? 0
         let nextCount = count + 1
         let dueAt = nextCount <= Self.delays.count
@@ -195,18 +207,26 @@ public enum ScreenSetSettlePolicy {
         return currentIDs.isSubset(of: committedIDs) && currentIDs.count < committedIDs.count
     }
 
-    public static func sleptThrough(elapsed: TimeInterval, scheduledDelay: TimeInterval) -> Bool {
-        elapsed > scheduledDelay + sleptThroughSlack
+    public static func sleptThrough(
+        elapsed: TimeInterval,
+        scheduledDelay: TimeInterval,
+        kernelSleepDelta: TimeInterval? = nil
+    ) -> Bool {
+        if let kernelSleepDelta {
+            return kernelSleepDelta >= sleptThroughSlack
+        }
+        return elapsed > scheduledDelay + sleptThroughSlack
     }
 
     public static func decision(
         sleepingAndNotWakePass: Bool,
         currentMatchesLastObserved: Bool,
         elapsedSinceScheduled: TimeInterval,
-        scheduledDelay: TimeInterval
+        scheduledDelay: TimeInterval,
+        kernelSleepDelta: TimeInterval? = nil
     ) -> ScreenSetSettleDecision {
         if sleepingAndNotWakePass { return .ignoreSleepBlip }
-        if sleptThrough(elapsed: elapsedSinceScheduled, scheduledDelay: scheduledDelay) {
+        if sleptThrough(elapsed: elapsedSinceScheduled, scheduledDelay: scheduledDelay, kernelSleepDelta: kernelSleepDelta) {
             return .sleptThrough
         }
         if !currentMatchesLastObserved { return .reschedule }

@@ -57,8 +57,28 @@ final class StashEffectOverlay {
     ) {
         stop(immediate: false)
         guard let layer = panel.contentView?.layer else { return }
-        panel.setFrame(screen.frame, display: true)
-        let local = CGPoint(x: point.x - screen.frame.minX, y: point.y - screen.frame.minY)
+        let thickness = StashGeometryPolicy.barThickness
+        let length: CGFloat = 220
+        let pad: CGFloat = 6
+        let panelWidth = thickness + pad * 2
+        let panelHeight = min(screen.frame.height, length + pad * 2)
+        let clampedMidY = min(
+            max(point.y, screen.frame.minY + panelHeight / 2),
+            screen.frame.maxY - panelHeight / 2
+        )
+        let panelX = edge == .left
+            ? screen.frame.minX
+            : screen.frame.maxX - panelWidth
+        let panelFrame = CGRect(
+            x: panelX,
+            y: clampedMidY - panelHeight / 2,
+            width: panelWidth,
+            height: panelHeight
+        )
+        // Size the overlay tightly to the rail sheen instead of allocating a
+        // full-display transparent backing store in WindowServer VRAM.
+        panel.setFrame(panelFrame, display: true)
+        let local = CGPoint(x: point.x - panelFrame.minX, y: clampedMidY - panelFrame.minY)
         let accent = color.usingColorSpace(.deviceRGB) ?? color
 
         layer.addSublayer(makeSheen(edge: edge, local: local, accent: accent, material: material, collapsing: collapsing))

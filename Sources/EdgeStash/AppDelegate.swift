@@ -30,6 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var settingsWindow: NSWindow?
     private var engine: StashEngine?
     private var trustTimer: Timer?
+    private var trustTimerInterval: TimeInterval = 0
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         StashDiagnostics.start()
@@ -51,9 +52,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 notifyPendingRescueNeedsAccessibility()
             }
         }
-        trustTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
-            self?.reconcileEngineTrust()
-        }
+        updateTrustTimer()
         let workspace = NSWorkspace.shared.notificationCenter
         workspace.addObserver(
             self,
@@ -134,6 +133,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         engine?.start()
     }
 
+    private func updateTrustTimer() {
+        let desired: TimeInterval = engine?.isRunning == true ? 5 : 2
+        guard desired != trustTimerInterval else { return }
+        trustTimer?.invalidate()
+        trustTimerInterval = desired
+        trustTimer = Timer.scheduledTimer(withTimeInterval: desired, repeats: true) { [weak self] _ in
+            self?.reconcileEngineTrust()
+        }
+    }
+
     private func reconcileEngineTrust() {
         if AccessibilityGrant.isTrusted(prompt: false) {
             if engine?.isRunning != true {
@@ -143,6 +152,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         } else {
             engine?.suspendTrustLost()
         }
+        updateTrustTimer()
     }
 
     private func notifyPendingRescueNeedsAccessibility() {

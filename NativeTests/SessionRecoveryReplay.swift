@@ -34,11 +34,15 @@ enum StashAX {
     static var currentFrame = CGRect(x: 1440, y: 50, width: 500, height: 400)
     static var writes: [Bool] = []
     static var frameWrites = 0
+    static var syncDeminimize = true
+    static var blockFrameWrites = false
+    static var clampMenuBarOffset: CGFloat = 0
     static func isMinimized(_ element: Int) -> Bool? { minimized }
     static func canSetMinimized(_ element: Int) -> Bool { true }
     static func windowID(of element: Int) -> UInt32? { 42 }
     static func requestMinimized(_ element: Int, _ value: Bool) -> Bool {
         writes.append(value)
+        if !value && syncDeminimize { minimized = false }
         return true
     }
     static func setMinimized(_ element: Int, _ value: Bool) -> Bool {
@@ -48,7 +52,11 @@ enum StashAX {
     }
     static func setFrame(_ element: Int, _ value: CGRect) -> Bool {
         frameWrites += 1
-        currentFrame = value
+        if !blockFrameWrites {
+            var next = value
+            next.origin.y += clampMenuBarOffset
+            currentFrame = next
+        }
         return true
     }
     static func frame(of element: Int) -> CGRect? { currentFrame }
@@ -62,6 +70,8 @@ enum StashSurface {
     static func allWindows() -> [StashRecoverySurface]? {
         [StashRecoverySurface(windowID: 42, pid: 555, alpha: observedAlpha)]
     }
+    static func recoverySnapshot() -> [StashRecoverySurface]? { allWindows() }
+    static func invalidateRecoverySnapshot() {}
     static func setAlpha(windowID: UInt32, alpha: Float) -> Bool { true }
 }
 enum StashRescue {
@@ -152,6 +162,8 @@ final class StashSession {
     var edge: DisplayEdge? = .left
     var displayID: String? = "external"
     var restoreFrame: CGRect? = CGRect(x: 1440, y: 50, width: 500, height: 400)
+    var preferredSize: CGSize?
+    var preferredRelativeY: CGFloat?
     var lockedWidth: CGFloat = 500
     var awaitingWindowControl = false
     var usingSharedMinimize = true
@@ -164,7 +176,14 @@ final class StashSession {
     var spaceRevealGeneration = 0
     var recoverySpacePreparation = SeamRecoveryPreparation()
     var pendingPresentation: (confirmation: WindowWriteConfirmation, phase: StashSessionPhase,
-                              presentation: StashCollapsePresentation, frame: CGRect)?
+                              presentation: StashCollapsePresentation, frame: CGRect,
+                              displayFrame: CGRect, edge: DisplayEdge)?
+    var pendingSeamReveal: (confirmation: WindowWriteConfirmation, windowID: UInt32,
+                            displayID: CGDirectDisplayID, spaceID: UInt64, frame: CGRect,
+                            displayFrame: CGRect, edge: DisplayEdge, alpha: Float,
+                            next: StashSessionPhase, fromDock: Bool, operation: UInt,
+                            forRecovery: Bool, recoveryNext: StashCollapsePresentation?,
+                            recoveryPinned: Bool)?
     var pendingMinimize: (confirmation: WindowWriteConfirmation, next: StashSessionPhase, frame: CGRect, merged: Bool)?
     var pendingMinimizeRelease: WindowWriteConfirmation?
     var isExpanded: Bool { phase == .expanded }
@@ -317,7 +336,7 @@ final class EngineAdapter {
             print(String(data: try! JSONSerialization.data(withJSONObject: result,
                                                           options: [.prettyPrinted, .sortedKeys]), encoding: .utf8)!)
         }
-        func pendingRecovery(expanded: Bool = false, outer: Bool = false) -> StashSession {
+        func pendingRecovery(expanded: Bool = false, outer: Bool = false, blockFrame: Bool = false) -> StashSession {
             ReplayClock.now = 100
             DispatchQueue.main.pending = []
             ScreenSetCoordinator.isApplying = false
@@ -325,6 +344,9 @@ final class EngineAdapter {
             StashAX.currentFrame = CGRect(x: 1440, y: 50, width: 500, height: 400)
             StashAX.writes = []
             StashAX.frameWrites = 0
+            StashAX.syncDeminimize = true
+            StashAX.blockFrameWrites = blockFrame
+            StashAX.clampMenuBarOffset = 0
             StashSurface.observedAlpha = expanded ? 0 : 1
             DisplaySpaceTransport.shared.preparations = 0
             DisplaySpaceTransport.shared.confirmations = 0
@@ -392,14 +414,76 @@ final class EngineAdapter {
         expect(expanded.phase == .expanded && StashAX.writes.isEmpty,
                "the newest expand cancels a queued collapse without a minimize")
 
-        let expired = pendingRecovery(outer: true)
+        // macOS 27 field regression: CGWindowList reports alpha == 1 even after
+        // acknowledged setAlpha(0); zero-overlap offscreen parking confirms immediately.
+        do {
+            ReplayClock.now = 100
+            StashAX.minimized = false
+            StashAX.currentFrame = CGRect(x: 1440, y: 50, width: 500, height: 400)
+            StashAX.writes = []
+            StashAX.frameWrites = 0
+            StashAX.blockFrameWrites = false
+            StashSurface.observedAlpha = 1
+            let outerImmediate = StashSession()
+            outerImmediate.edge = .right
+            outerImmediate.presentation = .slideOffscreen
+            outerImmediate.usingSharedMinimize = false
+            expect(outerImmediate.reconcileScreenSetPresentation() == .succeeded
+                   && !outerImmediate.busy && outerImmediate.pendingPresentation == nil,
+                   "outer-edge zero-overlap parking confirms without deadlocking on kCGWindowAlpha == 1")
+        }
+
+        // Route A lazy conversion: exposing a collapsed minimized seam edge keeps it minimized without writes.
+        do {
+            StashAX.minimized = true
+            StashAX.writes = []
+            StashAX.frameWrites = 0
+            let lazySeam = StashSession()
+            lazySeam.edge = .right
+            lazySeam.presentation = .systemMinimize
+            lazySeam.usingSharedMinimize = true
+            expect(lazySeam.reconcileScreenSetPresentation(inspectFirst: true) == .succeeded
+                   && lazySeam.presentation == .systemMinimize && lazySeam.usingSharedMinimize
+                   && StashAX.writes.isEmpty && StashAX.frameWrites == 0,
+                   "Route A lazy conversion keeps an already-minimized collapsed seam window minimized when its edge becomes exposed")
+        }
+
+        // Async seam reveal (Stickies ~0.6s AXMinimized lag) + menu-bar Y clamp acceptance.
+        do {
+            ReplayClock.now = 100
+            StashAX.minimized = true
+            StashAX.syncDeminimize = false
+            StashAX.blockFrameWrites = false
+            StashAX.clampMenuBarOffset = 24
+            StashAX.writes = []
+            StashAX.frameWrites = 0
+            DisplaySpaceTransport.shared.preparations = 0
+            DisplaySpaceTransport.shared.confirmations = 0
+            let asyncSeam = StashSession()
+            expect(asyncSeam.expand(fromDock: true) && asyncSeam.busy && asyncSeam.restoringShared
+                   && asyncSeam.pendingSeamReveal != nil && StashAX.writes == [false],
+                   "async AX deminimize waits in pendingSeamReveal without prematurely re-minimizing")
+            ReplayClock.now = 100.3
+            expect(asyncSeam.reconcilePendingWindowWrites() && asyncSeam.isCollapsed && StashAX.writes == [false],
+                   "delayed AXMinimized stays pending while still true")
+            ReplayClock.now = 100.624
+            StashAX.minimized = false
+            expect(asyncSeam.reconcilePendingWindowWrites() && asyncSeam.isExpanded && !asyncSeam.busy
+                   && !asyncSeam.usingSharedMinimize && StashAX.writes == [false],
+                   "async seam reveal commits cleanly once deminimize settles, tolerating menu-bar Y clamping")
+            StashAX.syncDeminimize = true
+            StashAX.clampMenuBarOffset = 0
+        }
+
+        let expired = pendingRecovery(outer: true, blockFrame: true)
         expect(expired.expand(fromDock: true), "outer recovery also queues the named reveal")
         ReplayClock.now = 101.5
         expect(expired.reconcileScreenSetPresentation() == .failed && !expired.busy
-               && expired.pendingPresentation == nil, "persistent opacity mismatch expires and clears the busy gate")
+               && expired.pendingPresentation == nil, "persistent unparked frame mismatch expires and clears the busy gate")
         DispatchQueue.main.drain()
         expect(expired.phase == .collapsed && !expired.desiredPresentationIsExpanded,
                "failed confirmation cannot replay an unverified transition")
+        StashAX.blockFrameWrites = false
 
         let superseded = pendingRecovery()
         _ = superseded.expand(fromDock: false)

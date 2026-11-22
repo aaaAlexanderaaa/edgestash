@@ -15,6 +15,35 @@ struct StashRecoverySurface {
 }
 
 enum StashSurface {
+    private static var batchedRecoveryWindows: [StashRecoverySurface]?
+    private static var recoveryBatchDepth = 0
+
+    /// Reuse one WindowServer window-list query across a synchronous
+    /// screen-set reconciliation pass instead of issuing 2N full queries.
+    static func withSharedRecoverySnapshot<T>(_ body: () -> T) -> T {
+        if recoveryBatchDepth == 0 {
+            batchedRecoveryWindows = allWindows()
+        }
+        recoveryBatchDepth += 1
+        defer {
+            recoveryBatchDepth -= 1
+            if recoveryBatchDepth == 0 { batchedRecoveryWindows = nil }
+        }
+        return body()
+    }
+
+    static func invalidateRecoverySnapshot() {
+        if recoveryBatchDepth > 0 { batchedRecoveryWindows = nil }
+    }
+
+    static func recoverySnapshot() -> [StashRecoverySurface]? {
+        if recoveryBatchDepth > 0 {
+            if batchedRecoveryWindows == nil { batchedRecoveryWindows = allWindows() }
+            return batchedRecoveryWindows
+        }
+        return allWindows()
+    }
+
     /// A nil inventory is unavailable, not a successful empty user session.
     static func allWindows() -> [StashRecoverySurface]? {
         guard let list = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID)

@@ -105,13 +105,12 @@ final class Preferences: ObservableObject {
         didSet { persistUserChange(notify: PreferenceSignal.didChange) }
     }
 
-    @Published var ghostedWindowIDs: [String] = [] {
-        didSet { persistUserChange() }
-    }
+    /// Rescue records persist through the independent atomic rescue journal
+    /// (`PreferenceStore.saveRescues`). Avoiding redundant `store.json` rewrites
+    /// eliminates 4 extra atomic file writes per window on the main thread.
+    @Published var ghostedWindowIDs: [String] = []
 
-    @Published var rescueDossiers: [RescueDossier] = [] {
-        didSet { persistUserChange() }
-    }
+    @Published var rescueDossiers: [RescueDossier] = []
 
     @Published var storedScreenSets: [StoredScreenSet] = [] {
         didSet { persistUserChange() }

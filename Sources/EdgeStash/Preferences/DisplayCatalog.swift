@@ -31,15 +31,9 @@ enum DisplayCatalog {
         }
 
         let baseIdentifier = hardwareIdentifier(for: displayID)
-        let matchingDisplayCount = screens.reduce(into: 0) { count, candidate in
-            guard let candidateID = self.displayID(for: candidate) else { return }
-            if hardwareIdentifier(for: candidateID) == baseIdentifier {
-                count += 1
-            }
-        }
-        let identifier = matchingDisplayCount > 1
-            ? unitIdentifier(base: baseIdentifier, displayID: displayID)
-            : baseIdentifier
+        // Always include the stable unit suffix when UUID is absent so
+        // connecting a second identical monitor never renames the first one.
+        let identifier = unitIdentifier(base: baseIdentifier, displayID: displayID)
         identifierCache[displayID] = identifier
         return identifier
     }
@@ -75,11 +69,51 @@ enum DisplayCatalog {
 
     static func cgGeometries(screens: [NSScreen] = NSScreen.screens) -> [DisplayGeometry] {
         let primaryHeight = screens.first?.frame.height ?? 0
-        return screens.map {
-            DisplayGeometry(
-                id: identifier(for: $0, screens: screens),
-                frame: StashGeometryPolicy.cgRect(fromAppKit: $0.frame, primaryHeight: primaryHeight)
+        return screens.map { screen in
+            let id = identifier(for: screen, screens: screens)
+            let fallbackFull = StashGeometryPolicy.cgRect(fromAppKit: screen.frame, primaryHeight: primaryHeight)
+            let cgFull: CGRect
+            if let cgID = displayID(for: screen) {
+                let direct = CGDisplayBounds(cgID)
+                cgFull = (direct.width > 0 && direct.height > 0 && direct.minX.isFinite && direct.minY.isFinite)
+                    ? direct : fallbackFull
+            } else {
+                cgFull = fallbackFull
+            }
+            // Menu-bar and Dock insets are relative deltas on the same screen,
+            // making visibleFrame immune to primaryHeight transition lag.
+            let topInset = max(0, screen.frame.maxY - screen.visibleFrame.maxY)
+            let bottomInset = max(0, screen.visibleFrame.minY - screen.frame.minY)
+            let leftInset = max(0, screen.visibleFrame.minX - screen.frame.minX)
+            let rightInset = max(0, screen.frame.maxX - screen.visibleFrame.maxX)
+            let cgVisible = CGRect(
+                x: cgFull.minX + leftInset,
+                y: cgFull.minY + topInset,
+                width: max(1, cgFull.width - leftInset - rightInset),
+                height: max(1, cgFull.height - topInset - bottomInset)
             )
+            return DisplayGeometry(id: id, frame: cgFull, visibleFrame: cgVisible)
+        }
+    }
+
+    static func diagnosticDisplays(screens: [NSScreen] = NSScreen.screens) -> [[String: Any]] {
+        let geometries = cgGeometries(screens: screens)
+        return zip(screens, geometries).map { screen, geometry in
+            let cgID = displayID(for: screen) ?? 0
+            return [
+                "id": geometry.id,
+                "cgID": cgID,
+                "vendor": cgID != 0 ? CGDisplayVendorNumber(cgID) : 0,
+                "model": cgID != 0 ? CGDisplayModelNumber(cgID) : 0,
+                "serial": cgID != 0 ? CGDisplaySerialNumber(cgID) : 0,
+                "unit": cgID != 0 ? CGDisplayUnitNumber(cgID) : 0,
+                "builtin": cgID != 0 && CGDisplayIsBuiltin(cgID) != 0,
+                "scale": Double(screen.backingScaleFactor),
+                "frame": [Double(geometry.frame.minX), Double(geometry.frame.minY),
+                          Double(geometry.frame.width), Double(geometry.frame.height)],
+                "visibleFrame": [Double(geometry.visibleFrame.minX), Double(geometry.visibleFrame.minY),
+                                 Double(geometry.visibleFrame.width), Double(geometry.visibleFrame.height)]
+            ]
         }
     }
 
